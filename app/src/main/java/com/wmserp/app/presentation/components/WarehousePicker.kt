@@ -1,10 +1,14 @@
 package com.wmserp.app.presentation.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -13,9 +17,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.window.PopupProperties
 import com.wmserp.app.domain.model.Warehouse
 
-/** Editable dropdown for choosing a warehouse; typing filters the suggestions. */
+/** Editable warehouse field with a suggestion list; typing filters the suggestions. */
 @Composable
 fun WarehousePicker(
     label: String,
@@ -29,11 +35,7 @@ fun WarehousePicker(
     val filtered = remember(value, options) {
         if (value.isBlank()) options else options.filter { it.name.contains(value, ignoreCase = true) || it.warehouseName.contains(value, ignoreCase = true) }
     }
-    ExposedDropdownMenuBox(
-        expanded = expanded && filtered.isNotEmpty(),
-        onExpandedChange = { expanded = it },
-        modifier = modifier,
-    ) {
+    Box(modifier = modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = value,
             onValueChange = {
@@ -41,16 +43,27 @@ fun WarehousePicker(
                 expanded = true
             },
             modifier = Modifier
-                .menuAnchor(MenuAnchorType.PrimaryEditable, enabled)
                 .fillMaxWidth()
-                .scannerAwareFocus(),
+                .scannerAwareFocus()
+                .onFocusChanged { if (it.isFocused) expanded = true },
             label = { Text(label) },
             singleLine = true,
             enabled = enabled,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            trailingIcon = {
+                IconButton(onClick = { expanded = !expanded }, enabled = enabled) {
+                    Icon(
+                        if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = if (expanded) "Hide warehouses" else "Show warehouses",
+                    )
+                }
+            },
         )
-        ExposedDropdownMenu(expanded = expanded && filtered.isNotEmpty(), onDismissRequest = { expanded = false }) {
-            filtered.take(30).forEach { warehouse ->
+        DropdownMenu(
+            expanded = expanded && filtered.isNotEmpty(),
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = false),
+        ) {
+            filtered.take(MAX_SUGGESTIONS).forEach { warehouse ->
                 DropdownMenuItem(
                     text = { Text(warehouse.name) },
                     onClick = {
@@ -62,3 +75,5 @@ fun WarehousePicker(
         }
     }
 }
+
+private const val MAX_SUGGESTIONS = 30
