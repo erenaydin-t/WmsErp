@@ -1,8 +1,8 @@
 """`doc_events` hooks for Pick List (registered in hooks.py).
 
-They only default the WMS picking status and keep the custom picker in sync with the standard
-Frappe assignment (ToDo), so the desk sidebar, notifications and the app all agree on who
-is responsible for a pick list.
+They default the WMS statuses and mirror the row-level pickers into the standard Frappe
+assignment (ToDo) of the Pick List, so the desk sidebar, notifications and the app agree on who
+works on a card.
 """
 
 import frappe
@@ -14,29 +14,38 @@ from wmserp_picking.picking import rules
 def validate(doc, method=None):
     if not doc.get("custom_picking_status"):
         doc.custom_picking_status = rules.STATUS_READY
+    for row in doc.get("locations") or []:
+        if not row.get("custom_row_status"):
+            row.custom_row_status = rules.ROW_NOT_PICKED
 
 
 def on_submit(doc, method=None):
     if not doc.get("custom_picking_status"):
         doc.db_set("custom_picking_status", rules.STATUS_READY, update_modified=False)
-    sync_picker_assignment(doc)
+    for row in doc.get("locations") or []:
+        if not row.get("custom_row_status"):
+            row.db_set("custom_row_status", rules.ROW_NOT_PICKED, update_modified=False)
+    sync_picker_assignments(doc)
 
 
 def on_update_after_submit(doc, method=None):
-    sync_picker_assignment(doc)
+    sync_picker_assignments(doc)
 
 
-def sync_picker_assignment(doc):
-    """Mirrors `custom_picker` into the standard Assign To of the document."""
-    picker = doc.get("custom_picker")
-    previous = None
-    before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
-    if before is not None:
-        previous = before.get("custom_picker")
-    if previous and previous != picker:
-        remove_assignment(doc, previous)
-    if picker:
-        add_assignment(doc, picker)
+def row_pickers(doc) -> set:
+    return {row.get("custom_picker") for row in (doc.get("locations") or []) if row.get("custom_picker")}
+
+
+def sync_picker_assignments(doc, previous_pickers=None):
+    """Every distinct row picker gets a standard assignment; pickers removed from all rows lose it."""
+    current = row_pickers(doc)
+    if previous_pickers is None:
+        before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
+        previous_pickers = row_pickers(before) if before is not None else set()
+    for user in set(previous_pickers) - current:
+        remove_assignment(doc, user)
+    for user in current:
+        add_assignment(doc, user)
 
 
 def add_assignment(doc, user):

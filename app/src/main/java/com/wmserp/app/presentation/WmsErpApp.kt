@@ -168,7 +168,10 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
             route = Routes.PICK_LIST_PATTERN,
             arguments = listOf(navArgument(Routes.ARG_PICK_LIST_NAME) { type = NavType.StringType }),
         ) {
-            PickListRoute(onBack = { navController.popBackStack() })
+            PickListRoute(
+                onBack = { navController.popBackStack() },
+                onDone = { navController.navigateToTab(Routes.DASHBOARD) },
+            )
         }
 
         composable(Routes.PROFILE) { ProfileRoute() }

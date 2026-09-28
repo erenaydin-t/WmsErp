@@ -3,16 +3,18 @@ package com.wmserp.app.data.mapper
 import com.wmserp.app.data.remote.dto.GeneratedDocumentDto
 import com.wmserp.app.data.remote.dto.PickListDto
 import com.wmserp.app.data.remote.dto.PickListItemDto
-import com.wmserp.app.data.remote.dto.PickProgressItemRequest
-import com.wmserp.app.data.remote.dto.PickScanMatchDto
+import com.wmserp.app.data.remote.dto.PickerKpisDto
+import com.wmserp.app.data.remote.dto.RowUpdateDto
+import com.wmserp.app.data.remote.dto.WmsSettingsDto
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickListPurpose
-import com.wmserp.app.domain.model.PickProgressLine
-import com.wmserp.app.domain.model.PickScanMatch
-import com.wmserp.app.domain.model.PickScanMatchType
+import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickerKpis
 import com.wmserp.app.domain.model.PickingStatus
+import com.wmserp.app.domain.model.RowUpdate
+import com.wmserp.app.domain.model.WmsQrKeys
 
 fun PickListDto.toDomain(): PickList = PickList(
     name = name,
@@ -25,12 +27,8 @@ fun PickListDto.toDomain(): PickList = PickList(
     targetWarehouse = targetWarehouse,
     status = status,
     pickingStatus = PickingStatus.fromServer(pickingStatus),
-    picker = picker,
-    assignedTo = assignedTo,
-    pickingStartedAt = pickingStartedAt,
-    pickingStartedBy = pickingStartedBy,
-    pickingCompletedAt = pickingCompletedAt,
-    pickingCompletedBy = pickingCompletedBy,
+    cardStartedAt = cardStartedAt,
+    cardCompletedAt = cardCompletedAt,
     generatedDocument = if (!generatedDoctype.isNullOrBlank() && !generatedDocname.isNullOrBlank()) {
         GeneratedDocument(generatedDoctype, generatedDocname, alreadyGenerated = true)
     } else {
@@ -39,9 +37,14 @@ fun PickListDto.toDomain(): PickList = PickList(
     workOrder = workOrder,
     materialRequest = materialRequest,
     modified = modified,
-    itemCount = if (items.isNotEmpty()) items.size else itemCount,
-    requiredQty = if (items.isNotEmpty()) items.sumOf { it.requiredQty } else requiredQty,
-    pickedQty = if (items.isNotEmpty()) items.sumOf { it.pickedQty } else pickedQty,
+    itemCount = itemCount,
+    pickedRows = pickedRows,
+    requiredQty = requiredQty,
+    pickedQty = pickedQty,
+    myRowCount = myRowCount,
+    myPickedRows = myPickedRows,
+    myOpenRows = myOpenRows,
+    allRowsPicked = allRowsPicked,
     items = items.map { it.toDomain() },
 )
 
@@ -62,11 +65,42 @@ fun PickListItemDto.toDomain(): PickListItem = PickListItem(
     orderUom = orderUom,
     conversionFactor = if (conversionFactor > 0) conversionFactor else 1.0,
     hasBatchNo = hasBatchNo != 0,
-    hasSerialNo = hasSerialNo != 0,
-    optional = optional != 0,
-    barcodes = barcodes,
     salesOrder = salesOrder,
     materialRequest = materialRequest,
+    picker = picker?.takeIf { it.isNotBlank() },
+    isMine = isMine,
+    rowStatus = PickRowStatus.fromServer(rowStatus),
+    rowStartedAt = rowStartedAt,
+    rowCompletedAt = rowCompletedAt,
+    durationSeconds = durationSeconds,
+)
+
+fun RowUpdateDto.toDomain(): RowUpdate = RowUpdate(
+    pickList = pickList.toDomain(),
+    row = row?.toDomain(),
+    rowCompleted = rowCompleted,
+    cardCompleted = cardCompleted,
+    isLastPicker = isLastPicker,
+)
+
+fun WmsSettingsDto.toDomain(): WmsQrKeys = WmsQrKeys(
+    itemKey = qrItemKey?.trim()?.ifBlank { null } ?: WmsQrKeys.DEFAULT_ITEM_KEY,
+    batchKey = qrBatchKey?.trim()?.ifBlank { null } ?: WmsQrKeys.DEFAULT_BATCH_KEY,
+)
+
+fun PickerKpisDto.toDomain(): PickerKpis = PickerKpis(
+    date = date.orEmpty(),
+    rowsPicked = rowsPicked,
+    qtyPicked = qtyPicked,
+    pickListsTouched = pickListsTouched,
+    pickListsCompleted = pickListsCompleted,
+    openRows = openRows,
+    openPickLists = openPickLists,
+    totalSeconds = totalSeconds,
+    avgSecondsPerRow = avgSecondsPerRow,
+    fastestSeconds = fastestSeconds,
+    slowestSeconds = slowestSeconds,
+    rowsPerHour = rowsPerHour,
 )
 
 fun GeneratedDocumentDto.toDomain(): GeneratedDocument = GeneratedDocument(
@@ -74,25 +108,4 @@ fun GeneratedDocumentDto.toDomain(): GeneratedDocument = GeneratedDocument(
     name = name,
     alreadyGenerated = alreadyGenerated,
     docStatus = docstatus,
-)
-
-fun PickScanMatchDto.toDomain(): PickScanMatch = PickScanMatch(
-    rowName = rowName?.takeIf { it.isNotBlank() },
-    itemCode = itemCode,
-    batchNo = batchNo?.takeIf { it.isNotBlank() },
-    matchType = when (match) {
-        "item_code" -> PickScanMatchType.ITEM_CODE
-        "barcode" -> PickScanMatchType.BARCODE
-        "batch" -> PickScanMatchType.BATCH
-        "not_on_list" -> PickScanMatchType.NOT_ON_LIST
-        else -> PickScanMatchType.NONE
-    },
-    expiryDate = expiryDate,
-)
-
-fun PickProgressLine.toRequest(): PickProgressItemRequest = PickProgressItemRequest(
-    name = rowName,
-    pickedQty = pickedQty,
-    batchNo = batchNo?.trim()?.ifBlank { null },
-    serialNo = serialNo?.trim()?.ifBlank { null },
 )

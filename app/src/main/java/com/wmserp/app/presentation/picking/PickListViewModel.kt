@@ -7,26 +7,26 @@ import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
-import com.wmserp.app.domain.model.PICK_QTY_TOLERANCE
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickListItem
-import com.wmserp.app.domain.model.PickProgressLine
 import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
+import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScannedCode
+import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.model.isPickComplete
-import com.wmserp.app.domain.model.pickRowStatus
-import com.wmserp.app.domain.repository.AuthRepository
-import com.wmserp.app.domain.usecase.CompletePickingUseCase
+import com.wmserp.app.domain.usecase.CompletePickRowUseCase
 import com.wmserp.app.domain.usecase.GeneratePickDocumentUseCase
 import com.wmserp.app.domain.usecase.GetPickListUseCase
+import com.wmserp.app.domain.usecase.GetWmsQrKeysUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
-import com.wmserp.app.domain.usecase.PickScanResult
-import com.wmserp.app.domain.usecase.ResolvePickScanUseCase
-import com.wmserp.app.domain.usecase.SavePickProgressUseCase
-import com.wmserp.app.domain.usecase.StartPickingUseCase
+import com.wmserp.app.domain.usecase.PickScanOutcome
+import com.wmserp.app.domain.usecase.SavePickRowProgressUseCase
+import com.wmserp.app.domain.usecase.StartPickRowUseCase
+import com.wmserp.app.domain.usecase.ValidatePickScanUseCase
 import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.messageRes
 import com.wmserp.app.presentation.common.toUiText
 import com.wmserp.app.presentation.orders.format
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,77 +36,102 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import kotlin.math.abs
 
-/** One pick list row with the quantity/batch being edited on the device. */
+/** One of the picker's rows with the quantity counted on the device and its hidden timer. */
 data class PickLineState(
     val item: PickListItem,
-    val qtyText: String = item.pickedQty.format(),
-    val batchText: String = item.batchNo.orEmpty(),
+    val qty: Double = item.pickedQty,
+    /** Device clock when the row was started (hidden timer); null until the first scan/start. */
+    val startedAtMillis: Long? = null,
+    /** Number of server calls in flight for this row; the local count is ahead of the server while > 0. */
+    val pendingSyncs: Int = 0,
     val highlighted: Boolean = false,
 ) {
-    val qty: Double get() = qtyText.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val status: PickRowStatus get() = pickRowStatus(qty, item.requiredQty)
-    val isComplete: Boolean get() = isPickComplete(qty, item.requiredQty, item.optional)
+    val syncing: Boolean get() = pendingSyncs > 0
+    val isComplete: Boolean get() = item.rowStatus == PickRowStatus.PICKED || isPickComplete(qty, item.requiredQty)
+    val status: PickRowStatus
+        get() = when {
+            isComplete -> PickRowStatus.PICKED
+            qty > 0.0 || item.rowStatus == PickRowStatus.PICKING || startedAtMillis != null -> PickRowStatus.PICKING
+            else -> PickRowStatus.NOT_PICKED
+        }
 
-    /** True when the device holds a quantity or batch that has not been saved to ERPNext yet. */
-    val isDirty: Boolean get() = abs(qty - item.pickedQty) > PICK_QTY_TOLERANCE || batchText.trim() != item.batchNo.orEmpty()
+    fun elapsedSeconds(now: Long): Double? = startedAtMillis?.let { ((now - it) / 1000.0).coerceAtLeast(0.0) }
+}
 
-    fun toProgressLine(): PickProgressLine = PickProgressLine(item.rowName, qty, batchText.trim().ifBlank { null })
+enum class ScanAlertKind { WRONG_BATCH, NOT_ASSIGNED, ALREADY_COMPLETE, INVALID_QR }
+
+/** Large red error shown after a rejected scan. */
+data class ScanAlert(val kind: ScanAlertKind, val message: UiText, val expected: String? = null, val scanned: String? = null)
+
+/** What the screen shows once every row of the picker is done. */
+enum class PickOutcome {
+    /** This picker completed the last row of the card (or the card is already picked): show the document CTA. */
+    CARD_COMPLETED,
+
+    /** The picker's rows are done but other pickers are still working on the card. */
+    TASK_COMPLETED,
 }
 
 data class PickListUiState(
     val isLoading: Boolean = true,
     val pickList: PickList? = null,
     val lines: List<PickLineState> = emptyList(),
-    val currentUser: String? = null,
-    val isStarting: Boolean = false,
-    val isSaving: Boolean = false,
-    val isCompleting: Boolean = false,
+    val qrKeys: WmsQrKeys = WmsQrKeys.DEFAULT,
+    val activeRowName: String? = null,
     val isGenerating: Boolean = false,
+    val isCompleting: Boolean = false,
+    val outcome: PickOutcome? = null,
+    val cameraActive: Boolean = false,
+    val hasHardwareScanner: Boolean = false,
+    val scanAlert: ScanAlert? = null,
     val error: UiText? = null,
     val message: UiText? = null,
     val beep: Boolean = true,
     val vibrate: Boolean = true,
 ) {
-    val status: PickingStatus? get() = pickList?.pickingStatus
-    val isBusy: Boolean get() = isStarting || isSaving || isCompleting || isGenerating
-    val totalRequired: Double get() = lines.sumOf { it.item.requiredQty }
-    val totalPicked: Double get() = lines.sumOf { it.qty }
-    val progress: Float get() = if (totalRequired <= 0.0) 0f else (totalPicked / totalRequired).toFloat().coerceIn(0f, 1f)
-    val hasUnsavedChanges: Boolean get() = lines.any { it.isDirty }
-    val allRowsComplete: Boolean get() = lines.isNotEmpty() && lines.all { it.isComplete }
+    val cardStatus: PickingStatus? get() = pickList?.pickingStatus
+    val isSyncing: Boolean get() = lines.any { it.syncing }
+    val myRequired: Double get() = lines.sumOf { it.item.requiredQty }
+    val myPicked: Double get() = lines.sumOf { it.qty }
+    val myProgress: Float get() = if (myRequired <= 0.0) 0f else (myPicked / myRequired).toFloat().coerceIn(0f, 1f)
+    val allMyRowsComplete: Boolean get() = lines.isNotEmpty() && lines.all { it.isComplete }
     val generatedDocument: GeneratedDocument? get() = pickList?.generatedDocument
+    val otherRows: Int get() = (pickList?.itemCount ?: 0) - lines.size
+    val otherPickedRows: Int get() = ((pickList?.pickedRows ?: 0) - lines.count { it.item.rowStatus == PickRowStatus.PICKED }).coerceAtLeast(0)
 
-    val canStart: Boolean get() = !isBusy && status == PickingStatus.READY_TO_PICK
-    val canSave: Boolean get() = !isBusy && status == PickingStatus.PICKING && hasUnsavedChanges
-    /** "Complete Picking" stays disabled until every mandatory row has its required quantity. */
-    val canComplete: Boolean get() = !isBusy && status == PickingStatus.PICKING && allRowsComplete
+    /** Scanning is accepted while the picker still has open rows (in-flight syncs do not block the next scan). */
+    val canScan: Boolean get() = pickList != null && outcome == null && !allMyRowsComplete && !isCompleting && !isGenerating
+    val canComplete: Boolean get() = pickList != null && outcome == null && allMyRowsComplete && !isCompleting && !isGenerating && !isSyncing
     val canGenerate: Boolean
-        get() = !isBusy && status == PickingStatus.PICKED && pickList?.purpose?.targetDocument != null && generatedDocument == null
+        get() = !isGenerating && !isCompleting && outcome == PickOutcome.CARD_COMPLETED && pickList?.purpose?.targetDocument != null && generatedDocument == null
 }
 
 /**
- * Drives one pick list through Ready to Pick -> Picking -> Picked -> document generation.
- * Scans (hardware wedge, intent, camera or manual) increment the matching row by one.
+ * Drives the picker's rows of one Pick List. Scans are strictly validated JSON QR labels: a match
+ * adds one to the row and syncs it immediately (partial saves), the required quantity completes
+ * the row on the server, and the response tells whether this picker closed the whole card.
  */
 @HiltViewModel
 class PickListViewModel @Inject constructor(
     private val getPickList: GetPickListUseCase,
-    private val startPickingUseCase: StartPickingUseCase,
-    private val savePickProgress: SavePickProgressUseCase,
-    private val completePickingUseCase: CompletePickingUseCase,
+    private val getQrKeys: GetWmsQrKeysUseCase,
+    private val startRow: StartPickRowUseCase,
+    private val saveRowProgress: SavePickRowProgressUseCase,
+    private val completeRow: CompletePickRowUseCase,
     private val generatePickDocument: GeneratePickDocumentUseCase,
-    private val resolvePickScan: ResolvePickScanUseCase,
+    private val validateScan: ValidatePickScanUseCase,
     observeScannerSettings: ObserveScannerSettingsUseCase,
-    authRepository: AuthRepository,
     private val scanner: ScannerController,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val name: String = savedStateHandle.get<String>(ARG_NAME).orEmpty()
 
-    private val _uiState = MutableStateFlow(PickListUiState())
+    /** Device clock for the hidden row timers; replaceable in tests. */
+    internal var clock: () -> Long = System::currentTimeMillis
+
+    private val _uiState = MutableStateFlow(PickListUiState(hasHardwareScanner = scanner.hasHardwareScanner))
     val uiState: StateFlow<PickListUiState> = _uiState.asStateFlow()
 
     init {
@@ -114,7 +139,7 @@ class PickListViewModel @Inject constructor(
             observeScannerSettings().collect { s -> _uiState.update { it.copy(beep = s.beepOnScan, vibrate = s.vibrateOnScan) } }
         }
         viewModelScope.launch {
-            authRepository.session.collect { session -> _uiState.update { it.copy(currentUser = session?.userId) } }
+            getQrKeys().getOrNull()?.let { keys -> _uiState.update { it.copy(qrKeys = keys) } }
         }
         load()
     }
@@ -123,86 +148,96 @@ class PickListViewModel @Inject constructor(
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             when (val result = getPickList(name)) {
-                is AppResult.Success -> _uiState.update { it.withPickList(result.data).copy(isLoading = false) }
+                is AppResult.Success -> _uiState.update { it.withPickList(result.data).copy(isLoading = false, outcome = initialOutcome(result.data)) }
                 is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.toUiText()) }
             }
         }
     }
 
-    fun startPicking() {
+    fun toggleCamera() = _uiState.update { it.copy(cameraActive = !it.cameraActive) }
+
+    fun dismissMessage() = _uiState.update { it.copy(message = null, error = null, scanAlert = null) }
+
+    /** Selecting a row makes it the active one and starts its (hidden) timer on the server. */
+    fun selectRow(rowName: String) {
         val state = _uiState.value
         val pickList = state.pickList ?: return
-        if (!state.canStart) return
-        _uiState.update { it.copy(isStarting = true, error = null, message = null) }
-        viewModelScope.launch {
-            when (val result = startPickingUseCase(pickList)) {
-                is AppResult.Success -> _uiState.update {
-                    it.withPickList(result.data).copy(isStarting = false, message = UiText.Res(R.string.pick_started_message))
-                }
-                is AppResult.Failure -> _uiState.update { it.copy(isStarting = false, error = result.error.toUiText()) }
-            }
-        }
+        val line = state.lines.firstOrNull { it.item.rowName == rowName } ?: return
+        if (line.isComplete) return
+        _uiState.update { it.copy(activeRowName = rowName, scanAlert = null) }
+        if (line.startedAtMillis == null) startTimer(pickList, line)
     }
 
-    fun setQty(rowName: String, text: String) = _uiState.update { state ->
-        state.copy(lines = state.lines.map { if (it.item.rowName == rowName) it.copy(qtyText = text, highlighted = false) else it })
-    }
-
-    fun increment(rowName: String) = adjust(rowName, +1.0)
-    fun decrement(rowName: String) = adjust(rowName, -1.0)
-
-    fun setBatch(rowName: String, text: String) = _uiState.update { state ->
-        state.copy(lines = state.lines.map { if (it.item.rowName == rowName) it.copy(batchText = text) else it })
-    }
-
-    fun dismissMessage() = _uiState.update { it.copy(message = null, error = null) }
-
-    /** A scanned item barcode / item code / batch label adds one to the matching row. */
+    /** Hardware wedge, intent, camera or manual input: only JSON QR labels are accepted. */
     fun onScanned(code: ScannedCode) {
         val state = _uiState.value
         val pickList = state.pickList ?: return
-        if (pickList.pickingStatus != PickingStatus.PICKING || state.isBusy) return
-        if (code.source != ScanSource.MANUAL) scanner.feedback(state.beep, state.vibrate)
-        viewModelScope.launch {
-            val result = resolvePickScan(pickList, code.value) { row ->
-                _uiState.value.lines.firstOrNull { it.item.rowName == row.rowName }?.qty ?: row.pickedQty
+        if (!state.canScan) return
+        val outcome = validateScan(
+            rawCode = code.value,
+            keys = state.qrKeys,
+            rows = state.lines.map { it.item },
+            currentQty = { row -> state.lines.firstOrNull { it.item.rowName == row.rowName }?.qty ?: row.pickedQty },
+            activeRowName = state.activeRowName,
+        )
+        when (outcome) {
+            is PickScanOutcome.Match -> {
+                if (code.source != ScanSource.MANUAL) scanner.feedback(state.beep, state.vibrate)
+                applyScan(pickList, outcome)
             }
-            when (result) {
-                is AppResult.Success -> when (val scan = result.data) {
-                    is PickScanResult.Matched -> addOne(scan.row.rowName, scan.batchNo)
-                    is PickScanResult.NotOnList -> _uiState.update { it.copy(error = UiText.Res(R.string.pick_not_on_list, listOf(scan.itemCode ?: scan.code))) }
-                    is PickScanResult.Unknown -> _uiState.update { it.copy(error = UiText.Res(R.string.scan_item_not_found, listOf(scan.code))) }
-                }
-                is AppResult.Failure -> _uiState.update { it.copy(error = result.error.toUiText()) }
-            }
+            is PickScanOutcome.WrongBatch -> reject(
+                ScanAlert(
+                    ScanAlertKind.WRONG_BATCH,
+                    UiText.Res(R.string.pick_wrong_batch, listOf(outcome.expected, outcome.scanned ?: "-")),
+                    expected = outcome.expected,
+                    scanned = outcome.scanned,
+                ),
+                highlight = outcome.row.rowName,
+            )
+            is PickScanOutcome.NotAssigned -> reject(
+                ScanAlert(ScanAlertKind.NOT_ASSIGNED, UiText.Res(R.string.pick_item_not_assigned, listOf(outcome.label.itemCode)))
+            )
+            is PickScanOutcome.AlreadyComplete -> reject(
+                ScanAlert(ScanAlertKind.ALREADY_COMPLETE, UiText.Res(R.string.pick_row_already_complete, listOf(outcome.row.itemCode, outcome.row.requiredQty.format()))),
+                highlight = outcome.row.rowName,
+            )
+            is PickScanOutcome.InvalidQr -> reject(
+                ScanAlert(ScanAlertKind.INVALID_QR, UiText.Res(outcome.error.messageRes()), scanned = outcome.raw.take(80))
+            )
         }
     }
 
-    /** Syncs the partial quantities with ERPNext so picking can be paused and resumed elsewhere. */
-    fun saveProgress() {
-        val state = _uiState.value
-        val pickList = state.pickList ?: return
-        if (!state.canSave) return
-        _uiState.update { it.copy(isSaving = true, error = null, message = null) }
-        viewModelScope.launch {
-            when (val result = savePickProgress(pickList, state.lines.map { it.toProgressLine() })) {
-                is AppResult.Success -> _uiState.update { it.withPickList(result.data).copy(isSaving = false, message = UiText.Res(R.string.pick_saved)) }
-                is AppResult.Failure -> _uiState.update { it.copy(isSaving = false, error = result.error.toUiText()) }
-            }
-        }
-    }
-
+    /** Sends every locally complete row the server has not marked Picked yet, then applies the last-picker rule. */
     fun completePicking() {
         val state = _uiState.value
         val pickList = state.pickList ?: return
         if (!state.canComplete) return
-        _uiState.update { it.copy(isCompleting = true, error = null, message = null) }
+        val pending = state.lines.filter { it.item.rowStatus != PickRowStatus.PICKED }
+        if (pending.isEmpty()) {
+            _uiState.update { it.copy(outcome = initialOutcome(pickList) ?: PickOutcome.TASK_COMPLETED) }
+            return
+        }
+        _uiState.update { it.copy(isCompleting = true, error = null, scanAlert = null) }
         viewModelScope.launch {
-            when (val result = completePickingUseCase(pickList, state.lines.map { it.toProgressLine() })) {
-                is AppResult.Success -> _uiState.update {
-                    it.withPickList(result.data).copy(isCompleting = false, message = UiText.Res(R.string.pick_completed_message))
+            var lastPicker = false
+            for (line in pending) {
+                when (val result = completeRow(pickList, line.item, line.qty, line.elapsedSeconds(clock()))) {
+                    is AppResult.Success -> {
+                        lastPicker = lastPicker || result.data.isLastPicker
+                        _uiState.update { it.withUpdate(result.data) }
+                    }
+                    is AppResult.Failure -> {
+                        _uiState.update { it.copy(isCompleting = false, error = result.error.toUiText()) }
+                        return@launch
+                    }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isCompleting = false, error = result.error.toUiText()) }
+            }
+            _uiState.update {
+                it.copy(
+                    isCompleting = false,
+                    outcome = if (lastPicker) PickOutcome.CARD_COMPLETED else PickOutcome.TASK_COMPLETED,
+                    message = UiText.Res(if (lastPicker) R.string.pick_completed_message else R.string.pick_task_completed_message),
+                )
             }
         }
     }
@@ -233,51 +268,103 @@ class PickListViewModel @Inject constructor(
         }
     }
 
-    /** Replaces the pick list from the server, keeping unsaved quantities the user typed meanwhile. */
-    private fun PickListUiState.withPickList(fresh: PickList): PickListUiState {
-        val previous = lines.associateBy { it.item.rowName }
-        val merged = fresh.items.map { item ->
-            val old = previous[item.rowName]
-            if (fresh.pickingStatus == PickingStatus.PICKING && old != null && old.isDirty && !isSaving && !isCompleting) {
-                old.copy(item = item, highlighted = false)
-            } else {
-                PickLineState(item)
-            }
+    // ---- internals -------------------------------------------------------------------------
+
+    private fun reject(alert: ScanAlert, highlight: String? = null) {
+        scanner.feedback(beep = _uiState.value.beep, vibrate = true)
+        _uiState.update { state ->
+            state.copy(scanAlert = alert, message = null, lines = state.lines.map { it.copy(highlighted = it.item.rowName == highlight) })
         }
-        return copy(pickList = fresh, lines = merged)
     }
 
-    private fun addOne(rowName: String, batchNo: String?) = _uiState.update { state ->
-        val index = state.lines.indexOfFirst { it.item.rowName == rowName }
-        if (index < 0) return@update state
-        val line = state.lines[index]
-        val required = line.item.requiredQty
-        if (line.qty + 1 > required + PICK_QTY_TOLERANCE) {
+    private fun applyScan(pickList: PickList, match: PickScanOutcome.Match) {
+        val now = clock()
+        val rowName = match.row.rowName
+        var newQty = 0.0
+        var elapsed: Double? = null
+        _uiState.update { state ->
             state.copy(
-                message = UiText.Res(R.string.pick_line_complete, listOf(line.item.itemCode, required.format())),
-                lines = state.lines.mapIndexed { i, l -> l.copy(highlighted = i == index) },
-            )
-        } else {
-            state.copy(
-                message = UiText.Res(R.string.pick_line_added, listOf(line.item.itemCode)),
+                activeRowName = rowName,
+                scanAlert = null,
                 error = null,
-                lines = state.lines.mapIndexed { i, l ->
-                    if (i == index) l.copy(qtyText = (l.qty + 1).format(), batchText = batchNo ?: l.batchText, highlighted = true) else l.copy(highlighted = false)
+                message = UiText.Res(R.string.pick_line_added, listOf(match.row.itemCode)),
+                lines = state.lines.map { line ->
+                    if (line.item.rowName == rowName) {
+                        val started = line.startedAtMillis ?: now
+                        newQty = (line.qty + 1).coerceAtMost(line.item.requiredQty)
+                        elapsed = ((now - started) / 1000.0).coerceAtLeast(0.0)
+                        line.copy(qty = newQty, startedAtMillis = started, pendingSyncs = line.pendingSyncs + 1, highlighted = true)
+                    } else {
+                        line.copy(highlighted = false)
+                    }
                 },
             )
         }
-    }
-
-    private fun adjust(rowName: String, delta: Double) = _uiState.update { state ->
-        state.copy(
-            lines = state.lines.map {
-                if (it.item.rowName == rowName) {
-                    it.copy(qtyText = (it.qty + delta).coerceIn(0.0, it.item.requiredQty).format(), highlighted = false)
-                } else {
-                    it
+        viewModelScope.launch {
+            when (val result = saveRowProgress(pickList, match.row, newQty, match.label, elapsed)) {
+                is AppResult.Success -> {
+                    val update = result.data
+                    _uiState.update { state ->
+                        val merged = state.finishSync(rowName).withUpdate(update)
+                        when {
+                            update.isLastPicker -> merged.copy(outcome = PickOutcome.CARD_COMPLETED, message = UiText.Res(R.string.pick_completed_message))
+                            merged.allMyRowsComplete && merged.outcome == null && update.pickList.isCardPicked -> merged.copy(outcome = PickOutcome.CARD_COMPLETED)
+                            else -> merged
+                        }
+                    }
+                }
+                is AppResult.Failure -> _uiState.update { state ->
+                    // Roll the local count back so the device never shows more than the server holds.
+                    state.finishSync(rowName).let { s ->
+                        s.copy(error = result.error.toUiText(), lines = s.lines.map { if (it.item.rowName == rowName && !it.syncing) it.copy(qty = it.item.pickedQty) else it })
+                    }
                 }
             }
-        )
+        }
+    }
+
+    private fun startTimer(pickList: PickList, line: PickLineState) {
+        val now = clock()
+        val rowName = line.item.rowName
+        _uiState.update { state ->
+            state.copy(lines = state.lines.map { if (it.item.rowName == rowName) it.copy(startedAtMillis = now, pendingSyncs = it.pendingSyncs + 1) else it })
+        }
+        viewModelScope.launch {
+            when (val result = startRow(pickList, line.item)) {
+                is AppResult.Success -> _uiState.update { it.finishSync(rowName).withUpdate(result.data) }
+                is AppResult.Failure -> _uiState.update { it.finishSync(rowName).copy(error = result.error.toUiText()) }
+            }
+        }
+    }
+
+    private fun PickListUiState.finishSync(rowName: String): PickListUiState =
+        copy(lines = lines.map { if (it.item.rowName == rowName) it.copy(pendingSyncs = (it.pendingSyncs - 1).coerceAtLeast(0)) else it })
+
+    /** Server document -> UI state, keeping device-side timers and counts that are still ahead of the server. */
+    private fun PickListUiState.withPickList(fresh: PickList): PickListUiState {
+        val previous = lines.associateBy { it.item.rowName }
+        val merged = fresh.myItems.map { item ->
+            val old = previous[item.rowName]
+            PickLineState(
+                item = item,
+                qty = if (old != null && old.syncing) maxOf(item.pickedQty, old.qty) else item.pickedQty,
+                startedAtMillis = old?.startedAtMillis ?: if (item.rowStatus == PickRowStatus.PICKING) clock() else null,
+                pendingSyncs = old?.pendingSyncs ?: 0,
+                highlighted = old?.highlighted ?: false,
+            )
+        }
+        val active = activeRowName?.takeIf { name -> merged.any { it.item.rowName == name && !it.isComplete } }
+            ?: merged.firstOrNull { !it.isComplete }?.item?.rowName
+        return copy(pickList = fresh, lines = merged, activeRowName = active)
+    }
+
+    private fun PickListUiState.withUpdate(update: RowUpdate): PickListUiState = withPickList(update.pickList)
+
+    /** A card already picked (or already documented) when opened shows its final state directly. */
+    private fun initialOutcome(pickList: PickList): PickOutcome? = when {
+        pickList.generatedDocument != null || pickList.isCardPicked -> PickOutcome.CARD_COMPLETED
+        pickList.myRowCount > 0 && pickList.myOpenRows == 0 -> PickOutcome.TASK_COMPLETED
+        else -> null
     }
 
     companion object {

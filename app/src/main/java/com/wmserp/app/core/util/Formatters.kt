@@ -65,6 +65,19 @@ object Formatters {
 
     fun percent(value: Double): String = "${value.coerceIn(0.0, 100.0).toInt()}%"
 
+    /** 42 -> "42s", 125 -> "2m 05s", 3725 -> "1h 02m". */
+    fun duration(seconds: Double): String {
+        val total = seconds.coerceAtLeast(0.0).toLong()
+        val hours = total / 3600
+        val minutes = (total % 3600) / 60
+        val secs = total % 60
+        return when {
+            hours > 0 -> String.format(Locale.US, "%dh %02dm", hours, minutes)
+            minutes > 0 -> String.format(Locale.US, "%dm %02ds", minutes, secs)
+            else -> "${secs}s"
+        }
+    }
+
     private fun trimmed(v: Double): String {
         val s = String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')
         return s

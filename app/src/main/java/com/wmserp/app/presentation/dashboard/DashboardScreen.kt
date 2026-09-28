@@ -21,7 +21,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.AttachMoney
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.PendingActions
+import androidx.compose.material.icons.outlined.TaskAlt
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.LocalShipping
 import androidx.compose.material.icons.outlined.MoveToInbox
@@ -192,6 +196,52 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .testTag("kpi_dispatched"),
                                 subtitle = stringResource(R.string.kpi_dispatched_sub, kpis.periodLabel),
+                            )
+                        }
+                    }
+                }
+            }
+
+            state.pickerKpis?.let { kpis ->
+                item {
+                    SectionHeader(stringResource(R.string.kpi_picking_title))
+                    Spacer(Modifier.height(10.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("picker_kpis")) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            KpiCard(
+                                title = stringResource(R.string.kpi_rows_picked),
+                                value = Formatters.int(kpis.rowsPicked),
+                                icon = Icons.Outlined.TaskAlt,
+                                accent = colors.kpiTeal,
+                                modifier = Modifier.weight(1f).testTag("kpi_rows_picked"),
+                                subtitle = stringResource(R.string.kpi_rows_picked_sub, Formatters.qty(kpis.qtyPicked)),
+                            )
+                            KpiCard(
+                                title = stringResource(R.string.kpi_avg_row_time),
+                                value = kpis.avgSecondsPerRow?.let { Formatters.duration(it) } ?: "-",
+                                icon = Icons.Outlined.Timer,
+                                accent = colors.kpiPurple,
+                                modifier = Modifier.weight(1f).testTag("kpi_avg_row_time"),
+                                subtitle = kpis.rowsPerHour?.let { stringResource(R.string.kpi_rows_per_hour, Formatters.qty(Math.round(it * 10) / 10.0)) }
+                                    ?: stringResource(R.string.kpi_avg_row_time_sub),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            KpiCard(
+                                title = stringResource(R.string.kpi_open_rows),
+                                value = Formatters.int(kpis.openRows),
+                                icon = Icons.Outlined.PendingActions,
+                                accent = colors.kpiAmber,
+                                modifier = Modifier.weight(1f).testTag("kpi_open_rows"),
+                                subtitle = stringResource(R.string.kpi_open_rows_sub, kpis.openPickLists),
+                            )
+                            KpiCard(
+                                title = stringResource(R.string.kpi_cards_completed),
+                                value = Formatters.int(kpis.pickListsCompleted),
+                                icon = Icons.Outlined.Checklist,
+                                accent = colors.kpiBlue,
+                                modifier = Modifier.weight(1f).testTag("kpi_cards_completed"),
+                                subtitle = stringResource(R.string.kpi_cards_completed_sub, kpis.pickListsTouched),
                             )
                         }
                     }

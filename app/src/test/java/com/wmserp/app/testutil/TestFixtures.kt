@@ -50,18 +50,28 @@ object TestFixtures {
         parentWarehouse = "Stores - WM",
         status = "Open",
         pickingStatus = PickingStatus.READY_TO_PICK,
-        picker = "user@example.com",
-        itemCount = 2,
-        requiredQty = 15.0,
+        itemCount = 3,
+        pickedRows = 0,
+        requiredQty = 18.0,
         pickedQty = 0.0,
+        myRowCount = 2,
+        myPickedRows = 0,
+        myOpenRows = 2,
         items = listOf(
             PickListItem(
                 rowName = "prow1", idx = 1, itemCode = "ITEM-001", itemName = "Steel Bolt M8", sourceWarehouse = "Stores - WM", targetWarehouse = null,
-                batchNo = null, expiryDate = null, serialNo = null, requiredQty = 10.0, pickedQty = 0.0, uom = "Nos", barcodes = listOf("8690000000017"),
+                batchNo = "B-001", expiryDate = "2027-01-31", serialNo = null, requiredQty = 10.0, pickedQty = 0.0, uom = "Nos", hasBatchNo = true,
+                picker = "user@example.com", isMine = true,
             ),
             PickListItem(
                 rowName = "prow2", idx = 2, itemCode = "ITEM-002", itemName = "Steel Nut M8", sourceWarehouse = "Stores - WM", targetWarehouse = null,
-                batchNo = "B-001", expiryDate = "2027-01-31", serialNo = null, requiredQty = 5.0, pickedQty = 0.0, uom = "Nos", hasBatchNo = true,
+                batchNo = null, expiryDate = null, serialNo = null, requiredQty = 5.0, pickedQty = 0.0, uom = "Nos",
+                picker = "user@example.com", isMine = true,
+            ),
+            PickListItem(
+                rowName = "prow3", idx = 3, itemCode = "ITEM-003", itemName = "Washer M8", sourceWarehouse = "Stores - WM", targetWarehouse = null,
+                batchNo = "B-777", expiryDate = null, serialNo = null, requiredQty = 3.0, pickedQty = 0.0, uom = "Nos", hasBatchNo = true,
+                picker = "other@example.com", isMine = false,
             ),
         ),
     )

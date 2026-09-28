@@ -42,7 +42,8 @@ app/src/main/java/com/wmserp/app
 ## Screens
 
 1. **Login** – ERPNext URL, username/email, password, *Remember me*. Advanced: API key / secret (token auth).
-2. **Dashboard** – greeting, KPI cards (Total Items, Pending Orders, Revenue, Dispatched), quick actions
+2. **Dashboard** – greeting, KPI cards (Total Items, Pending Orders, Revenue, Dispatched), the picker's
+   *My picking today* KPIs (rows picked, average time per row, open rows, cards completed), quick actions
    (Scan, Receive, Dispatch, Report), recent stock ledger activity.
 3. **Inventory / Analytics** – KPI cards (Pending Deliveries, Receipts, Picklists) and tabs:
    Delivery Delays (bar chart), Activity Heatmap (7 days × 3h blocks), Stock Aging (ERPNext *Stock Ageing* report).
@@ -52,9 +53,9 @@ app/src/main/java/com/wmserp/app
    app language (System / English / فارسی), sign out.
 6. **Orders → Receive / Dispatch** – count goods against Purchase Orders (creates *Purchase Receipt*) and pick
    against Sales Orders (creates *Delivery Note*); scanning an item barcode increments the matching line.
-7. **Orders → Pick** – ERPNext *Pick Lists* assigned to the signed-in user, driven through
-   *Ready to Pick → Picking → Picked* and finished with a context-aware "Create Delivery Note /
-   Material Transfer / Material Issue" button (see [Pick List workflow](#pick-list-workflow)).
+7. **Orders → Pick** – the picker's tasks: open ERPNext *Pick Lists* with rows assigned to the signed-in user,
+   picked row by row through strict JSON QR labels, with hidden timers and a context-aware "Create Delivery
+   Note / Material Transfer / Material Issue" button for the last picker (see [Pick List workflow](#pick-list-workflow)).
 
 ## ERPNext integration
 
@@ -79,13 +80,26 @@ otherwise the user is returned to the login screen.
 ## Pick List workflow
 
 Physical picking runs on the standard ERPNext *Pick List* plus a small custom Frappe app,
-[`erpnext/wmserp_picking`](erpnext/wmserp_picking/README.md), that adds custom fields and whitelisted
-APIs **without modifying ERPNext core and without writing stock ledger or GL entries**.
+[`erpnext/wmserp_picking`](erpnext/wmserp_picking/README.md), that adds a *WMS Settings* single, custom
+fields, a QR label print format and whitelisted APIs **without modifying ERPNext core and without writing
+stock ledger or GL entries**.
 
 ```
-Ready to Pick ──start_picking──▶ Picking ──save_progress (n×)──▶ ──complete_picking──▶ Picked
-                                                                                   └──generate_document──▶ draft Delivery Note / Stock Entry
+row:  Not Picked ──start_row──▶ Picking ──save_row_progress (each scan)──▶ Picked (picked == required)
+card: Ready to Pick ──first row started──▶ Picking ──last row picked (card completion check)──▶ Picked
+                                                                     └──generate_document──▶ draft Delivery Note / Stock Entry
 ```
+
+* **Row-level assignment.** Every `Pick List Item` row has its own picker (`custom_picker`), so several
+  pickers work on one card at the same time. Each row records started/completed timestamps and its
+  duration; the card records its first start and last completion.
+* **Strict JSON QR labels.** Picking only moves through scanned QR codes whose content is a JSON object
+  with the keys configured in *WMS Settings* (default `{"item_code": …, "batch_no": …}`), printed with
+  the *WMS Batch QR Label* print format. Plain barcodes, typed batches and dropdowns are not accepted.
+* **The last-picker rule.** When a row reaches its required quantity the backend marks it *Picked* and,
+  under a row lock, checks whether every row of the card is picked. Exactly one request observes that
+  transition and is answered with `is_last_picker: true`; that picker gets the document button, everyone
+  else gets *Task completed*.
 
 **Backend (install once per site):** the app folder is published as the `wmserp_picking` branch of this
 repository by CI (a subtree split of `erpnext/wmserp_picking`), because bench needs a Frappe app at the
@@ -96,26 +110,23 @@ bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking
 bench --site <site> install-app wmserp_picking
 ```
 
-This adds `custom_picker`, `custom_picking_status`, started/completed timestamps and the generated-document
-link to *Pick List*, `custom_wms_picked_qty` / `custom_optional` to *Pick List Item*, appends *Material Issue*
-to the purpose options, and mirrors the picker into the standard *Assign To*. The API reference, validation
-rules (item, warehouse, batch, expiry, quantity) and duplicate prevention are documented in the app's README.
-
 **App:**
 
-* **Orders → Pick** lists the pick lists assigned to the user (`get_my_pick_lists`) with status, purpose and
-  picked/required progress; pull to refresh, search, or scan a pick list barcode to open it.
-* **Ready to Pick** shows the header (purpose, customer, source/target warehouse, picker) and the rows, with a
-  single **Start Picking** button (visible only in that state).
-* **Picking** lists every row with item code/name, source → target warehouse, batch and expiry, required and
-  picked quantity in the stock UOM, and a *Not picked / Partial / Picked* chip. Scanning an item barcode, item
-  code or batch label with the PDA scanner (or camera / manual entry) increments the matching row; codes the
-  device does not know are resolved by `resolve_scan`. **Save progress** syncs partial quantities so picking can
-  be paused and resumed on any device; **Complete picking** stays disabled until every mandatory row has its
-  required quantity (rows flagged optional may be short).
-* **Picked** shows a summary and one **Create Delivery Note / Create Material Transfer / Create Material Issue**
-  button depending on the pick list purpose. The backend creates the draft once; a second tap (or another
-  device) returns the existing document instead of a duplicate. Nothing is submitted automatically.
+* **Dashboard → My picking today** shows the picker's KPIs from `get_picker_kpis`: rows picked (and
+  units), average time per row (and rows per hour), open rows, cards completed.
+* **Orders → Pick** is the task list: submitted, *Open* pick lists with at least one row assigned to the
+  signed-in user (`get_my_pick_lists`), with "my rows" progress. Drafts never appear.
+* **Active picking** lists only the rows assigned to the picker, each with the **expected batch in bold**,
+  source → target warehouse, expiry and picked / required. Tapping a row makes it active and starts its
+  hidden timer (`start_row`). Scanning a label (PDA wedge, intent, or the camera toggle) parses it strictly
+  as JSON with the cached keys and validates item **and** batch against the row: a match adds one and syncs
+  immediately (`save_row_progress` with the label and the elapsed time); a wrong batch shows a large red
+  *Wrong batch. Expected: X, scanned: Y*; unknown items, other pickers' rows and rows already at their
+  required quantity are refused. There are no manual quantity or batch inputs.
+* **Complete picking** becomes enabled when every row of the picker has its required quantity. It sends
+  any row the server has not confirmed yet (`complete_row`) and applies the last-picker rule: the picker who
+  closed the card sees the **Create Delivery Note / Create Material Transfer / Create Material Issue**
+  button (one draft, generated once), the others see *Task completed* and return to the dashboard.
 
 ## Hardware scanners
 
@@ -228,7 +239,13 @@ python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY 
 
 * **Unit tests** (`app/src/test`): use cases, URL normaliser, ERPNext error parser, query builder, session store,
   repositories against a real Retrofit/OkHttp stack with MockWebServer, keyboard-wedge decoder, intent parser,
-  AES/GCM cipher, formatters, and ViewModels (Login, Dashboard, Scan, Receive, Main) including the
-  resource-id based (`UiText`) messages they emit.
+  AES/GCM cipher, formatters, the strict QR label parser and scan validation, the picking use cases and
+  repository, and ViewModels (Login, Dashboard, Scan, Receive, Pick List, Main) including the resource-id
+  based (`UiText`) messages they emit.
 * **Compose UI tests** (`app/src/androidTest`): login form validation and submission, dashboard KPIs, quick
-  actions and bottom navigation, hardware scanner input delivered to the scan screen, manual code entry.
+  actions and bottom navigation, hardware scanner input delivered to the scan screen, manual code entry, and
+  the picking screen (only the picker's rows, expected batch, no manual inputs, wrong-batch alert,
+  task-completed vs. create-document states).
+* **Backend rules** (`erpnext/wmserp_picking`): `python -m unittest discover -p "test_*.py"` covers row/card
+  completion, quantity validation, JSON QR parsing and matching, purpose mapping, permissions and KPI
+  aggregation without a bench.

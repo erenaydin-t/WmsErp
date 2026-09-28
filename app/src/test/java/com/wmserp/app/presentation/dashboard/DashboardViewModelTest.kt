@@ -6,7 +6,9 @@ import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.DashboardKpis
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.DashboardData
+import com.wmserp.app.domain.model.PickerKpis
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
+import com.wmserp.app.domain.usecase.GetPickerKpisUseCase
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
@@ -29,6 +31,9 @@ class DashboardViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     private val getDashboard: GetDashboardUseCase = mockk()
+    private val getPickerKpis: GetPickerKpisUseCase = mockk {
+        coEvery { this@mockk.invoke() } returns AppResult.Failure(AppError.NotFound("wmserp_picking not installed"))
+    }
     private val authRepository: AuthRepository = mockk {
         every { session } returns flowOf(TestFixtures.session)
         every { events } returns emptyFlow()
@@ -43,7 +48,7 @@ class DashboardViewModelTest {
     fun `loads kpis and greets the user by first name`() = runTest {
         coEvery { getDashboard() } returns AppResult.Success(data)
 
-        val vm = DashboardViewModel(getDashboard, authRepository)
+        val vm = DashboardViewModel(getDashboard, getPickerKpis, authRepository)
 
         val state = vm.uiState.value
         assertFalse(state.isLoading)
@@ -56,7 +61,7 @@ class DashboardViewModelTest {
     fun `surfaces errors and recovers on refresh`() = runTest {
         coEvery { getDashboard() } returns AppResult.Failure(AppError.Network("offline")) andThen AppResult.Success(data)
 
-        val vm = DashboardViewModel(getDashboard, authRepository)
+        val vm = DashboardViewModel(getDashboard, getPickerKpis, authRepository)
         assertEquals(UiText.Res(R.string.error_network_unreachable), vm.uiState.value.error)
         assertNull(vm.uiState.value.data)
 
@@ -65,5 +70,19 @@ class DashboardViewModelTest {
         assertNull(vm.uiState.value.error)
         assertNotNull(vm.uiState.value.data)
         assertFalse(vm.uiState.value.isRefreshing)
+    }
+
+    @Test
+    fun `picker KPIs are shown when the picking app answers and hidden otherwise`() = runTest {
+        coEvery { getDashboard() } returns AppResult.Success(data)
+        coEvery { getPickerKpis() } returns AppResult.Success(PickerKpis(date = "2026-09-28", rowsPicked = 7, avgSecondsPerRow = 95.0))
+
+        val vm = DashboardViewModel(getDashboard, getPickerKpis, authRepository)
+
+        assertEquals(7, vm.uiState.value.pickerKpis?.rowsPicked)
+
+        coEvery { getPickerKpis() } returns AppResult.Failure(AppError.NotFound("gone"))
+        val without = DashboardViewModel(getDashboard, getPickerKpis, authRepository)
+        assertNull(without.uiState.value.pickerKpis)
     }
 }

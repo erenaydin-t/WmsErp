@@ -12,6 +12,7 @@ import com.wmserp.app.domain.model.PickTargetDocument
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannerMode
+import com.wmserp.app.domain.usecase.QrError
 import com.wmserp.app.presentation.inventory.AnalyticsTab
 import com.wmserp.app.presentation.orders.OrdersTab
 
@@ -75,10 +76,10 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.SERVER_UNAVAILABLE -> R.string.error_server_unavailable
     ErrorCode.INVALID_RESPONSE -> R.string.error_invalid_response
     ErrorCode.OVER_PICK -> R.string.error_over_pick
-    ErrorCode.PICKING_INCOMPLETE -> R.string.error_picking_incomplete
-    ErrorCode.PICKING_NOT_STARTED -> R.string.error_picking_not_started
     ErrorCode.PICKING_NOT_COMPLETED -> R.string.error_picking_not_completed
-    ErrorCode.PICK_LIST_ALREADY_PICKED -> R.string.error_pick_list_already_picked
+    ErrorCode.ROW_INCOMPLETE -> R.string.error_row_incomplete
+    ErrorCode.ROW_ALREADY_PICKED -> R.string.error_row_already_picked
+    ErrorCode.ROW_NOT_ASSIGNED -> R.string.error_row_not_assigned
     ErrorCode.PICK_LIST_NOT_FOUND -> R.string.error_pick_list_not_found
     ErrorCode.UNSUPPORTED_PICK_PURPOSE -> R.string.error_unsupported_pick_purpose
     ErrorCode.UNKNOWN -> R.string.error_unknown
@@ -103,8 +104,17 @@ fun PickListPurpose.labelRes(): Int = when (this) {
 @StringRes
 fun PickRowStatus.labelRes(): Int = when (this) {
     PickRowStatus.NOT_PICKED -> R.string.pick_row_not_picked
-    PickRowStatus.PARTIAL -> R.string.pick_row_partial
+    PickRowStatus.PICKING -> R.string.pick_row_picking
     PickRowStatus.PICKED -> R.string.pick_row_picked
+}
+
+/** Why a scan was rejected as a QR label (strict JSON mode). */
+@StringRes
+fun QrError.messageRes(): Int = when (this) {
+    QrError.EMPTY -> R.string.qr_error_empty
+    QrError.NOT_JSON -> R.string.qr_error_not_json
+    QrError.NOT_OBJECT -> R.string.qr_error_not_object
+    QrError.MISSING_ITEM -> R.string.qr_error_missing_item
 }
 
 /** Label of the "create document" call to action, or null when the purpose has no target document. */

@@ -2,39 +2,41 @@ package com.wmserp.app.presentation.picking
 
 import androidx.lifecycle.SavedStateHandle
 import com.wmserp.app.R
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
-import com.wmserp.app.domain.model.PickProgressLine
 import com.wmserp.app.domain.model.PickRowStatus
-import com.wmserp.app.domain.model.PickScanMatch
-import com.wmserp.app.domain.model.PickScanMatchType
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.ScannerSettings
-import com.wmserp.app.domain.repository.AuthRepository
+import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.repository.PickListRepository
-import com.wmserp.app.domain.usecase.CompletePickingUseCase
+import com.wmserp.app.domain.usecase.CompletePickRowUseCase
 import com.wmserp.app.domain.usecase.GeneratePickDocumentUseCase
 import com.wmserp.app.domain.usecase.GetPickListUseCase
+import com.wmserp.app.domain.usecase.GetWmsQrKeysUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
-import com.wmserp.app.domain.usecase.ResolvePickScanUseCase
-import com.wmserp.app.domain.usecase.SavePickProgressUseCase
-import com.wmserp.app.domain.usecase.StartPickingUseCase
+import com.wmserp.app.domain.usecase.SavePickRowProgressUseCase
+import com.wmserp.app.domain.usecase.StartPickRowUseCase
+import com.wmserp.app.domain.usecase.ValidatePickScanUseCase
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.FakeScannerController
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
+import com.wmserp.app.testutil.qrLabel
+import com.wmserp.app.testutil.rowUpdate
+import com.wmserp.app.testutil.withRow
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -47,149 +49,163 @@ class PickListViewModelTest {
 
     private val repository: PickListRepository = mockk()
     private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } returns flowOf(ScannerSettings()) }
-    private val authRepository: AuthRepository = mockk {
-        every { session } returns flowOf(TestFixtures.session)
-        every { events } returns emptyFlow()
-    }
-    private val scanner = FakeScannerController()
+    private val scanner = FakeScannerController(hasHardwareScanner = true)
 
     private val name = TestFixtures.pickList.name
-    private val picking = TestFixtures.pickList.copy(pickingStatus = PickingStatus.PICKING, pickingStartedBy = "user@example.com")
+    private val ready = TestFixtures.pickList
+    private var now = 1_000_000L
 
-    private fun createViewModel(initial: PickList = TestFixtures.pickList): PickListViewModel {
+    private fun createViewModel(initial: PickList = ready): PickListViewModel {
         coEvery { repository.getPickList(name) } returns AppResult.Success(initial)
-        return PickListViewModel(
+        coEvery { repository.getQrKeys(any()) } returns AppResult.Success(WmsQrKeys.DEFAULT)
+        val vm = PickListViewModel(
             GetPickListUseCase(repository),
-            StartPickingUseCase(repository),
-            SavePickProgressUseCase(repository),
-            CompletePickingUseCase(repository),
+            GetWmsQrKeysUseCase(repository),
+            StartPickRowUseCase(repository),
+            SavePickRowProgressUseCase(repository),
+            CompletePickRowUseCase(repository),
             GeneratePickDocumentUseCase(repository),
-            ResolvePickScanUseCase(repository),
+            ValidatePickScanUseCase(),
             observeSettings,
-            authRepository,
             scanner,
             SavedStateHandle(mapOf(PickListViewModel.ARG_NAME to name)),
         )
+        vm.clock = { now }
+        return vm
     }
 
     private fun PickListViewModel.line(rowName: String) = uiState.value.lines.first { it.item.rowName == rowName }
 
+    /** The server echoes the saved quantity; the row completes at the required quantity. */
+    private fun mockProgressFor(rowName: String, required: Double, base: () -> PickList, lastPickerOnComplete: Boolean = false) {
+        coEvery { repository.saveRowProgress(name, rowName, any(), any(), any(), any()) } answers {
+            val qty = arg<Double>(2)
+            val complete = qty >= required
+            val updated = base().withRow(rowName, qty, if (complete) PickRowStatus.PICKED else PickRowStatus.PICKING)
+            AppResult.Success(rowUpdate(updated, rowName, rowCompleted = complete, lastPicker = complete && lastPickerOnComplete && updated.allRowsPicked))
+        }
+    }
+
     @Test
-    fun `a ready pick list only offers Start Picking`() = runTest {
+    fun `shows only the rows assigned to me and makes the first open one active`() = runTest {
         val vm = createViewModel()
 
         val state = vm.uiState.value
         assertFalse(state.isLoading)
-        assertEquals(PickingStatus.READY_TO_PICK, state.status)
-        assertEquals(2, state.lines.size)
-        assertTrue(state.canStart)
-        assertFalse(state.canSave)
+        assertEquals(listOf("prow1", "prow2"), state.lines.map { it.item.rowName })
+        assertEquals("prow1", state.activeRowName)
+        assertEquals(1, state.otherRows)
+        assertTrue(state.canScan)
         assertFalse(state.canComplete)
-        assertFalse(state.canGenerate)
-        assertEquals("user@example.com", state.currentUser)
+        assertNull(state.outcome)
+        assertEquals(WmsQrKeys.DEFAULT, state.qrKeys)
     }
 
     @Test
-    fun `start picking moves the list into the Picking state`() = runTest {
-        coEvery { repository.startPicking(name) } returns AppResult.Success(picking)
+    fun `a matching QR label adds one and syncs the partial quantity together with the label`() = runTest {
+        mockProgressFor("prow1", 10.0, { ready })
         val vm = createViewModel()
 
-        vm.startPicking()
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
 
-        assertEquals(PickingStatus.PICKING, vm.uiState.value.status)
-        assertEquals(UiText.Res(R.string.pick_started_message), vm.uiState.value.message)
-        assertFalse(vm.uiState.value.canStart)
-    }
-
-    @Test
-    fun `scans increment rows locally and Complete stays disabled until every row is full`() = runTest {
-        val vm = createViewModel(picking)
-
-        vm.onScanned(ScannedCode("8690000000017", ScanSource.HARDWARE_KEYBOARD))
-
-        assertEquals("1", vm.line("prow1").qtyText)
+        assertEquals(1.0, vm.line("prow1").qty, 0.0)
+        assertEquals(PickRowStatus.PICKING, vm.line("prow1").status)
         assertTrue(vm.line("prow1").highlighted)
-        assertEquals(PickRowStatus.PARTIAL, vm.line("prow1").status)
         assertEquals(UiText.Res(R.string.pick_line_added, listOf("ITEM-001")), vm.uiState.value.message)
         assertEquals(1, scanner.feedbackCalls.size)
-        assertFalse(vm.uiState.value.canComplete)
-
-        repeat(9) { vm.onScanned(ScannedCode("ITEM-001", ScanSource.HARDWARE_INTENT)) }
-        repeat(5) { vm.onScanned(ScannedCode("b-001", ScanSource.CAMERA)) }
-
-        assertEquals("10", vm.line("prow1").qtyText)
-        assertEquals("5", vm.line("prow2").qtyText)
-        assertEquals("B-001", vm.line("prow2").batchText)
-        assertEquals(PickRowStatus.PICKED, vm.line("prow2").status)
-        assertTrue(vm.uiState.value.allRowsComplete)
-        assertTrue(vm.uiState.value.canComplete)
-        coVerify(exactly = 0) { repository.resolveScan(any(), any()) }
-
-        vm.onScanned(ScannedCode("ITEM-001", ScanSource.MANUAL))
-
-        assertEquals("10", vm.line("prow1").qtyText)
-        assertEquals(UiText.Res(R.string.pick_line_complete, listOf("ITEM-001", "10")), vm.uiState.value.message)
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 1.0, "ITEM-001", "B-001", any()) }
+        assertFalse(vm.line("prow1").syncing)
     }
 
     @Test
-    fun `codes unknown to the device are resolved by the server`() = runTest {
-        coEvery { repository.resolveScan(name, "999") } returns AppResult.Success(PickScanMatch(null, "ITEM-999", null, PickScanMatchType.NOT_ON_LIST))
-        coEvery { repository.resolveScan(name, "BATCH-X") } returns AppResult.Success(PickScanMatch("prow1", "ITEM-001", "BATCH-X", PickScanMatchType.BATCH))
-        val vm = createViewModel(picking)
-
-        vm.onScanned(ScannedCode("999", ScanSource.CAMERA))
-        assertEquals(UiText.Res(R.string.pick_not_on_list, listOf("ITEM-999")), vm.uiState.value.error)
-
-        vm.onScanned(ScannedCode("BATCH-X", ScanSource.CAMERA))
-        assertEquals("1", vm.line("prow1").qtyText)
-        assertEquals("BATCH-X", vm.line("prow1").batchText)
-    }
-
-    @Test
-    fun `scans are ignored unless the list is being picked`() = runTest {
+    fun `a wrong batch is rejected with the expected and scanned values and nothing is synced`() = runTest {
         val vm = createViewModel()
 
-        vm.onScanned(ScannedCode("ITEM-001", ScanSource.HARDWARE_KEYBOARD))
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-999"), ScanSource.CAMERA))
 
-        assertEquals("0", vm.line("prow1").qtyText)
-        assertTrue(scanner.feedbackCalls.isEmpty())
+        val alert = vm.uiState.value.scanAlert
+        assertNotNull(alert)
+        assertEquals(ScanAlertKind.WRONG_BATCH, alert!!.kind)
+        assertEquals("B-001", alert.expected)
+        assertEquals("B-999", alert.scanned)
+        assertEquals(UiText.Res(R.string.pick_wrong_batch, listOf("B-001", "B-999")), alert.message)
+        assertEquals(0.0, vm.line("prow1").qty, 0.0)
+        assertTrue(vm.line("prow1").highlighted)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
-    fun `save progress sends the edited quantities and clears the dirty flag`() = runTest {
-        val saved = picking.copy(items = picking.items.map { if (it.rowName == "prow1") it.copy(pickedQty = 4.0) else it })
-        coEvery { repository.saveProgress(name, listOf(PickProgressLine("prow1", 4.0, null), PickProgressLine("prow2", 0.0, "B-001"))) } returns AppResult.Success(saved)
-        val vm = createViewModel(picking)
-        vm.setQty("prow1", "4")
-        assertTrue(vm.uiState.value.hasUnsavedChanges)
-        assertTrue(vm.uiState.value.canSave)
+    fun `plain barcodes and unknown items are rejected`() = runTest {
+        val vm = createViewModel()
 
-        vm.saveProgress()
+        vm.onScanned(ScannedCode("8690000000017", ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(ScanAlertKind.INVALID_QR, vm.uiState.value.scanAlert?.kind)
+        assertEquals(UiText.Res(R.string.qr_error_not_json), vm.uiState.value.scanAlert?.message)
 
-        assertEquals(UiText.Res(R.string.pick_saved), vm.uiState.value.message)
-        assertFalse(vm.uiState.value.hasUnsavedChanges)
-        assertEquals(4.0, vm.line("prow1").item.pickedQty, 0.0)
+        vm.onScanned(ScannedCode(qrLabel("ITEM-003", "B-777"), ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(ScanAlertKind.NOT_ASSIGNED, vm.uiState.value.scanAlert?.kind)
+        assertEquals(UiText.Res(R.string.pick_item_not_assigned, listOf("ITEM-003")), vm.uiState.value.scanAlert?.message)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
-    fun `complete picking then create the purpose specific document exactly once`() = runTest {
-        val picked = picking.copy(
-            pickingStatus = PickingStatus.PICKED,
-            pickingCompletedBy = "user@example.com",
-            items = picking.items.map { it.copy(pickedQty = it.requiredQty) },
-        )
-        coEvery { repository.completePicking(name, listOf(PickProgressLine("prow1", 10.0, null), PickProgressLine("prow2", 5.0, "B-001"))) } returns AppResult.Success(picked)
-        coEvery { repository.generateDocument(name) } returns AppResult.Success(GeneratedDocument("Delivery Note", "MAT-DN-00001"))
-        val vm = createViewModel(picking)
-        vm.setQty("prow1", "10")
-        vm.setQty("prow2", "5")
+    fun `scanning beyond the required quantity is refused`() = runTest {
+        val full = ready.withRow("prow2", 5.0, PickRowStatus.PICKED)
+        val vm = createViewModel(full)
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-002"), ScanSource.HARDWARE_KEYBOARD))
+
+        assertEquals(ScanAlertKind.ALREADY_COMPLETE, vm.uiState.value.scanAlert?.kind)
+        assertEquals(5.0, vm.line("prow2").qty, 0.0)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `finishing my rows while others still work ends in Task Completed`() = runTest {
+        val start = ready.withRow("prow2", 5.0, PickRowStatus.PICKED)
+        var current = start
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any()) } answers {
+            val qty = arg<Double>(2)
+            current = current.withRow("prow1", qty, if (qty >= 10.0) PickRowStatus.PICKED else PickRowStatus.PICKING)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = qty >= 10.0, lastPicker = false))
+        }
+        val vm = createViewModel(start)
+
+        repeat(10) { vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_INTENT)) }
+
+        assertEquals(10.0, vm.line("prow1").qty, 0.0)
+        assertEquals(PickRowStatus.PICKED, vm.line("prow1").item.rowStatus)
+        assertTrue(vm.uiState.value.allMyRowsComplete)
+        assertNull(vm.uiState.value.outcome)
+        assertFalse(vm.uiState.value.canScan)
+        assertTrue(vm.uiState.value.canComplete)
 
         vm.completePicking()
 
-        assertEquals(PickingStatus.PICKED, vm.uiState.value.status)
+        assertEquals(PickOutcome.TASK_COMPLETED, vm.uiState.value.outcome)
+        assertFalse(vm.uiState.value.canGenerate)
+        coVerify(exactly = 0) { repository.completeRow(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `the picker who completes the last row of the card gets the document CTA`() = runTest {
+        val start = ready.withRow("prow2", 5.0, PickRowStatus.PICKED).withRow("prow3", 3.0, PickRowStatus.PICKED)
+        var current = start
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any()) } answers {
+            val qty = arg<Double>(2)
+            val complete = qty >= 10.0
+            current = current.withRow("prow1", qty, if (complete) PickRowStatus.PICKED else PickRowStatus.PICKING)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = complete, lastPicker = complete))
+        }
+        coEvery { repository.generateDocument(name) } returns AppResult.Success(GeneratedDocument("Delivery Note", "MAT-DN-00001"))
+        val vm = createViewModel(start)
+
+        repeat(10) { vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD)) }
+
+        assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
+        assertEquals(PickingStatus.PICKED, vm.uiState.value.cardStatus)
         assertEquals(UiText.Res(R.string.pick_completed_message), vm.uiState.value.message)
         assertTrue(vm.uiState.value.canGenerate)
-        assertNull(vm.uiState.value.generatedDocument)
 
         vm.generateDocument()
 
@@ -197,5 +213,57 @@ class PickListViewModelTest {
         assertEquals(UiText.Res(R.string.pick_document_created, listOf("Delivery Note", "MAT-DN-00001")), vm.uiState.value.message)
         assertFalse(vm.uiState.value.canGenerate)
         coVerify(exactly = 1) { repository.generateDocument(name) }
+    }
+
+    @Test
+    fun `Complete picking sends rows the server has not marked yet and applies the last picker rule`() = runTest {
+        val start = ready.withRow("prow2", 5.0, PickRowStatus.PICKED).withRow("prow3", 3.0, PickRowStatus.PICKED).withRow("prow1", 10.0, PickRowStatus.PICKING)
+        val finished = start.withRow("prow1", 10.0, PickRowStatus.PICKED)
+        coEvery { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) } returns AppResult.Success(rowUpdate(finished, "prow1", rowCompleted = true, lastPicker = true))
+        val vm = createViewModel(start)
+        assertTrue(vm.uiState.value.canComplete)
+
+        vm.completePicking()
+
+        assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
+        assertTrue(vm.uiState.value.canGenerate)
+        coVerify(exactly = 1) { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) }
+    }
+
+    @Test
+    fun `a failed sync rolls the local count back to the server value`() = runTest {
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any()) } returns AppResult.Failure(AppError.Network("offline"))
+        val vm = createViewModel()
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
+
+        assertEquals(0.0, vm.line("prow1").qty, 0.0)
+        assertFalse(vm.line("prow1").syncing)
+        assertEquals(UiText.Res(R.string.error_network_unreachable), vm.uiState.value.error)
+    }
+
+    @Test
+    fun `selecting a row starts its timer on the server and sends the elapsed time with the scan`() = runTest {
+        coEvery { repository.startRow(name, "prow2") } returns AppResult.Success(rowUpdate(ready.withRow("prow2", 0.0, PickRowStatus.PICKING), "prow2", rowCompleted = false))
+        mockProgressFor("prow2", 5.0, { ready })
+        val vm = createViewModel()
+
+        vm.selectRow("prow2")
+        now += 42_000
+        vm.onScanned(ScannedCode(qrLabel("ITEM-002"), ScanSource.HARDWARE_KEYBOARD))
+
+        assertEquals("prow2", vm.uiState.value.activeRowName)
+        coVerify(exactly = 1) { repository.startRow(name, "prow2") }
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow2", 1.0, "ITEM-002", null, 42.0) }
+    }
+
+    @Test
+    fun `an already picked card opens in the post picking state`() = runTest {
+        val picked = ready.withRow("prow1", 10.0, PickRowStatus.PICKED).withRow("prow2", 5.0, PickRowStatus.PICKED).withRow("prow3", 3.0, PickRowStatus.PICKED)
+        val vm = createViewModel(picked)
+
+        assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
+        assertTrue(vm.uiState.value.canGenerate)
+        assertFalse(vm.uiState.value.canScan)
     }
 }

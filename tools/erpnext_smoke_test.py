@@ -12,8 +12,9 @@ Only the Python standard library is used. Run it from any machine that can reach
 
 Options:
     --barcode 8690000000017     also test the barcode lookup used by the Scan screen
-    --pick-list STO-PICK-00001  run the picking workflow (start / save / complete / generate) on
-                                this submitted Pick List. THIS WRITES DATA; use a test site.
+    --pick-list STO-PICK-00001  run the row-level picking workflow (start_row / save_row_progress /
+                                complete_row / generate_document) on the rows of this submitted Pick List
+                                that are assigned to the API user. THIS WRITES DATA; use a test site.
     --json                      print the raw JSON of every response (verbose)
 
 Read checks never modify anything. Exit code is 1 when at least one check fails.
@@ -49,7 +50,7 @@ class Client:
         self.headers = {
             "Authorization": f"token {key}:{secret}",
             "Accept": "application/json",
-            "User-Agent": "WmsErp-smoke-test/1.0",
+            "User-Agent": "WmsErp-smoke-test/1.1",
         }
         self.verbose = verbose
 
@@ -142,7 +143,7 @@ class Report:
     def add(self, area, name, status, ok, detail=""):
         self.rows.append((area, name, status, ok, detail))
         mark = "PASS" if ok else "FAIL"
-        print(f"[{mark}] {area:<10} {name:<52} HTTP {status:<3} {detail}")
+        print(f"[{mark}] {area:<10} {name:<56} HTTP {status:<3} {detail}")
 
     @property
     def failures(self):
@@ -194,6 +195,15 @@ def check_single_value(client, report, area, name, doctype, field):
     value = payload.get("message") if ok else None
     report.add(area, name, status, ok, f"{field}={value!r}" if ok else server_message(payload, raw))
     return value
+
+
+def check_method(client, report, area, name, method, params=None, body=None, expect=dict):
+    """GET (params) or POST (body) a whitelisted method; the message must be of type `expect`."""
+    status, payload, raw = client.post(method, body) if body is not None else client.call(method, params)
+    message = payload.get("message") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(message, expect)
+    report.add(area, name, status, ok, "" if ok else server_message(payload, raw))
+    return message if ok else None
 
 
 def main() -> int:
@@ -297,28 +307,27 @@ def main() -> int:
 
     # ---- Picking (custom app) ----------------------------------------------------------------
     if not installed_picking:
-        report.add("picking", "wmserp_picking app", 0, False, "not installed on this site (Pick tab will show an error). See erpnext/wmserp_picking/README.md")
+        report.add("picking", "wmserp_picking app", 0, False, "not installed on this site (Pick tab and picking KPIs will fail). See erpnext/wmserp_picking/README.md")
     else:
-        status, payload, raw = client.call(PICKING_METHOD + "get_my_pick_lists")
-        lists = payload.get("message") if isinstance(payload, dict) else None
-        ok = status == 200 and isinstance(lists, list)
-        report.add("picking", "get_my_pick_lists", status, ok, f"{len(lists)} assigned pick list(s)" if ok else server_message(payload, raw))
-        target = args.pick_list or (lists[0]["name"] if ok and lists else None)
+        settings = check_method(client, report, "picking", "get_settings (QR keys)", PICKING_METHOD + "get_settings")
+        if settings:
+            print(f"           QR keys: item={settings.get('qr_item_key')!r} batch={settings.get('qr_batch_key')!r} app={settings.get('app_version')}")
+        kpis = check_method(client, report, "picking", "get_picker_kpis (dashboard)", PICKING_METHOD + "get_picker_kpis")
+        if kpis:
+            print(f"           today: rows_picked={kpis.get('rows_picked')} avg={kpis.get('avg_seconds_per_row')} open_rows={kpis.get('open_rows')}")
+        lists = check_method(client, report, "picking", "get_my_pick_lists (my tasks)", PICKING_METHOD + "get_my_pick_lists", expect=list)
+        if lists is not None:
+            print(f"           {len(lists)} open pick list(s) with rows assigned to {user}")
+        target = args.pick_list or (lists[0]["name"] if lists else None)
         if target:
-            status, payload, raw = client.call(PICKING_METHOD + "get_pick_list", {"name": target})
-            doc = payload.get("message") if isinstance(payload, dict) else None
-            ok = status == 200 and isinstance(doc, dict) and "items" in doc
-            report.add("picking", f"get_pick_list {target}", status, ok, f"status={doc.get('picking_status')} rows={len(doc.get('items', []))}" if ok else server_message(payload, raw))
-            if ok and doc["items"]:
-                code = doc["items"][0]["item_code"]
-                status, payload, raw = client.post(PICKING_METHOD + "resolve_scan", {"name": target, "code": code})
-                match = payload.get("message") if isinstance(payload, dict) else None
-                ok = status == 200 and isinstance(match, dict)
-                report.add("picking", f"resolve_scan {code}", status, ok, f"match={match.get('match')} row={match.get('row_name')}" if ok else server_message(payload, raw))
-            if ok and args.pick_list:
-                run_picking_flow(client, report, target, doc)
+            doc = check_method(client, report, "picking", f"get_pick_list {target}", PICKING_METHOD + "get_pick_list", params={"name": target})
+            if doc:
+                mine = [r for r in doc.get("items", []) if r.get("is_mine")]
+                print(f"           status={doc.get('picking_status')} rows={len(doc.get('items', []))} mine={len(mine)} all_rows_picked={doc.get('all_rows_picked')}")
+                if args.pick_list:
+                    run_picking_flow(client, report, target, doc, settings or {})
         else:
-            report.add("picking", "picking workflow", 0, True, "skipped: no pick list assigned to this user (pass --pick-list NAME to test one)")
+            report.add("picking", "picking workflow", 0, True, "skipped: no open pick list has rows assigned to this user (pass --pick-list NAME to test one)")
 
     failures = report.failures
     print("\n" + "=" * 100)
@@ -328,40 +337,58 @@ def main() -> int:
     if failures:
         print("\nTypical causes: 403 = the API user's roles lack read permission on that DocType (grant Stock User /"
               " Sales User / Purchase User / Accounts User, or Stock Manager); 417/500 on a report = filters changed"
-              " in this ERPNext version; 404 on wmserp_picking.* = custom app not installed.")
+              " in this ERPNext version; 404 on wmserp_picking.* = custom app not installed or bench not restarted.")
     return 1 if failures else 0
 
 
-def run_picking_flow(client, report, name, doc):
-    """start -> save_progress -> complete_picking -> generate_document on a real pick list (writes)."""
-    print(f"\n--- picking workflow on {name} (writes data) ---")
-    status, payload, raw = client.post(PICKING_METHOD + "start_picking", {"name": name})
-    doc = payload.get("message") if isinstance(payload, dict) else None
-    ok = status == 200 and isinstance(doc, dict) and doc.get("picking_status") == "Picking"
-    report.add("picking", "start_picking", status, ok, f"status={doc.get('picking_status')}" if ok else server_message(payload, raw))
-    if not ok:
+def run_picking_flow(client, report, name, doc, settings):
+    """start_row -> save_row_progress -> complete_row on the API user's rows, then generate_document
+    when this call turned out to be the last picker (writes data)."""
+    print(f"\n--- row-level picking workflow on {name} (writes data) ---")
+    item_key = settings.get("qr_item_key") or "item_code"
+    batch_key = settings.get("qr_batch_key") or "batch_no"
+    mine = [r for r in doc.get("items", []) if r.get("is_mine") and r.get("row_status") != "Picked"]
+    if not mine:
+        report.add("picking", "rows assigned to me", 0, False, "no open row of this pick list is assigned to the API user (set Picker on the rows first)")
         return
-    rows = doc["items"]
-    partial = [{"name": rows[0]["name"], "picked_qty": rows[0]["required_qty"] / 2}]
-    status, payload, raw = client.post(PICKING_METHOD + "save_progress", {"name": name, "items": partial})
-    ok = status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), dict)
-    report.add("picking", "save_progress (half of row 1)", status, ok, f"picked={payload['message'].get('picked_qty')}" if ok else server_message(payload, raw))
-    full = [{"name": r["name"], "picked_qty": r["required_qty"], "batch_no": r.get("batch_no")} for r in rows]
-    status, payload, raw = client.post(PICKING_METHOD + "complete_picking", {"name": name, "items": full})
-    doc = payload.get("message") if isinstance(payload, dict) else None
-    ok = status == 200 and isinstance(doc, dict) and doc.get("picking_status") == "Picked"
-    report.add("picking", "complete_picking (all rows)", status, ok, f"status={doc.get('picking_status')}" if ok else server_message(payload, raw))
-    if not ok:
+    first = mine[0]
+    label = {item_key: first["item_code"]}
+    if first.get("batch_no"):
+        label[batch_key] = first["batch_no"]
+    print(f"           scanning label {json.dumps(label)} for row {first['idx']}")
+
+    result = check_method(client, report, "picking", f"start_row (row {first['idx']})", PICKING_METHOD + "start_row", body={"name": name, "row": first["name"]})
+    if not result:
         return
-    status, payload, raw = client.post(PICKING_METHOD + "generate_document", {"name": name})
-    result = payload.get("message") if isinstance(payload, dict) else None
-    ok = status == 200 and isinstance(result, dict) and result.get("name")
-    report.add("picking", "generate_document", status, ok, f"{result.get('doctype')} {result.get('name')} already={result.get('already_generated')}" if ok else server_message(payload, raw))
-    if ok:
-        status, payload, raw = client.post(PICKING_METHOD + "generate_document", {"name": name})
-        again = payload.get("message") if isinstance(payload, dict) else None
-        ok2 = status == 200 and isinstance(again, dict) and again.get("already_generated") is True and again.get("name") == result.get("name")
-        report.add("picking", "generate_document again (duplicate prevention)", status, ok2, f"returned {again.get('name')}" if ok2 else server_message(payload, raw))
+    half = {"name": name, "row": first["name"], "picked_qty": first["required_qty"] / 2, "item_code": label[item_key], "batch_no": label.get(batch_key), "elapsed_seconds": 5}
+    result = check_method(client, report, "picking", "save_row_progress (half of the row, with label)", PICKING_METHOD + "save_row_progress", body=half)
+    if result:
+        print(f"           row_status={result['row'].get('row_status')} picked={result['row'].get('picked_qty')} card={result['pick_list'].get('picking_status')}")
+
+    wrong = dict(half, batch_no="WRONG-BATCH-FOR-TEST")
+    status, payload, raw = client.post(PICKING_METHOD + "save_row_progress", wrong)
+    rejected = status != 200 and "batch" in server_message(payload, raw).lower()
+    report.add("picking", "save_row_progress rejects a wrong batch", status, rejected or not first.get("batch_no"),
+               server_message(payload, raw) if rejected else ("row has no allocated batch, check skipped" if not first.get("batch_no") else "accepted a wrong batch!"))
+
+    last_picker = False
+    for row in mine:
+        body = {"name": name, "row": row["name"], "picked_qty": row["required_qty"], "batch_no": row.get("batch_no"), "elapsed_seconds": 30}
+        result = check_method(client, report, "picking", f"complete_row (row {row['idx']}, {row['item_code']})", PICKING_METHOD + "complete_row", body=body)
+        if not result:
+            return
+        print(f"           row_completed={result.get('row_completed')} card_completed={result.get('card_completed')} is_last_picker={result.get('is_last_picker')} duration={result['row'].get('duration_seconds')}")
+        last_picker = last_picker or bool(result.get("is_last_picker"))
+
+    if not last_picker:
+        report.add("picking", "last picker rule", 200, True, "other pickers still have open rows: 'Task completed' path (no document CTA)")
+        return
+    result = check_method(client, report, "picking", "generate_document (last picker)", PICKING_METHOD + "generate_document", body={"name": name})
+    if result:
+        print(f"           {result.get('doctype')} {result.get('name')} already_generated={result.get('already_generated')}")
+        again = check_method(client, report, "picking", "generate_document again (duplicate prevention)", PICKING_METHOD + "generate_document", body={"name": name})
+        if again and not (again.get("already_generated") and again.get("name") == result.get("name")):
+            report.add("picking", "duplicate prevention", 200, False, f"second call returned {again.get('name')} already_generated={again.get('already_generated')}")
 
 
 if __name__ == "__main__":

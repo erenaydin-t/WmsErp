@@ -278,13 +278,13 @@ private fun PickListCard(pickList: PickList, onClick: () -> Unit) {
                 StatusChip(stringResource(pickList.pickingStatus.labelRes()), statusColor)
             }
             ProgressRow(
-                label = stringResource(R.string.pick_card_progress, Formatters.qty(pickList.pickedQty), Formatters.qty(pickList.requiredQty)),
-                fraction = pickList.progress,
-                valueText = stringResource(R.string.pick_card_items, pickList.itemCount),
+                label = stringResource(R.string.pick_card_my_rows, pickList.myPickedRows, pickList.myRowCount),
+                fraction = pickList.myProgress,
+                valueText = stringResource(R.string.pick_card_progress, Formatters.qty(pickList.pickedQty), Formatters.qty(pickList.requiredQty)),
                 color = statusColor,
             )
             Text(
-                listOfNotNull(stringResource(pickList.purpose.labelRes()), pickList.parentWarehouse).joinToString(" · "),
+                listOfNotNull(stringResource(pickList.purpose.labelRes()), pickList.parentWarehouse, stringResource(R.string.pick_card_items, pickList.itemCount)).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
