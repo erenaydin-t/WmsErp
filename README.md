@@ -84,6 +84,14 @@ otherwise the user is returned to the login screen.
 * **Camera fallback**: CameraX + ML Kit barcode scanning (all 1D/2D formats) with graceful runtime permission handling.
 * Mode is selectable in *Profile → Scanner* (Auto / Hardware / Camera) with beep & vibration feedback.
 
+### Zebra DataWedge profile (optional)
+
+Keyboard wedge works out of the box. If you prefer intent output, create a DataWedge profile for
+`com.wmserp.app` with **Intent output** enabled, *Intent action* `com.wmserp.app.SCAN`, *Intent delivery*
+"Broadcast intent", and keep the default `com.symbol.datawedge.data_string` extra. Other vendors: enable
+"Intent/Broadcast" output in the scanner settings app; the default actions listed in `IntentScanParser` are
+recognised automatically.
+
 ## Building
 
 ```bash
