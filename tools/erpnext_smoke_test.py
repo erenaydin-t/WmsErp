@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""Replays every ERPNext request the WMS ERP Android app makes against a real site and reports
+what fails, so server-side problems (permissions, missing fields, missing custom app, report
+filters) can be found without a device.
+
+Only the Python standard library is used. Run it from any machine that can reach the site:
+
+    python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY --secret API_SECRET
+
+    # or with environment variables
+    ERP_URL=https://erp.example.com ERP_KEY=... ERP_SECRET=... python3 tools/erpnext_smoke_test.py
+
+Options:
+    --barcode 8690000000017     also test the barcode lookup used by the Scan screen
+    --pick-list STO-PICK-00001  run the picking workflow (start / save / complete / generate) on
+                                this submitted Pick List. THIS WRITES DATA; use a test site.
+    --json                      print the raw JSON of every response (verbose)
+
+Read checks never modify anything. Exit code is 1 when at least one check fails.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# Mirrors app/src/main/java/com/wmserp/app/data/repository/*.kt
+PO_OPEN_STATUSES = ["To Receive and Bill", "To Receive"]
+SO_OPEN_STATUSES = ["To Deliver and Bill", "To Deliver"]
+PO_LIST_FIELDS = ["name", "supplier", "supplier_name", "status", "transaction_date", "schedule_date", "grand_total", "currency", "per_received", "set_warehouse", "company", "docstatus"]
+SO_LIST_FIELDS = ["name", "customer", "customer_name", "status", "transaction_date", "delivery_date", "grand_total", "currency", "per_delivered", "set_warehouse", "company", "docstatus"]
+DN_LIST_FIELDS = ["name", "customer", "customer_name", "status", "posting_date", "docstatus", "grand_total", "currency"]
+ITEM_LIST_FIELDS = ["name", "item_code", "item_name", "item_group", "stock_uom", "description", "image", "disabled", "is_stock_item", "valuation_rate", "standard_rate", "brand"]
+BIN_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "reserved_qty", "ordered_qty", "projected_qty", "stock_uom"]
+WAREHOUSE_FIELDS = ["name", "warehouse_name", "company", "is_group", "parent_warehouse", "disabled", "warehouse_type", "city"]
+SLE_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "voucher_type", "voucher_no", "posting_date", "posting_time"]
+PICKING_METHOD = "wmserp_picking.api.pick_list."
+
+
+class Client:
+    def __init__(self, url: str, key: str, secret: str, verbose: bool = False):
+        self.base = url.rstrip("/")
+        self.headers = {
+            "Authorization": f"token {key}:{secret}",
+            "Accept": "application/json",
+            "User-Agent": "WmsErp-smoke-test/1.0",
+        }
+        self.verbose = verbose
+
+    def request(self, method: str, path: str, params: dict | None = None, body: dict | None = None):
+        url = f"{self.base}/{path.lstrip('/')}"
+        if params:
+            url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+        data = None
+        headers = dict(self.headers)
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                raw = response.read().decode()
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode(errors="replace")
+            status = exc.code
+        except (urllib.error.URLError, OSError) as exc:
+            return 0, None, f"connection error: {exc}"
+        try:
+            payload = json.loads(raw) if raw else {}
+        except ValueError:
+            payload = None
+        if self.verbose:
+            print(f"    {method} {url}\n    -> {status} {raw[:600]}")
+        return status, payload, raw
+
+    # -- the exact call shapes used by the app --------------------------------------------
+
+    def get_list(self, doctype, fields, filters=None, or_filters=None, order_by=None, limit=20):
+        params = {"fields": json.dumps(fields), "limit_page_length": limit}
+        if filters:
+            params["filters"] = json.dumps(filters)
+        if or_filters:
+            params["or_filters"] = json.dumps(or_filters)
+        if order_by:
+            params["order_by"] = order_by
+        return self.request("GET", f"api/resource/{urllib.parse.quote(doctype)}", params)
+
+    def get_doc(self, doctype, name):
+        return self.request("GET", f"api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name, safe='')}")
+
+    def get_count(self, doctype, filters):
+        return self.request("GET", "api/method/frappe.client.get_count", {"doctype": doctype, "filters": json.dumps(filters)})
+
+    def get_single_value(self, doctype, field):
+        return self.request("GET", "api/method/frappe.client.get_single_value", {"doctype": doctype, "field": field})
+
+    def run_report(self, report_name, filters):
+        return self.request("GET", "api/method/frappe.desk.query_report.run", {"report_name": report_name, "filters": json.dumps(filters), "ignore_prepared_report": "1"})
+
+    def call(self, method, params=None):
+        return self.request("GET", f"api/method/{method}", params)
+
+    def post(self, method, body):
+        return self.request("POST", f"api/method/{method}", body=body)
+
+
+def server_message(payload, raw) -> str:
+    """Extracts the human readable error the app would show."""
+    if not isinstance(payload, dict):
+        return (raw or "")[:300]
+    parts = []
+    messages = payload.get("_server_messages")
+    if messages:
+        try:
+            for item in json.loads(messages):
+                try:
+                    parts.append(json.loads(item).get("message", item))
+                except (ValueError, AttributeError):
+                    parts.append(str(item))
+        except ValueError:
+            parts.append(str(messages))
+    if payload.get("exc_type"):
+        parts.append(f"[{payload['exc_type']}]")
+    if not parts and payload.get("exception"):
+        parts.append(str(payload["exception"]).splitlines()[-1])
+    if not parts and payload.get("message") and isinstance(payload["message"], str):
+        parts.append(payload["message"])
+    return " ".join(parts)[:400] or (raw or "")[:300]
+
+
+class Report:
+    def __init__(self):
+        self.rows = []
+
+    def add(self, area, name, status, ok, detail=""):
+        self.rows.append((area, name, status, ok, detail))
+        mark = "PASS" if ok else "FAIL"
+        print(f"[{mark}] {area:<10} {name:<52} HTTP {status:<3} {detail}")
+
+    @property
+    def failures(self):
+        return [row for row in self.rows if not row[3]]
+
+
+def check_list(client, report, area, name, doctype, fields, expect_keys=(), **kwargs):
+    status, payload, raw = client.get_list(doctype, fields, **kwargs)
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(rows, list)
+    detail = ""
+    if ok:
+        detail = f"{len(rows)} row(s)"
+        if rows and expect_keys:
+            missing = [key for key in expect_keys if key not in rows[0]]
+            if missing:
+                ok = False
+                detail += f"; missing keys the app needs: {missing}"
+    else:
+        detail = server_message(payload, raw)
+    report.add(area, name, status, ok, detail)
+    return rows if ok else None
+
+
+def check_doc(client, report, area, name, doctype, docname, expect_keys=()):
+    status, payload, raw = client.get_doc(doctype, docname)
+    doc = payload.get("data") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(doc, dict)
+    detail = ""
+    if ok:
+        missing = [key for key in expect_keys if key not in doc]
+        detail = f"{doctype} {docname}" + (f"; missing keys: {missing}" if missing else "")
+        ok = not missing
+    else:
+        detail = server_message(payload, raw)
+    report.add(area, name, status, ok, detail)
+    return doc if ok else None
+
+
+def check_count(client, report, area, name, doctype, filters):
+    status, payload, raw = client.get_count(doctype, filters)
+    ok = status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), (int, float))
+    report.add(area, name, status, ok, f"count={payload.get('message')}" if ok else server_message(payload, raw))
+
+
+def check_single_value(client, report, area, name, doctype, field):
+    status, payload, raw = client.get_single_value(doctype, field)
+    ok = status == 200 and isinstance(payload, dict) and "message" in payload
+    value = payload.get("message") if ok else None
+    report.add(area, name, status, ok, f"{field}={value!r}" if ok else server_message(payload, raw))
+    return value
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--url", default=os.environ.get("ERP_URL"))
+    parser.add_argument("--key", default=os.environ.get("ERP_KEY"))
+    parser.add_argument("--secret", default=os.environ.get("ERP_SECRET"))
+    parser.add_argument("--barcode")
+    parser.add_argument("--pick-list", dest="pick_list")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    if not (args.url and args.key and args.secret):
+        parser.error("--url, --key and --secret (or ERP_URL / ERP_KEY / ERP_SECRET) are required")
+
+    client = Client(args.url, args.key, args.secret, verbose=args.json)
+    report = Report()
+    today = dt.date.today()
+    month_start = today.replace(day=1)
+
+    # ---- Login / session ---------------------------------------------------------------
+    status, payload, raw = client.call("frappe.auth.get_logged_user")
+    user = payload.get("message") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(user, str) and user not in ("", "Guest")
+    report.add("auth", "frappe.auth.get_logged_user (token login)", status, ok, f"user={user}" if ok else server_message(payload, raw))
+    if not ok:
+        print("\nAuthentication failed; nothing else can be checked. Verify the API key/secret pair and that the user is enabled.")
+        return 1
+
+    status, payload, raw = client.call("frappe.utils.change_log.get_versions")
+    if status == 200 and isinstance(payload, dict):
+        versions = {k: v.get("version") for k, v in payload["message"].items()}
+        installed_picking = "wmserp_picking" in versions
+        report.add("auth", "installed apps", status, True, json.dumps(versions))
+    else:
+        installed_picking = False
+        report.add("auth", "installed apps", status, False, server_message(payload, raw))
+
+    # ---- Profile -----------------------------------------------------------------------
+    check_doc(client, report, "profile", "GET User/<me>", "User", user, ("name", "first_name", "full_name", "roles"))
+
+    # ---- Dashboard KPIs ------------------------------------------------------------------
+    check_count(client, report, "dashboard", "count Item (disabled=0)", "Item", [["disabled", "=", 0]])
+    check_count(client, report, "dashboard", "count Purchase Order (open)", "Purchase Order", [["docstatus", "=", 1], ["status", "in", PO_OPEN_STATUSES]])
+    check_count(client, report, "dashboard", "count Sales Order (open)", "Sales Order", [["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]])
+    check_list(client, report, "dashboard", "Sales Invoice sum(grand_total) this month", "Sales Invoice", ["sum(grand_total) as total"],
+               filters=[["docstatus", "=", 1], ["posting_date", ">=", str(month_start)], ["posting_date", "<=", str(today)]], limit=1)
+    check_count(client, report, "dashboard", "count Delivery Note this month", "Delivery Note", [["docstatus", "=", 1], ["posting_date", ">=", str(month_start)]])
+    check_single_value(client, report, "dashboard", "Global Defaults.default_currency", "Global Defaults", "default_currency")
+    check_list(client, report, "dashboard", "recent Stock Ledger Entry (activity)", "Stock Ledger Entry", SLE_FIELDS, ("item_code", "warehouse", "actual_qty"),
+               filters=[["is_cancelled", "=", 0]], order_by="posting_date desc, posting_time desc, creation desc", limit=10)
+
+    # ---- Inventory / analytics -----------------------------------------------------------
+    check_count(client, report, "analytics", "count Purchase Receipt last 7 days", "Purchase Receipt", [["docstatus", "=", 1], ["posting_date", ">=", str(today - dt.timedelta(days=7))]])
+    check_count(client, report, "analytics", "count Pick List (Draft/Open)", "Pick List", [["docstatus", "<", 2], ["status", "in", ["Draft", "Open"]]])
+    check_list(client, report, "analytics", "overdue Sales Orders (delivery delays)", "Sales Order", SO_LIST_FIELDS, ("name", "delivery_date"),
+               filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES], ["delivery_date", "<", str(today)]], order_by="delivery_date asc", limit=50)
+    check_list(client, report, "analytics", "Stock Ledger Entry last 7 days (heatmap)", "Stock Ledger Entry", SLE_FIELDS, ("posting_date",),
+               filters=[["is_cancelled", "=", 0], ["posting_date", ">=", str(today - dt.timedelta(days=6))]], order_by="posting_date asc", limit=2000)
+    company = check_single_value(client, report, "analytics", "Global Defaults.default_company", "Global Defaults", "default_company")
+    if not company:
+        rows = check_list(client, report, "analytics", "first Company (fallback)", "Company", ["name"], ("name",), limit=1)
+        company = rows[0]["name"] if rows else None
+    if company:
+        status, payload, raw = client.run_report("Stock Ageing", {"company": company, "to_date": str(today), "range1": 30, "range2": 60, "range3": 90, "show_warehouse_wise_stock": 0})
+        message = payload.get("message") if isinstance(payload, dict) else None
+        ok = status == 200 and isinstance(message, dict) and "result" in message
+        report.add("analytics", "query_report.run Stock Ageing", status, ok,
+                   f"{len(message.get('result') or [])} row(s), {len(message.get('columns') or [])} column(s)" if ok else server_message(payload, raw))
+    else:
+        report.add("analytics", "query_report.run Stock Ageing", 0, False, "no company available")
+
+    # ---- Items / scan ----------------------------------------------------------------------
+    items = check_list(client, report, "inventory", "Item list (search)", "Item", ITEM_LIST_FIELDS, ("item_code", "item_name", "stock_uom"),
+                       filters=[["disabled", "=", 0]], order_by="modified desc", limit=20)
+    first_item = items[0]["name"] if items else None
+    if first_item:
+        check_doc(client, report, "inventory", "GET Item/<first> (barcodes child table)", "Item", first_item, ("item_code", "stock_uom", "barcodes"))
+        check_list(client, report, "inventory", "Bin by item (stock levels)", "Bin", BIN_FIELDS, ("item_code", "warehouse", "actual_qty"),
+                   filters=[["item_code", "=", first_item]], order_by="actual_qty desc", limit=50)
+    if args.barcode:
+        check_list(client, report, "inventory", f"Item by barcode {args.barcode} (child filter)", "Item", ITEM_LIST_FIELDS, ("item_code",),
+                   filters=[["Item Barcode", "barcode", "=", args.barcode]], limit=1)
+    warehouses = check_list(client, report, "inventory", "Warehouse list", "Warehouse", WAREHOUSE_FIELDS, ("name", "warehouse_name"),
+                            filters=[["is_group", "=", 0], ["disabled", "=", 0]], order_by="name asc", limit=50)
+    if warehouses:
+        check_doc(client, report, "inventory", "GET Warehouse/<first>", "Warehouse", warehouses[0]["name"], ("name", "warehouse_name"))
+        check_list(client, report, "inventory", "Bin by warehouse", "Bin", BIN_FIELDS, ("item_code",),
+                   filters=[["warehouse", "=", warehouses[0]["name"]], ["actual_qty", ">", 0]], order_by="actual_qty desc", limit=50)
+
+    # ---- Orders ----------------------------------------------------------------------------
+    pos = check_list(client, report, "orders", "open Purchase Orders", "Purchase Order", PO_LIST_FIELDS, ("name", "supplier_name", "per_received"),
+                     filters=[["docstatus", "=", 1], ["status", "in", PO_OPEN_STATUSES]], order_by="schedule_date asc, modified desc", limit=30)
+    if pos:
+        check_doc(client, report, "orders", "GET Purchase Order/<first> (items)", "Purchase Order", pos[0]["name"], ("items", "supplier"))
+    sos = check_list(client, report, "orders", "open Sales Orders", "Sales Order", SO_LIST_FIELDS, ("name", "customer_name", "per_delivered"),
+                     filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]], order_by="delivery_date asc, modified desc", limit=30)
+    if sos:
+        check_doc(client, report, "orders", "GET Sales Order/<first> (items)", "Sales Order", sos[0]["name"], ("items", "customer"))
+    check_list(client, report, "orders", "recent Delivery Notes", "Delivery Note", DN_LIST_FIELDS, ("name",),
+               filters=[["docstatus", "=", 1]], order_by="posting_date desc, modified desc", limit=10)
+
+    # ---- Picking (custom app) ----------------------------------------------------------------
+    if not installed_picking:
+        report.add("picking", "wmserp_picking app", 0, False, "not installed on this site (Pick tab will show an error). See erpnext/wmserp_picking/README.md")
+    else:
+        status, payload, raw = client.call(PICKING_METHOD + "get_my_pick_lists")
+        lists = payload.get("message") if isinstance(payload, dict) else None
+        ok = status == 200 and isinstance(lists, list)
+        report.add("picking", "get_my_pick_lists", status, ok, f"{len(lists)} assigned pick list(s)" if ok else server_message(payload, raw))
+        target = args.pick_list or (lists[0]["name"] if ok and lists else None)
+        if target:
+            status, payload, raw = client.call(PICKING_METHOD + "get_pick_list", {"name": target})
+            doc = payload.get("message") if isinstance(payload, dict) else None
+            ok = status == 200 and isinstance(doc, dict) and "items" in doc
+            report.add("picking", f"get_pick_list {target}", status, ok, f"status={doc.get('picking_status')} rows={len(doc.get('items', []))}" if ok else server_message(payload, raw))
+            if ok and doc["items"]:
+                code = doc["items"][0]["item_code"]
+                status, payload, raw = client.post(PICKING_METHOD + "resolve_scan", {"name": target, "code": code})
+                match = payload.get("message") if isinstance(payload, dict) else None
+                ok = status == 200 and isinstance(match, dict)
+                report.add("picking", f"resolve_scan {code}", status, ok, f"match={match.get('match')} row={match.get('row_name')}" if ok else server_message(payload, raw))
+            if ok and args.pick_list:
+                run_picking_flow(client, report, target, doc)
+        else:
+            report.add("picking", "picking workflow", 0, True, "skipped: no pick list assigned to this user (pass --pick-list NAME to test one)")
+
+    failures = report.failures
+    print("\n" + "=" * 100)
+    print(f"{len(report.rows) - len(failures)} passed, {len(failures)} failed")
+    for area, name, status, _ok, detail in failures:
+        print(f"  - [{area}] {name}: HTTP {status} {detail}")
+    if failures:
+        print("\nTypical causes: 403 = the API user's roles lack read permission on that DocType (grant Stock User /"
+              " Sales User / Purchase User / Accounts User, or Stock Manager); 417/500 on a report = filters changed"
+              " in this ERPNext version; 404 on wmserp_picking.* = custom app not installed.")
+    return 1 if failures else 0
+
+
+def run_picking_flow(client, report, name, doc):
+    """start -> save_progress -> complete_picking -> generate_document on a real pick list (writes)."""
+    print(f"\n--- picking workflow on {name} (writes data) ---")
+    status, payload, raw = client.post(PICKING_METHOD + "start_picking", {"name": name})
+    doc = payload.get("message") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(doc, dict) and doc.get("picking_status") == "Picking"
+    report.add("picking", "start_picking", status, ok, f"status={doc.get('picking_status')}" if ok else server_message(payload, raw))
+    if not ok:
+        return
+    rows = doc["items"]
+    partial = [{"name": rows[0]["name"], "picked_qty": rows[0]["required_qty"] / 2}]
+    status, payload, raw = client.post(PICKING_METHOD + "save_progress", {"name": name, "items": partial})
+    ok = status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), dict)
+    report.add("picking", "save_progress (half of row 1)", status, ok, f"picked={payload['message'].get('picked_qty')}" if ok else server_message(payload, raw))
+    full = [{"name": r["name"], "picked_qty": r["required_qty"], "batch_no": r.get("batch_no")} for r in rows]
+    status, payload, raw = client.post(PICKING_METHOD + "complete_picking", {"name": name, "items": full})
+    doc = payload.get("message") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(doc, dict) and doc.get("picking_status") == "Picked"
+    report.add("picking", "complete_picking (all rows)", status, ok, f"status={doc.get('picking_status')}" if ok else server_message(payload, raw))
+    if not ok:
+        return
+    status, payload, raw = client.post(PICKING_METHOD + "generate_document", {"name": name})
+    result = payload.get("message") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(result, dict) and result.get("name")
+    report.add("picking", "generate_document", status, ok, f"{result.get('doctype')} {result.get('name')} already={result.get('already_generated')}" if ok else server_message(payload, raw))
+    if ok:
+        status, payload, raw = client.post(PICKING_METHOD + "generate_document", {"name": name})
+        again = payload.get("message") if isinstance(payload, dict) else None
+        ok2 = status == 200 and isinstance(again, dict) and again.get("already_generated") is True and again.get("name") == result.get("name")
+        report.add("picking", "generate_document again (duplicate prevention)", status, ok2, f"returned {again.get('name')}" if ok2 else server_message(payload, raw))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

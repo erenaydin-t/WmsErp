@@ -212,6 +212,18 @@ add the locale to `locales_config.xml` and a case to `AppLanguage` (with its lab
 * Cleartext HTTP is permitted for on-premise LAN servers but the login screen warns when the URL is not HTTPS.
 * Target SDK 36, adaptive + monochrome launcher icon, edge-to-edge UI, no orientation lock.
 
+## Checking a server before testing on a device
+
+`tools/erpnext_smoke_test.py` replays every request the app makes (login, dashboard KPIs, analytics,
+items, bins, warehouses, orders, the Stock Ageing report and the picking API) against a real site with
+an API key and prints which ones fail and why (permission, missing field, missing app, report filters):
+
+```bash
+python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY --secret API_SECRET \
+    --barcode 8690000000017            # optional: exercise the barcode lookup
+    # --pick-list STO-PICK-00001       # optional: run start/save/complete/generate on a test pick list (writes!)
+```
+
 ## Testing
 
 * **Unit tests** (`app/src/test`): use cases, URL normaliser, ERPNext error parser, query builder, session store,
