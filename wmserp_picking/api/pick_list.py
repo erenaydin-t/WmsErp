@@ -513,11 +513,24 @@ def set_serial_batch(item, row):
         set_if_field(item, "use_serial_batch_fields", 1)  # ERPNext v15 serial/batch bundles
 
 
+def delivery_note_skeleton(sales_order):
+    """A Delivery Note mapped from the Sales Order header only (customer, addresses, taxes), without
+    item rows. The mapper's signature changed in ERPNext v15:
+    v14: make_delivery_note(source_name, target_doc=None, skip_item_mapping=False)
+    v15/v16: make_delivery_note(source_name, target_doc=None, kwargs=None)"""
+    import inspect
+
+    from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note as make_dn_from_so
+
+    if "kwargs" in inspect.signature(make_dn_from_so).parameters:
+        return make_dn_from_so(sales_order, kwargs={"skip_item_mapping": True})
+    return make_dn_from_so(sales_order, skip_item_mapping=True)
+
+
 def make_delivery_notes(pick_list):
     """One draft Delivery Note per customer (mirrors erpnext's create_delivery_note, but built from
     the physically picked quantities and skipping rows that were not picked)."""
     from frappe.model.mapper import map_child_doc
-    from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note as make_dn_from_so
 
     rows = pickable_rows(pick_list)
     item_mapper = {
@@ -534,7 +547,7 @@ def make_delivery_notes(pick_list):
             by_customer.setdefault(so_customers[sales_order], []).append(sales_order)
 
     for _customer, sales_orders in by_customer.items():
-        delivery_note = make_dn_from_so(sales_orders[0], skip_item_mapping=True)
+        delivery_note = delivery_note_skeleton(sales_orders[0])
         for row in rows:
             if row.get("sales_order") not in sales_orders:
                 continue
