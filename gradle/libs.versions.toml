@@ -3,7 +3,7 @@
 agp = "8.13.0"
 kotlin = "2.3.21"
 ksp = "2.3.12"
-hilt = "2.60.1"
+hilt = "2.59"
 
 # AndroidX (pinned to the last releases that compile against API 36)
 coreKtx = "1.17.0"
