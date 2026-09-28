@@ -4,7 +4,6 @@ import com.wmserp.app.data.mapper.toDomain
 import com.wmserp.app.data.remote.ApiCaller
 import com.wmserp.app.data.remote.ErpNextDataSource
 import com.wmserp.app.data.remote.Filter
-import com.wmserp.app.data.remote.dto.AggregateDto
 import com.wmserp.app.data.remote.dto.SalesOrderDto
 import com.wmserp.app.data.remote.dto.StockLedgerEntryDto
 import com.wmserp.app.data.util.DateProvider
@@ -54,16 +53,15 @@ class AnalyticsRepositoryImpl(
         }
         val revenue = async {
             apiCaller.call {
-                dataSource.getList<AggregateDto>(
+                dataSource.sumField(
                     doctype = "Sales Invoice",
-                    fields = listOf("sum(grand_total) as total"),
+                    field = "grand_total",
                     filters = listOf(
                         Filter.eq("docstatus", 1),
                         Filter.gte("posting_date", monthStart.toString()),
                         Filter.lte("posting_date", today.toString()),
                     ),
-                    limit = 1,
-                ).firstOrNull()?.total ?: 0.0
+                )
             }
         }
         val dispatched = async {

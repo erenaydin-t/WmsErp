@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 
 /**
  * A single Frappe list filter, serialised as `[doctype?, field, operator, value]`.
@@ -33,6 +34,11 @@ object FrappeQuery {
     fun fields(vararg names: String): String = fields(names.toList())
 
     fun fields(names: List<String>): String = buildJsonArray { names.forEach { add(JsonPrimitive(it)) } }.toString()
+
+    /** Frappe v16 aggregate syntax: `[{"SUM": "grand_total", "as": "total"}]`. */
+    fun functionField(function: String, field: String, alias: String): String = buildJsonArray {
+        add(buildJsonObject { put(function, JsonPrimitive(field)); put("as", JsonPrimitive(alias)) })
+    }.toString()
 
     fun filters(filters: List<Filter>): String? {
         if (filters.isEmpty()) return null

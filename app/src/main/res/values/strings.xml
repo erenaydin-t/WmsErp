@@ -277,6 +277,9 @@
     <string name="error_select_warehouse">%1$s: select a warehouse</string>
     <string name="error_nothing_to_receive">Enter at least one quantity to receive</string>
     <string name="error_nothing_to_dispatch">Enter at least one quantity to dispatch</string>
+    <string name="error_order_row_unavailable">%1$s is no longer open on %2$s. Reload the order.</string>
+    <string name="error_serial_item_unsupported">%1$s needs serial numbers; deliver it from ERPNext</string>
+    <string name="error_insufficient_batch_stock">%1$s: only %2$s available in batches at %4$s (need %3$s)</string>
     <string name="error_empty_barcode">Empty barcode</string>
     <string name="error_po_not_found">Purchase Order %1$s not found</string>
     <string name="error_so_not_found">Sales Order %1$s not found</string>

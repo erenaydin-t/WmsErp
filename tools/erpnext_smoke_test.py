@@ -17,7 +17,8 @@ Options:
                                 that are assigned to the API user. THIS WRITES DATA; use a test site.
     --json                      print the raw JSON of every response (verbose)
 
-Read checks never modify anything. Exit code is 1 when at least one check fails.
+Read checks never modify anything (the make_purchase_receipt / make_delivery_note calls only return the
+mapped draft the app edits; nothing is inserted). Exit code is 1 when at least one check fails.
 """
 
 from __future__ import annotations
@@ -42,6 +43,9 @@ BIN_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "reserved_qty", "o
 WAREHOUSE_FIELDS = ["name", "warehouse_name", "company", "is_group", "parent_warehouse", "disabled", "warehouse_type", "city"]
 SLE_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "voucher_type", "voucher_no", "posting_date", "posting_time"]
 PICKING_METHOD = "wmserp_picking.api.pick_list."
+MAKE_PURCHASE_RECEIPT = "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt"
+MAKE_DELIVERY_NOTE = "erpnext.selling.doctype.sales_order.sales_order.make_delivery_note"
+GET_BATCH_QTY = "erpnext.stock.doctype.batch.batch.get_batch_qty"
 
 
 class Client:
@@ -183,6 +187,20 @@ def check_doc(client, report, area, name, doctype, docname, expect_keys=()):
     return doc if ok else None
 
 
+def check_sum(client, report, area, name, doctype, field, filters):
+    """The dashboard's SUM. Frappe up to v15 takes `sum(field) as total`; v16 rejects SQL functions as
+    strings and wants {"SUM": field, "as": "total"} - the app tries the first and falls back like this."""
+    status, payload, raw = client.get_list(doctype, [f"sum({field}) as total"], filters=filters, limit=1)
+    syntax = "string syntax"
+    if status != 200 and "SQL functions are not allowed" in server_message(payload, raw):
+        status, payload, raw = client.get_list(doctype, [{"SUM": field, "as": "total"}], filters=filters, limit=1)
+        syntax = "dict syntax (Frappe v16)"
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(rows, list)
+    total = rows[0].get("total") if ok and rows else None
+    report.add(area, name, status, ok, f"total={total} via {syntax}" if ok else server_message(payload, raw))
+
+
 def check_count(client, report, area, name, doctype, filters):
     status, payload, raw = client.get_count(doctype, filters)
     ok = status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), (int, float))
@@ -248,8 +266,8 @@ def main() -> int:
     check_count(client, report, "dashboard", "count Item (disabled=0)", "Item", [["disabled", "=", 0]])
     check_count(client, report, "dashboard", "count Purchase Order (open)", "Purchase Order", [["docstatus", "=", 1], ["status", "in", PO_OPEN_STATUSES]])
     check_count(client, report, "dashboard", "count Sales Order (open)", "Sales Order", [["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]])
-    check_list(client, report, "dashboard", "Sales Invoice sum(grand_total) this month", "Sales Invoice", ["sum(grand_total) as total"],
-               filters=[["docstatus", "=", 1], ["posting_date", ">=", str(month_start)], ["posting_date", "<=", str(today)]], limit=1)
+    check_sum(client, report, "dashboard", "Sales Invoice SUM(grand_total) this month", "Sales Invoice", "grand_total",
+              [["docstatus", "=", 1], ["posting_date", ">=", str(month_start)], ["posting_date", "<=", str(today)]])
     check_count(client, report, "dashboard", "count Delivery Note this month", "Delivery Note", [["docstatus", "=", 1], ["posting_date", ">=", str(month_start)]])
     check_single_value(client, report, "dashboard", "Global Defaults.default_currency", "Global Defaults", "default_currency")
     check_list(client, report, "dashboard", "recent Stock Ledger Entry (activity)", "Stock Ledger Entry", SLE_FIELDS, ("item_code", "warehouse", "actual_qty"),
@@ -298,10 +316,14 @@ def main() -> int:
                      filters=[["docstatus", "=", 1], ["status", "in", PO_OPEN_STATUSES]], order_by="schedule_date asc, modified desc", limit=30)
     if pos:
         check_doc(client, report, "orders", "GET Purchase Order/<first> (items)", "Purchase Order", pos[0]["name"], ("items", "supplier"))
+        check_mapper(client, report, "receive", "make_purchase_receipt (draft the app edits)", MAKE_PURCHASE_RECEIPT, pos[0]["name"], "purchase_order_item")
     sos = check_list(client, report, "orders", "open Sales Orders", "Sales Order", SO_LIST_FIELDS, ("name", "customer_name", "per_delivered"),
                      filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]], order_by="delivery_date asc, modified desc", limit=30)
     if sos:
-        check_doc(client, report, "orders", "GET Sales Order/<first> (items)", "Sales Order", sos[0]["name"], ("items", "customer"))
+        so = check_doc(client, report, "orders", "GET Sales Order/<first> (items)", "Sales Order", sos[0]["name"], ("items", "customer"))
+        mapped = check_mapper(client, report, "dispatch", "make_delivery_note (draft the app edits)", MAKE_DELIVERY_NOTE, sos[0]["name"], "so_detail")
+        if so and mapped:
+            check_batches(client, report, so, mapped)
     check_list(client, report, "orders", "recent Delivery Notes", "Delivery Note", DN_LIST_FIELDS, ("name",),
                filters=[["docstatus", "=", 1]], order_by="posting_date desc, modified desc", limit=10)
 
@@ -339,6 +361,63 @@ def main() -> int:
               " Sales User / Purchase User / Accounts User, or Stock Manager); 417/500 on a report = filters changed"
               " in this ERPNext version; 404 on wmserp_picking.* = custom app not installed or bench not restarted.")
     return 1 if failures else 0
+
+
+def check_mapper(client, report, area, name, method, source_name, link_field):
+    """The Receive / Dispatch screens start from ERPNext's own mapped draft (nothing is saved here)."""
+    doc = check_method(client, report, area, f"{name} for {source_name}", method, params={"source_name": source_name})
+    if not doc:
+        return None
+    rows = doc.get("items") or []
+    unlinked = [r.get("item_code") for r in rows if not r.get(link_field)]
+    ok = bool(rows) and not unlinked
+    detail = f"{len(rows)} pending row(s)" + (f"; rows without {link_field}: {unlinked}" if unlinked else "")
+    if not rows:
+        detail = "no pending rows (everything received/delivered); the app refuses to create an empty document"
+    report.add(area, f"{name}: mapped rows carry {link_field}", 200, ok, detail)
+    empty = sorted({k for r in rows for k, v in r.items() if k in ("warehouse", "cost_center", "department", "project") and v in (None, "")})
+    if empty:
+        print(f"           note: mapped rows leave {empty} empty; if your site made one of them mandatory, fill it on the order first")
+    return doc
+
+
+def check_batches(client, report, sales_order, mapped_note):
+    """Batch-tracked items on the first open Sales Order: the app allocates batches first-expiry-first-out
+    from get_batch_qty + Batch.expiry_date before creating the Delivery Note."""
+    codes = sorted({r.get("item_code") for r in sales_order.get("items", []) if r.get("item_code")})
+    if not codes:
+        return
+    tracking = check_list(client, report, "dispatch", "Item has_batch_no / has_serial_no", "Item", ["name", "has_batch_no", "has_serial_no"],
+                          ("name", "has_batch_no", "has_serial_no"), filters=[["name", "in", codes]], limit=len(codes))
+    if not tracking:
+        return
+    serial = [t["name"] for t in tracking if t.get("has_serial_no")]
+    if serial:
+        report.add("dispatch", "serial-numbered items on the order", 200, True, f"{serial}: the app refuses these (deliver them from ERPNext)")
+    batch_items = {t["name"] for t in tracking if t.get("has_batch_no")}
+    for row in mapped_note.get("items", []):
+        if row.get("item_code") not in batch_items:
+            continue
+        warehouse = row.get("warehouse") or sales_order.get("set_warehouse")
+        if not warehouse:
+            report.add("dispatch", f"batches of {row['item_code']}", 0, False, "row has no warehouse; the app asks the user to pick one")
+            continue
+        batches = check_method(client, report, "dispatch", f"get_batch_qty {row['item_code']} @ {warehouse}", GET_BATCH_QTY,
+                               params={"item_code": row["item_code"], "warehouse": warehouse}, expect=list)
+        if batches is None:
+            continue
+        names = [b.get("batch_no") for b in batches if b.get("batch_no") and float(b.get("qty") or 0) > 0]
+        if not names:
+            report.add("dispatch", f"stock in batches for {row['item_code']}", 200, False,
+                       f"no batch has stock in {warehouse}; dispatching {row['item_code']} from the app will fail with 'insufficient batch stock'")
+            continue
+        details = check_list(client, report, "dispatch", f"Batch expiry for {len(names)} batch(es)", "Batch", ["name", "expiry_date", "disabled"], ("name",),
+                             filters=[["name", "in", names]], limit=len(names))
+        if details is not None:
+            usable = [d for d in details if not d.get("disabled") and (not d.get("expiry_date") or d["expiry_date"] >= str(dt.date.today()))]
+            usable.sort(key=lambda d: (d.get("expiry_date") is None, d.get("expiry_date") or ""))
+            print(f"           FEFO order for {row['item_code']}: {[(d['name'], d.get('expiry_date')) for d in usable]}")
+        break
 
 
 def run_picking_flow(client, report, name, doc, settings):

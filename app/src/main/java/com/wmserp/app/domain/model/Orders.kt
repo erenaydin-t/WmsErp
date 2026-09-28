@@ -58,9 +58,32 @@ data class SalesOrderItem(
     val uom: String? = null,
     val warehouse: String? = null,
     val rate: Double = 0.0,
+    /** Stock units per [uom] (ERPNext `conversion_factor`); batches are allocated in stock units. */
+    val conversionFactor: Double = 1.0,
 ) {
     val pendingQty: Double get() = (qty - deliveredQty).coerceAtLeast(0.0)
 }
+
+/** Tracking flags of an ERPNext `Item` (`has_batch_no` / `has_serial_no`). */
+data class ItemTracking(
+    val itemCode: String,
+    val hasBatchNo: Boolean,
+    val hasSerialNo: Boolean,
+)
+
+/** Stock of one batch in one warehouse, in the item's stock UOM. */
+data class BatchStock(
+    val batchNo: String,
+    val qty: Double,
+    /** ISO date (`yyyy-MM-dd`) or null when the batch does not expire. */
+    val expiryDate: String? = null,
+)
+
+/** The part of a delivery line taken from one batch, in stock UOM. */
+data class BatchAllocation(
+    val batchNo: String,
+    val qty: Double,
+)
 
 /** Maps to the ERPNext `Purchase Receipt` DocType (result of a receive flow). */
 data class PurchaseReceipt(
@@ -101,12 +124,19 @@ data class DeliveryNote(
 
 data class DeliveryNoteLine(
     val itemCode: String,
+    /** Quantity in the sales order row's UOM. */
     val qty: Double,
     val warehouse: String,
     val salesOrderRow: String,
     val uom: String? = null,
     val rate: Double? = null,
-)
+    val conversionFactor: Double = 1.0,
+    /** Batch split of [qty] (stock UOM) for batch-tracked items; empty for plain items. */
+    val batches: List<BatchAllocation> = emptyList(),
+) {
+    /** [qty] expressed in stock units. */
+    val stockQty: Double get() = qty * conversionFactor
+}
 
 data class DeliveryNoteDraft(
     val salesOrderName: String,

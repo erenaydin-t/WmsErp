@@ -61,8 +61,8 @@ object RepositoryModule {
 
     @Provides
     @Singleton
-    fun provideOrderRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): OrderRepository =
-        OrderRepositoryImpl(dataSource, apiCaller)
+    fun provideOrderRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller, dateProvider: DateProvider): OrderRepository =
+        OrderRepositoryImpl(dataSource, apiCaller, dateProvider)
 
     @Provides
     @Singleton

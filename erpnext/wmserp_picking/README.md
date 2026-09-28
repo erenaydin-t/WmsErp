@@ -17,6 +17,9 @@ by the WMS ERP Android app:
 
 ## Installation
 
+Supported: ERPNext / Frappe **v14, v15 and v16** (the API only uses plain field lists and aliases, which
+all three accept; the Delivery Note mapper is called with the signature of the installed version).
+
 The Android project and this Frappe app live in one repository, but bench needs a Frappe app at the
 root of what it clones. CI therefore publishes this folder as its own branch, **`wmserp_picking`**
 (a `git subtree split` of `erpnext/wmserp_picking`, refreshed on every push to `main`):
@@ -26,6 +29,14 @@ cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
+```
+
+To pick up a newer version of the branch on an existing bench:
+
+```bash
+cd frappe-bench/apps/wmserp_picking && git pull origin wmserp_picking && cd ../..
+bench --site <site> migrate      # re-applies the custom fields / print format
+bench restart                    # or `bench build` is not needed: the app has no client assets
 ```
 
 > `bench get-app https://github.com/erenaydin-t/WmsErp` **without** `--branch` fails with

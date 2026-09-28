@@ -3,6 +3,7 @@ package com.wmserp.app.domain.usecase
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.model.BatchStock
 import com.wmserp.app.domain.model.DeliveryNote
 import com.wmserp.app.domain.model.DeliveryNoteDraft
 import com.wmserp.app.domain.model.DeliveryNoteLine
@@ -94,7 +95,12 @@ class GetSalesOrderUseCase @Inject constructor(private val orderRepository: Orde
 
 data class DispatchLine(val salesOrderRow: String, val qty: Double, val warehouse: String?)
 
-/** Creates (and optionally submits) a Delivery Note for the dispatched quantities of a Sales Order. */
+/**
+ * Creates (and optionally submits) a Delivery Note for the dispatched quantities of a Sales Order.
+ * Batch-tracked items are split over the warehouse's batches first-expiry-first-out (ERPNext refuses a
+ * Delivery Note row of such an item without a batch); serial-numbered items are refused because their
+ * serial numbers cannot be chosen here.
+ */
 class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository: OrderRepository) {
     suspend operator fun invoke(
         salesOrder: SalesOrder,
@@ -126,18 +132,65 @@ class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository:
                 salesOrderRow = soItem.rowName,
                 uom = soItem.uom,
                 rate = soItem.rate,
+                conversionFactor = soItem.conversionFactor.takeIf { it > 0.0 } ?: 1.0,
             )
         }
         if (noteLines.isEmpty()) return AppResult.Failure(AppError.Validation("Enter at least one quantity to dispatch", ErrorCode.NOTHING_TO_DISPATCH))
+        val allocated = when (val result = allocateBatches(noteLines)) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return AppResult.Failure(result.error)
+        }
         return orderRepository.createDeliveryNote(
             DeliveryNoteDraft(
                 salesOrderName = salesOrder.name,
                 customer = salesOrder.customer,
-                lines = noteLines,
+                lines = allocated,
                 company = salesOrder.company,
             ),
             submit = submit,
         )
+    }
+
+    /** Splits the lines of batch-tracked items over usable batches; lines of the same item and warehouse share them. */
+    private suspend fun allocateBatches(lines: List<DeliveryNoteLine>): AppResult<List<DeliveryNoteLine>> {
+        val tracking = when (val result = orderRepository.getItemTracking(lines.map { it.itemCode }.distinct())) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return AppResult.Failure(result.error)
+        }
+        val stockByLocation = mutableMapOf<Pair<String, String>, List<BatchStock>>()
+        val allocated = mutableListOf<DeliveryNoteLine>()
+        for (line in lines) {
+            val flags = tracking[line.itemCode] ?: tracking.entries.firstOrNull { it.key.equals(line.itemCode, ignoreCase = true) }?.value
+            if (flags?.hasSerialNo == true) {
+                return AppResult.Failure(
+                    AppError.Validation(
+                        "${line.itemCode} needs serial numbers; deliver it from ERPNext",
+                        ErrorCode.SERIAL_ITEM_UNSUPPORTED,
+                        listOf(line.itemCode),
+                    )
+                )
+            }
+            if (flags?.hasBatchNo != true) {
+                allocated += line
+                continue
+            }
+            val key = line.itemCode to line.warehouse
+            val batches = stockByLocation[key] ?: when (val result = orderRepository.getUsableBatches(line.itemCode, line.warehouse)) {
+                is AppResult.Success -> result.data
+                is AppResult.Failure -> return AppResult.Failure(result.error)
+            }
+            val allocation = BatchAllocator.allocate(batches, line.stockQty)
+                ?: return AppResult.Failure(
+                    AppError.Validation(
+                        "${line.itemCode}: only ${BatchAllocator.available(batches).trimZeros()} available in batches at ${line.warehouse} (need ${line.stockQty.trimZeros()})",
+                        ErrorCode.INSUFFICIENT_BATCH_STOCK,
+                        listOf(line.itemCode, BatchAllocator.available(batches).trimZeros(), line.stockQty.trimZeros(), line.warehouse),
+                    )
+                )
+            stockByLocation[key] = BatchAllocator.remaining(batches, allocation)
+            allocated += line.copy(batches = allocation)
+        }
+        return AppResult.Success(allocated)
     }
 
     private companion object {

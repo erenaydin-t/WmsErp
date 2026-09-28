@@ -84,6 +84,42 @@ class ErpNextDataSource(
     suspend inline fun <reified Req, reified Res> update(doctype: String, name: String, body: Req): Res =
         update(doctype, name, body, serializer<Req>(), serializer<Res>())
 
+    /** Inserts a fully formed document (with child tables) and returns it as ERPNext saved it. */
+    suspend fun insertDocument(doctype: String, doc: JsonObject): JsonObject = api.insertDoc(doctype, doc).data
+
+    /** Runs an ERPNext document mapper such as `make_purchase_receipt` and returns the unsaved mapped document. */
+    suspend fun mapDocument(method: String, sourceName: String): JsonObject {
+        val message = api.callMethod(method, mapOf("source_name" to sourceName)).message
+        return message as? JsonObject
+            ?: throw AppException(AppError.Server("Empty response from $method", code = ErrorCode.INVALID_RESPONSE))
+    }
+
+    /**
+     * SUM of [field] over the rows matching [filters]. Frappe up to v15 takes SQL functions as strings
+     * (`sum(x) as total`); v16 rejects those and expects `{"SUM": "x", "as": "total"}`. The first rejection
+     * switches this instance to the dict syntax for the rest of the session.
+     */
+    suspend fun sumField(doctype: String, field: String, filters: List<Filter> = emptyList()): Double {
+        if (!dictAggregates) {
+            try {
+                return aggregate(doctype, FrappeQuery.fields("sum($field) as total"), filters)
+            } catch (e: HttpException) {
+                val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+                if (!ErpNextErrorParser.rejectsSqlFunctionStrings(body)) throw AppException(ErpNextErrorParser.parse(e.code(), body))
+                dictAggregates = true
+            }
+        }
+        return aggregate(doctype, FrappeQuery.functionField("SUM", field, alias = "total"), filters)
+    }
+
+    @Volatile
+    private var dictAggregates = false
+
+    private suspend fun aggregate(doctype: String, fields: String, filters: List<Filter>): Double {
+        val row = api.getList(doctype = doctype, fields = fields, filters = FrappeQuery.filters(filters), limit = 1).data.firstOrNull()
+        return row?.get("total")?.let { (it as? JsonPrimitive)?.content?.toDoubleOrNull() } ?: 0.0
+    }
+
     /** Submits a draft document (`docstatus` 0 -> 1) via `frappe.client.submit`. */
     suspend fun submit(doctype: String, name: String): JsonObject {
         val doc = api.getDoc(doctype, name).data

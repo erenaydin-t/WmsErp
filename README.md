@@ -53,6 +53,12 @@ app/src/main/java/com/wmserp/app
    app language (System / English / فارسی), sign out.
 6. **Orders → Receive / Dispatch** – count goods against Purchase Orders (creates *Purchase Receipt*) and pick
    against Sales Orders (creates *Delivery Note*); scanning an item barcode increments the matching line.
+   Both documents start from ERPNext's own `make_purchase_receipt` / `make_delivery_note` mapping of the
+   order, so rates, taxes, accounting dimensions and custom mandatory row fields (a *Department*, a
+   *Project*…) are inherited; the app only overrides the counted quantity and the warehouse. Batch-tracked
+   items on a Delivery Note are split over the warehouse's batches **first-expiry-first-out** (expired and
+   disabled batches are skipped; not enough batch stock is reported before anything is created); items with
+   serial numbers are refused and must be delivered from ERPNext.
 7. **Orders → Pick** – the picker's tasks: open ERPNext *Pick Lists* with rows assigned to the signed-in user,
    picked row by row through strict JSON QR labels, with hidden timers and a context-aware "Create Delivery
    Note / Material Transfer / Material Issue" button for the last picker (see [Pick List workflow](#pick-list-workflow)).
@@ -68,6 +74,9 @@ All calls go through `ErpNextApi` (`app/src/main/java/com/wmserp/app/data/remote
 | Who am I | `GET /api/method/frappe.auth.get_logged_user` |
 | Documents | `GET/POST/PUT /api/resource/{doctype}[/{name}]` with `fields`, `filters`, `or_filters` |
 | Counts | `frappe.client.get_count` |
+| Sums | `fields=["sum(x) as total"]` on Frappe ≤ 15, `[{"SUM": "x", "as": "total"}]` on Frappe 16 (detected at runtime) |
+| Receive / Dispatch drafts | `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt`, `erpnext.selling.doctype.sales_order.sales_order.make_delivery_note` (`source_name`), then `POST /api/resource/...` |
+| Batch stock | `erpnext.stock.doctype.batch.batch.get_batch_qty` (`item_code`, `warehouse`) + `Batch.expiry_date` |
 | Submit | `frappe.client.submit` |
 | Reports | `frappe.desk.query_report.run` (Stock Ageing) |
 | Password | `frappe.core.doctype.user.user.update_password` |

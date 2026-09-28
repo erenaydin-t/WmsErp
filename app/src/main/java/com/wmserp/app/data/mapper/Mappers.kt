@@ -2,14 +2,11 @@ package com.wmserp.app.data.mapper
 
 import com.wmserp.app.data.remote.dto.BinDto
 import com.wmserp.app.data.remote.dto.DeliveryNoteDto
-import com.wmserp.app.data.remote.dto.DeliveryNoteItemRequest
-import com.wmserp.app.data.remote.dto.DeliveryNoteRequest
 import com.wmserp.app.data.remote.dto.ItemDto
+import com.wmserp.app.data.remote.dto.ItemTrackingDto
 import com.wmserp.app.data.remote.dto.PurchaseOrderDto
 import com.wmserp.app.data.remote.dto.PurchaseOrderItemDto
 import com.wmserp.app.data.remote.dto.PurchaseReceiptDto
-import com.wmserp.app.data.remote.dto.PurchaseReceiptItemRequest
-import com.wmserp.app.data.remote.dto.PurchaseReceiptRequest
 import com.wmserp.app.data.remote.dto.SalesOrderDto
 import com.wmserp.app.data.remote.dto.SalesOrderItemDto
 import com.wmserp.app.data.remote.dto.StockEntryDto
@@ -20,13 +17,12 @@ import com.wmserp.app.data.remote.dto.UserUpdateRequest
 import com.wmserp.app.data.remote.dto.WarehouseDto
 import com.wmserp.app.domain.model.ActivityEntry
 import com.wmserp.app.domain.model.DeliveryNote
-import com.wmserp.app.domain.model.DeliveryNoteDraft
 import com.wmserp.app.domain.model.Item
+import com.wmserp.app.domain.model.ItemTracking
 import com.wmserp.app.domain.model.ProfileUpdate
 import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.PurchaseOrderItem
 import com.wmserp.app.domain.model.PurchaseReceipt
-import com.wmserp.app.domain.model.PurchaseReceiptDraft
 import com.wmserp.app.domain.model.SalesOrder
 import com.wmserp.app.domain.model.SalesOrderItem
 import com.wmserp.app.domain.model.StockEntry
@@ -161,6 +157,13 @@ fun SalesOrderItemDto.toDomain(): SalesOrderItem = SalesOrderItem(
     uom = uom,
     warehouse = warehouse,
     rate = rate,
+    conversionFactor = conversionFactor,
+)
+
+fun ItemTrackingDto.toDomain(): ItemTracking = ItemTracking(
+    itemCode = name,
+    hasBatchNo = hasBatchNo != 0,
+    hasSerialNo = hasSerialNo != 0,
 )
 
 fun PurchaseReceiptDto.toDomain(): PurchaseReceipt = PurchaseReceipt(
@@ -169,22 +172,6 @@ fun PurchaseReceiptDto.toDomain(): PurchaseReceipt = PurchaseReceipt(
     status = status ?: if (docstatus == 1) "Submitted" else "Draft",
     postingDate = postingDate,
     docStatus = docstatus,
-)
-
-fun PurchaseReceiptDraft.toRequest(): PurchaseReceiptRequest = PurchaseReceiptRequest(
-    supplier = supplier,
-    company = company,
-    items = lines.map {
-        PurchaseReceiptItemRequest(
-            itemCode = it.itemCode,
-            qty = it.qty,
-            warehouse = it.warehouse,
-            purchaseOrder = purchaseOrderName,
-            purchaseOrderItem = it.purchaseOrderRow,
-            uom = it.uom,
-            rate = it.rate,
-        )
-    },
 )
 
 fun DeliveryNoteDto.toDomain(): DeliveryNote = DeliveryNote(
@@ -196,22 +183,6 @@ fun DeliveryNoteDto.toDomain(): DeliveryNote = DeliveryNote(
     docStatus = docstatus,
     grandTotal = grandTotal,
     currency = currency,
-)
-
-fun DeliveryNoteDraft.toRequest(): DeliveryNoteRequest = DeliveryNoteRequest(
-    customer = customer,
-    company = company,
-    items = lines.map {
-        DeliveryNoteItemRequest(
-            itemCode = it.itemCode,
-            qty = it.qty,
-            warehouse = it.warehouse,
-            againstSalesOrder = salesOrderName,
-            soDetail = it.salesOrderRow,
-            uom = it.uom,
-            rate = it.rate,
-        )
-    },
 )
 
 fun StockEntry.toDto(): StockEntryDto = StockEntryDto(
