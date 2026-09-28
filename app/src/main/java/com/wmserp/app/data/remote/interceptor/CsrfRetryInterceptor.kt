@@ -42,7 +42,7 @@ class CsrfRetryInterceptor(private val sessionStore: SessionStore) : Interceptor
         return runCatching {
             chain.proceed(tokenRequest).use { r ->
                 if (!r.isSuccessful) return null
-                val body = r.body.string()
+                val body = r.body?.string() ?: return null
                 json.parseToJsonElement(body).jsonObject["message"]?.jsonPrimitive?.content
             }
         }.getOrNull()
