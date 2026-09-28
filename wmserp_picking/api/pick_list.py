@@ -1,20 +1,31 @@
-"""Whitelisted API used by the WMS ERP Android app for the physical picking workflow.
+"""Whitelisted API used by the WMS ERP Android app for row-level physical picking.
 
 Endpoints are called as `/api/method/wmserp_picking.api.pick_list.<function>` (POST with a JSON
 body; the read-only ones also accept GET). They only write the WMS custom fields on Pick List /
 Pick List Item and create *draft* standard documents through the regular Document API, so stock
 ledger and GL entries are always produced by ERPNext itself when those drafts are submitted.
 
-Lifecycle:  Ready to Pick --start_picking--> Picking --save_progress*--> --complete_picking--> Picked
-            --generate_document--> Delivery Note / Stock Entry (draft, generated at most once)
+Model
+-----
+* Assignment is per row: `Pick List Item.custom_picker`. Several pickers share one card.
+* Row lifecycle: Not Picked --start_row--> Picking --save_row_progress*--> --complete_row--> Picked
+  (a row completes when picked qty == required qty; timestamps and duration are stamped).
+* Card lifecycle (header `custom_picking_status`): Ready to Pick -> Picking (first row started)
+  -> Picked (every row picked; checked after each row completion under a row lock, so exactly one
+  request observes the transition and is told `is_last_picker: true`).
+* `generate_document` creates the draft Delivery Note / Stock Entry once the card is Picked.
 """
+
+import datetime as dt
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, getdate, now_datetime, nowdate
+from frappe.utils import cint, flt, get_datetime, getdate, now_datetime, nowdate
 
+from wmserp_picking import __version__
 from wmserp_picking.picking import rules
 from wmserp_picking.picking.pick_list_events import add_assignment, remove_assignment
+from wmserp_picking.wms_erp_picking.doctype.wms_settings.wms_settings import get_qr_keys
 
 PICK_LIST = "Pick List"
 PICK_LIST_ITEM = "Pick List Item"
@@ -33,18 +44,43 @@ HEADER_FIELDS = [
     "modified",
     "creation",
     "owner",
-    "_assign",
-    "custom_picker",
     "custom_picking_status",
     "custom_target_warehouse",
-    "custom_picking_started_at",
-    "custom_picking_started_by",
-    "custom_picking_completed_at",
-    "custom_picking_completed_by",
+    "custom_card_started_at",
+    "custom_card_completed_at",
     "custom_generated_doctype",
     "custom_generated_docname",
 ]
-ALWAYS_PRESENT = {"name", "docstatus", "modified", "creation", "owner", "_assign"}
+ALWAYS_PRESENT = {"name", "docstatus", "modified", "creation", "owner"}
+
+ROW_FIELDS = [
+    "name",
+    "idx",
+    "parent",
+    "item_code",
+    "item_name",
+    "description",
+    "warehouse",
+    "batch_no",
+    "serial_no",
+    "qty",
+    "stock_qty",
+    "uom",
+    "stock_uom",
+    "conversion_factor",
+    "picked_qty",
+    "sales_order",
+    "sales_order_item",
+    "material_request",
+    "material_request_item",
+    "product_bundle_item",
+    "custom_picker",
+    "custom_row_status",
+    "custom_wms_picked_qty",
+    "custom_row_started_at",
+    "custom_row_completed_at",
+    "custom_picking_duration_seconds",
+]
 
 
 # --------------------------------------------------------------------------------------------
@@ -53,171 +89,164 @@ ALWAYS_PRESENT = {"name", "docstatus", "modified", "creation", "owner", "_assign
 
 
 @frappe.whitelist()
-def get_my_pick_lists(status=None, include_generated=0, limit=50):
-    """Pick Lists assigned to the current user (custom_picker or standard Assign To) that still
-    need action: Ready to Pick, Picking, or Picked without a generated document."""
-    user = frappe.session.user
-    statuses = [status] if status else list(rules.PICKING_STATUSES)
-    if status and status not in rules.PICKING_STATUSES:
-        frappe.throw(_("Unknown picking status {0}").format(status))
+def get_settings():
+    """JSON keys of the QR labels (from WMS Settings) plus the app version."""
+    keys = get_qr_keys()
+    return {"qr_item_key": keys["qr_item_key"], "qr_batch_key": keys["qr_batch_key"], "app_version": __version__}
 
-    rows = frappe.get_list(
+
+@frappe.whitelist()
+def get_my_pick_lists(limit=50):
+    """Submitted, Open Pick Lists with at least one row assigned to the current user."""
+    user = frappe.session.user
+    parents = frappe.get_all(
+        PICK_LIST_ITEM,
+        filters={"parenttype": PICK_LIST, "docstatus": 1, "custom_picker": user},
+        pluck="parent",
+        distinct=True,
+    )
+    if not parents:
+        return []
+    filters = {"name": ["in", list(set(parents))], "docstatus": 1}
+    if frappe.get_meta(PICK_LIST).has_field("status"):
+        filters["status"] = "Open"
+    headers = frappe.get_list(
         PICK_LIST,
-        filters=[
-            [PICK_LIST, "docstatus", "=", 1],
-            [PICK_LIST, "custom_picking_status", "in", statuses],
-        ],
-        or_filters=[
-            [PICK_LIST, "custom_picker", "=", user],
-            [PICK_LIST, "_assign", "like", f"%{user}%"],
-        ],
+        filters=filters,
         fields=header_fields(),
         order_by="modified desc",
         limit_page_length=cint(limit) or 50,
     )
-    if not cint(include_generated):
-        rows = [
-            row
-            for row in rows
-            if not (row.get("custom_picking_status") == rules.STATUS_PICKED and row.get("custom_generated_docname"))
-        ]
-    totals = item_totals([row.name for row in rows])
-    return [serialize_header(row, totals.get(row.name)) for row in rows]
+    rows_by_parent = child_rows([header.name for header in headers])
+    return [serialize_header(header, rows_by_parent.get(header.name, []), user) for header in headers]
 
 
 @frappe.whitelist()
 def get_pick_list(name):
     doc = frappe.get_doc(PICK_LIST, name)
     doc.check_permission("read")
-    return serialize_pick_list(doc)
+    return serialize_pick_list(doc, frappe.session.user)
 
 
 @frappe.whitelist()
-def resolve_scan(name, code):
-    """Maps a scanned barcode / item code / batch number to a row of the pick list."""
-    doc = frappe.get_doc(PICK_LIST, name)
-    doc.check_permission("read")
-    code = (code or "").strip()
-    if not code:
-        frappe.throw(_("Scanned code is empty."))
-    rows = doc.get("locations") or []
+def get_picker_kpis(date=None, user=None):
+    """Today's (or `date`'s) picking statistics for the current user (supervisors may pass `user`)."""
+    session_user = frappe.session.user
+    user = user or session_user
+    if user != session_user and not rules.is_supervisor(frappe.get_roles(session_user)):
+        frappe.throw(_("You can only see your own picking statistics."), frappe.PermissionError)
+    day = getdate(date) if date else getdate(nowdate())
+    start, end = f"{day} 00:00:00", f"{day} 23:59:59.999999"
 
-    row = pick_row(rows, lambda r: (r.item_code or "").lower() == code.lower())
-    if row:
-        return scan_result(row, "item_code", row.get("batch_no"))
+    picked_rows = frappe.get_all(
+        PICK_LIST_ITEM,
+        filters={
+            "parenttype": PICK_LIST,
+            "docstatus": 1,
+            "custom_picker": user,
+            "custom_row_status": rules.ROW_PICKED,
+            "custom_row_completed_at": ["between", [start, end]],
+        },
+        fields=["parent", "custom_wms_picked_qty as picked_qty", "custom_picking_duration_seconds as duration_seconds"],
+    )
+    summary = rules.kpi_summary(picked_rows)
 
-    item_code = frappe.db.get_value("Item Barcode", {"barcode": code}, "parent")
-    if item_code:
-        row = pick_row(rows, lambda r: r.item_code == item_code)
-        if row:
-            return scan_result(row, "barcode", row.get("batch_no"))
-        return {"row_name": None, "item_code": item_code, "batch_no": None, "match": "not_on_list", "expiry_date": None}
+    touched = {row.parent for row in picked_rows}
+    completed_cards = 0
+    if touched:
+        completed_cards = frappe.db.count(
+            PICK_LIST,
+            {"name": ["in", list(touched)], "custom_picking_status": rules.STATUS_PICKED, "custom_card_completed_at": ["between", [start, end]]},
+        )
 
-    batch = frappe.db.get_value("Batch", code, ["name", "item", "expiry_date", "disabled"], as_dict=True)
-    if batch:
-        if cint(batch.disabled):
-            frappe.throw(_("Batch {0} is disabled.").format(batch.name))
-        if batch.expiry_date and getdate(batch.expiry_date) < getdate(nowdate()):
-            frappe.throw(_("Batch {0} expired on {1}.").format(batch.name, frappe.format(batch.expiry_date, "Date")))
-        row = pick_row(rows, lambda r: r.item_code == batch.item and (not r.get("batch_no") or r.batch_no == batch.name))
-        if row:
-            return scan_result(row, "batch", batch.name, batch.expiry_date)
-        return {"row_name": None, "item_code": batch.item, "batch_no": batch.name, "match": "not_on_list", "expiry_date": str_or_none(batch.expiry_date)}
+    open_rows = frappe.get_all(
+        PICK_LIST_ITEM,
+        filters={"parenttype": PICK_LIST, "docstatus": 1, "custom_picker": user, "custom_row_status": ["!=", rules.ROW_PICKED]},
+        fields=["parent"],
+    )
+    open_parents = {row.parent for row in open_rows}
+    if open_parents and frappe.get_meta(PICK_LIST).has_field("status"):
+        open_parents = set(frappe.get_all(PICK_LIST, filters={"name": ["in", list(open_parents)], "status": "Open"}, pluck="name"))
+        open_rows = [row for row in open_rows if row.parent in open_parents]
 
-    return {"row_name": None, "item_code": None, "batch_no": None, "match": "none", "expiry_date": None}
+    summary.update(
+        {
+            "date": str(day),
+            "user": user,
+            "pick_lists_completed": completed_cards,
+            "open_rows": len(open_rows),
+            "open_pick_lists": len(open_parents),
+        }
+    )
+    return summary
 
 
 # --------------------------------------------------------------------------------------------
-# Transitions
+# Row operations
 # --------------------------------------------------------------------------------------------
 
 
 @frappe.whitelist()
-def assign_picker(name, user):
-    """Sets the picker (supervisor action) and mirrors it into the standard assignment."""
+def start_row(name, row):
+    """Not Picked -> Picking for one row; stamps the row start and, if empty, the card start."""
+    doc, child = load_row(name, row)
+    if child.get("custom_row_status") == rules.ROW_PICKED:
+        frappe.throw(_("Row {0} ({1}) is already picked.").format(child.idx, child.item_code))
+    now = now_datetime()
+    updates = {}
+    if child.get("custom_row_status") != rules.ROW_PICKING:
+        updates["custom_row_status"] = rules.ROW_PICKING
+    if not child.get("custom_row_started_at"):
+        updates["custom_row_started_at"] = now
+    if updates:
+        child.db_set(updates, update_modified=False)
+    stamp_card_started(doc, now)
+    return row_result(doc.name, child.name, row_completed=False, card_completed=False)
+
+
+@frappe.whitelist()
+def save_row_progress(name, row, picked_qty, item_code=None, batch_no=None, elapsed_seconds=None):
+    """Stores a partial (or full) picked quantity for one row. Completes the row when it reaches
+    the required quantity, then runs the card completion check."""
+    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=False)
+
+
+@frappe.whitelist()
+def complete_row(name, row, picked_qty=None, item_code=None, batch_no=None, elapsed_seconds=None):
+    """Marks one row as Picked (picked qty must equal the required qty) and runs the card
+    completion check; the response says whether this call completed the whole card."""
+    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=True)
+
+
+@frappe.whitelist()
+def assign_rows(name, user, rows=None):
+    """Supervisor action: assigns rows (all rows when `rows` is empty) to a picker."""
     doc = frappe.get_doc(PICK_LIST, name)
     doc.check_permission("write")
     if not frappe.db.exists("User", user):
         frappe.throw(_("User {0} does not exist.").format(user))
-    previous = doc.get("custom_picker")
-    doc.db_set("custom_picker", user, notify=True)
-    if previous and previous != user:
-        remove_assignment(doc, previous)
+    wanted = set(frappe.parse_json(rows) or []) if rows else None
+    previous = {r.get("custom_picker") for r in doc.get("locations") or [] if r.get("custom_picker")}
+    for child in doc.get("locations") or []:
+        if wanted is not None and child.name not in wanted:
+            continue
+        if child.get("custom_row_status") == rules.ROW_PICKED:
+            continue
+        child.db_set({"custom_picker": user}, update_modified=False)
+    doc = reload(doc)
+    current = {r.get("custom_picker") for r in doc.get("locations") or [] if r.get("custom_picker")}
+    for dropped in previous - current:
+        remove_assignment(doc, dropped)
     add_assignment(doc, user)
-    return serialize_pick_list(reload(doc))
-
-
-@frappe.whitelist()
-def start_picking(name):
-    """Ready to Pick -> Picking. Validates the assignment and stamps the start time."""
-    doc = load_for_action(name)
-    status = current_status(doc)
-    if status == rules.STATUS_PICKED:
-        frappe.throw(_("Pick List {0} has already been picked.").format(name))
-    if status == rules.STATUS_PICKING:
-        return serialize_pick_list(doc)  # resuming is idempotent
-    ensure_open(doc)
-
-    user = frappe.session.user
-    values = {
-        "custom_picking_status": rules.STATUS_PICKING,
-        "custom_picking_started_at": now_datetime(),
-        "custom_picking_started_by": user,
-    }
-    if not doc.get("custom_picker"):
-        values["custom_picker"] = user  # claimed through the standard Assign To only
-    doc.db_set(values, notify=True)
-    add_assignment(doc, doc.custom_picker)
-    doc.add_comment("Info", _("Picking started by {0}").format(frappe.utils.get_fullname(user)))
-    return serialize_pick_list(reload(doc))
-
-
-@frappe.whitelist()
-def save_progress(name, items):
-    """Stores partial picked quantities so picking can be paused and resumed."""
-    doc = load_for_action(name)
-    require_status(doc, rules.STATUS_PICKING, _("Start picking before saving progress."))
-    apply_progress(doc, items)
-    return serialize_pick_list(reload(doc))
-
-
-@frappe.whitelist()
-def complete_picking(name, items=None):
-    """Picking -> Picked. Every mandatory row must be picked in full."""
-    doc = load_for_action(name)
-    require_status(doc, rules.STATUS_PICKING, _("Start picking before completing it."))
-    if items:
-        apply_progress(doc, items)
-        doc = reload(doc)
-
-    incomplete = rules.incomplete_rows([row_summary(row) for row in doc.get("locations") or []])
-    if incomplete:
-        details = ", ".join(
-            "{0} ({1:g}/{2:g})".format(row["item_code"], row["picked_qty"], row["required_qty"]) for row in incomplete
-        )
-        frappe.throw(_("Picking is incomplete: {0}").format(details))
-
-    user = frappe.session.user
-    for row in doc.get("locations") or []:
-        # Keep the standard field in step so ERPNext's own "Create ..." buttons agree with the app.
-        row.db_set({"picked_qty": flt(row.get("custom_wms_picked_qty"))}, update_modified=False)
-    doc.db_set(
-        {
-            "custom_picking_status": rules.STATUS_PICKED,
-            "custom_picking_completed_at": now_datetime(),
-            "custom_picking_completed_by": user,
-        },
-        notify=True,
-    )
-    doc.add_comment("Info", _("Picking completed by {0}").format(frappe.utils.get_fullname(user)))
-    return serialize_pick_list(reload(doc))
+    return serialize_pick_list(doc, frappe.session.user)
 
 
 @frappe.whitelist()
 def generate_document(name):
-    """Creates the draft Delivery Note / Stock Entry for a picked list, exactly once."""
-    doc = load_for_action(name)
-    require_status(doc, rules.STATUS_PICKED, _("Complete picking before creating a document."))
+    """Creates the draft Delivery Note / Stock Entry for a picked card, exactly once."""
+    doc = load_for_card(name)
+    if current_status(doc) != rules.STATUS_PICKED:
+        frappe.throw(_("All rows of Pick List {0} must be picked before creating a document.").format(name))
 
     # Row lock: two devices pressing the button at the same time serialize here, and the second
     # one sees the document created by the first.
@@ -249,18 +278,149 @@ def generate_document(name):
 
 
 # --------------------------------------------------------------------------------------------
-# Validation helpers
+# Row update core
 # --------------------------------------------------------------------------------------------
 
 
-def load_for_action(name, allow_supervisor=True):
+def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete):
+    doc, child = load_row(name, row)
+    required = required_qty(child)
+    picked = flt(picked_qty) if picked_qty not in (None, "") else flt(child.get("custom_wms_picked_qty"))
+    try:
+        picked = rules.validate_picked_qty(picked, required, child.item_code)
+    except rules.PickingRuleError as exc:
+        frappe.throw(str(exc))
+
+    if item_code and item_code.strip().lower() != (child.item_code or "").lower():
+        frappe.throw(_("Wrong item. Expected: {0}, scanned: {1}").format(child.item_code, item_code))
+
+    updates = {"custom_wms_picked_qty": picked}
+    if batch_no:
+        updates.update(validate_scanned_batch(child, batch_no.strip()))
+
+    complete = rules.is_row_complete(picked, required)
+    if require_complete and not complete:
+        frappe.throw(_("Row {0} ({1}) is not complete: {2} of {3} picked.").format(child.idx, child.item_code, flt(picked), flt(required)))
+    if child.get("custom_row_status") == rules.ROW_PICKED and not complete:
+        frappe.throw(_("Row {0} ({1}) is already picked and cannot be reduced.").format(child.idx, child.item_code))
+
+    now = now_datetime()
+    started = child.get("custom_row_started_at")
+    if started:
+        started = get_datetime(started)
+    else:
+        started = started_from_elapsed(now, elapsed_seconds)
+        updates["custom_row_started_at"] = started
+
+    row_completed = False
+    if complete and child.get("custom_row_status") != rules.ROW_PICKED:
+        updates.update(
+            {
+                "custom_row_status": rules.ROW_PICKED,
+                "custom_row_completed_at": now,
+                "custom_picking_duration_seconds": rules.duration_seconds(started, now, elapsed_seconds),
+                # Keep the standard field in step so ERPNext's own "Create ..." buttons agree with the app.
+                "picked_qty": picked,
+            }
+        )
+        row_completed = True
+    elif not complete:
+        updates["custom_row_status"] = rules.next_row_status(picked, required, child.get("custom_row_status"))
+
+    child.db_set(updates, update_modified=False)
+    stamp_card_started(doc, started)
+
+    card_completed = False
+    if row_completed:
+        card_completed = run_card_completion_check(doc.name)
+        if card_completed:
+            doc.add_comment("Info", _("All rows picked. Last row completed by {0}.").format(frappe.utils.get_fullname(frappe.session.user)))
+    else:
+        frappe.db.set_value(PICK_LIST, doc.name, "modified", now, update_modified=False)
+    return row_result(doc.name, child.name, row_completed=row_completed, card_completed=card_completed)
+
+
+def stamp_card_started(doc, when):
+    header = {}
+    if not doc.get("custom_card_started_at"):
+        header["custom_card_started_at"] = when
+    if current_status(doc) == rules.STATUS_READY:
+        header["custom_picking_status"] = rules.STATUS_PICKING
+    if header:
+        doc.db_set(header, notify=True)
+
+
+def run_card_completion_check(name) -> bool:
+    """Picked when every row is picked. The row lock makes the transition happen exactly once,
+    so the request that flips it knows it was the last picker."""
+    frappe.db.get_value(PICK_LIST, name, "name", for_update=True)
+    statuses = frappe.get_all(PICK_LIST_ITEM, filters={"parent": name, "parenttype": PICK_LIST}, pluck="custom_row_status")
+    if not rules.card_complete(statuses):
+        return False
+    if frappe.db.get_value(PICK_LIST, name, "custom_picking_status") == rules.STATUS_PICKED:
+        return False
+    frappe.db.set_value(
+        PICK_LIST,
+        name,
+        {"custom_picking_status": rules.STATUS_PICKED, "custom_card_completed_at": now_datetime()},
+    )
+    return True
+
+
+def started_from_elapsed(now, elapsed_seconds):
+    elapsed = flt(elapsed_seconds) if elapsed_seconds not in (None, "") else 0.0
+    return now - dt.timedelta(seconds=max(0.0, elapsed)) if elapsed > 0 else now
+
+
+def validate_scanned_batch(child, batch_no) -> dict:
+    """The scanned batch must be the one ERPNext allocated to the row; rows without an allocated
+    batch accept any valid, unexpired batch of the same item (and remember it)."""
+    expected = (child.get("batch_no") or "").strip()
+    if expected:
+        if batch_no.lower() != expected.lower():
+            frappe.throw(_("Wrong batch. Expected: {0}, scanned: {1}").format(expected, batch_no))
+        return {}
+    batch = frappe.db.get_value("Batch", batch_no, ["item", "expiry_date", "disabled"], as_dict=True)
+    if not batch:
+        frappe.throw(_("Batch {0} does not exist.").format(batch_no))
+    if batch.item != child.item_code:
+        frappe.throw(_("Batch {0} belongs to item {1}, not {2}.").format(batch_no, batch.item, child.item_code))
+    if cint(batch.disabled):
+        frappe.throw(_("Batch {0} is disabled.").format(batch_no))
+    if batch.expiry_date and getdate(batch.expiry_date) < getdate(nowdate()):
+        frappe.throw(_("Batch {0} expired on {1}.").format(batch_no, frappe.format(batch.expiry_date, "Date")))
+    return {"batch_no": batch_no}
+
+
+# --------------------------------------------------------------------------------------------
+# Loading / permissions
+# --------------------------------------------------------------------------------------------
+
+
+def load_row(name, row):
+    doc = frappe.get_doc(PICK_LIST, name)
+    doc.check_permission("read")
+    if doc.docstatus != 1:
+        frappe.throw(_("Pick List {0} must be submitted before it can be picked.").format(name))
+    ensure_open(doc)
+    child = next((r for r in doc.get("locations") or [] if r.name == row), None)
+    if child is None:
+        frappe.throw(_("Row {0} does not belong to Pick List {1}.").format(row, name))
+    user = frappe.session.user
+    if not rules.can_act_on_row(user, child.get("custom_picker"), frappe.get_roles(user)):
+        frappe.throw(_("Row {0} of Pick List {1} is not assigned to you.").format(child.idx, name), frappe.PermissionError)
+    return doc, child
+
+
+def load_for_card(name):
     doc = frappe.get_doc(PICK_LIST, name)
     doc.check_permission("read")
     if doc.docstatus != 1:
         frappe.throw(_("Pick List {0} must be submitted before it can be picked.").format(name))
     user = frappe.session.user
-    if not rules.can_act(user, doc.get("custom_picker"), rules.assigned_users(doc.get("_assign")), frappe.get_roles(user), allow_supervisor):
-        frappe.throw(_("Pick List {0} is not assigned to you.").format(name), frappe.PermissionError)
+    pickers = [r.get("custom_picker") for r in doc.get("locations") or []]
+    if not rules.can_act_on_card(user, pickers, frappe.get_roles(user)):
+        frappe.throw(_("Pick List {0} has no rows assigned to you.").format(name), frappe.PermissionError)
     return doc
 
 
@@ -273,125 +433,12 @@ def current_status(doc):
     return doc.get("custom_picking_status") or rules.STATUS_READY
 
 
-def require_status(doc, expected, message):
-    if current_status(doc) != expected:
-        frappe.throw(message)
-
-
 def reload(doc):
     return frappe.get_doc(PICK_LIST, doc.name)
 
 
 def required_qty(row):
     return flt(row.get("stock_qty")) or flt(row.get("qty")) * (flt(row.get("conversion_factor")) or 1)
-
-
-def row_summary(row):
-    return {
-        "name": row.name,
-        "item_code": row.item_code,
-        "picked_qty": flt(row.get("custom_wms_picked_qty")),
-        "required_qty": required_qty(row),
-        "optional": cint(row.get("custom_optional")),
-    }
-
-
-def apply_progress(doc, items):
-    try:
-        payload_rows = rules.normalize_progress_rows(items)
-    except rules.PickingRuleError as exc:
-        frappe.throw(str(exc))
-
-    rows_by_name = {row.name: row for row in doc.get("locations") or []}
-    today = getdate(nowdate())
-    for payload in payload_rows:
-        row = rows_by_name.get(payload["name"])
-        if row is None:
-            frappe.throw(_("Row {0} does not belong to Pick List {1}.").format(payload["name"], doc.name))
-        updates = validate_row_progress(doc, row, payload, today)
-        row.db_set(updates, update_modified=False)
-    frappe.db.set_value(PICK_LIST, doc.name, "modified", now_datetime(), update_modified=False)
-
-
-def validate_row_progress(doc, row, payload, today):
-    """Checks item, warehouse, batch, expiry and quantity for one row and returns the DB updates."""
-    required = required_qty(row)
-    try:
-        picked = rules.validate_picked_qty(payload["picked_qty"], required, row.item_code)
-    except rules.PickingRuleError as exc:
-        frappe.throw(str(exc))
-
-    if payload.get("item_code") and payload["item_code"].lower() != (row.item_code or "").lower():
-        frappe.throw(_("Row {0} expects item {1}, not {2}.").format(row.idx, row.item_code, payload["item_code"]))
-
-    updates = {"custom_wms_picked_qty": picked}
-
-    warehouse = payload.get("warehouse")
-    if warehouse:
-        if row.get("warehouse") and warehouse != row.warehouse:
-            frappe.throw(_("Row {0} must be picked from warehouse {1}, not {2}.").format(row.idx, row.warehouse, warehouse))
-        info = frappe.db.get_value("Warehouse", warehouse, ["is_group", "company"], as_dict=True)
-        if not info:
-            frappe.throw(_("Warehouse {0} does not exist.").format(warehouse))
-        if cint(info.is_group):
-            frappe.throw(_("Warehouse {0} is a group and cannot hold stock.").format(warehouse))
-        if info.company and doc.company and info.company != doc.company:
-            frappe.throw(_("Warehouse {0} belongs to another company.").format(warehouse))
-        if not row.get("warehouse"):
-            updates["warehouse"] = warehouse
-
-    batch_no = payload.get("batch_no")
-    if batch_no:
-        if row.get("batch_no") and batch_no != row.batch_no:
-            frappe.throw(_("Row {0} expects batch {1}, not {2}.").format(row.idx, row.batch_no, batch_no))
-        validate_batch(batch_no, row, picked, today)
-        if not row.get("batch_no"):
-            updates["batch_no"] = batch_no
-    elif row.get("batch_no") and picked > 0:
-        validate_batch(row.batch_no, row, picked, today)
-
-    serial_no = payload.get("serial_no")
-    if serial_no:
-        for serial in [s.strip() for s in serial_no.replace(",", "\n").split("\n") if s.strip()]:
-            item = frappe.db.get_value("Serial No", serial, "item_code")
-            if not item:
-                frappe.throw(_("Serial No {0} does not exist.").format(serial))
-            if item != row.item_code:
-                frappe.throw(_("Serial No {0} belongs to item {1}, not {2}.").format(serial, item, row.item_code))
-        if not row.get("serial_no"):
-            updates["serial_no"] = serial_no
-    return updates
-
-
-def validate_batch(batch_no, row, picked, today):
-    batch = frappe.db.get_value("Batch", batch_no, ["item", "expiry_date", "disabled"], as_dict=True)
-    if not batch:
-        frappe.throw(_("Batch {0} does not exist.").format(batch_no))
-    if batch.item != row.item_code:
-        frappe.throw(_("Batch {0} belongs to item {1}, not {2}.").format(batch_no, batch.item, row.item_code))
-    if cint(batch.disabled):
-        frappe.throw(_("Batch {0} is disabled.").format(batch_no))
-    if batch.expiry_date and getdate(batch.expiry_date) < today:
-        frappe.throw(_("Batch {0} expired on {1}.").format(batch_no, frappe.format(batch.expiry_date, "Date")))
-    available = batch_available_qty(batch_no, row)
-    if available is not None and picked > available + rules.QTY_TOLERANCE:
-        frappe.throw(
-            _("Only {0} of batch {1} is available in {2} (trying to pick {3}).").format(
-                flt(available), batch_no, row.get("warehouse"), flt(picked)
-            )
-        )
-
-
-def batch_available_qty(batch_no, row):
-    if not row.get("warehouse"):
-        return None
-    try:
-        from erpnext.stock.doctype.batch.batch import get_batch_qty
-
-        qty = get_batch_qty(batch_no=batch_no, warehouse=row.warehouse, item_code=row.item_code)
-    except Exception:
-        return None
-    return flt(qty) if isinstance(qty, (int, float)) else None
 
 
 # --------------------------------------------------------------------------------------------
@@ -415,7 +462,6 @@ def find_generated_document(doc):
         if docstatus is not None and cint(docstatus) != 2:
             return {"doctype": doc.custom_generated_doctype, "name": doc.custom_generated_docname, "docstatus": cint(docstatus)}
 
-    # Documents created from the desk carry the same links, so they count as well.
     if frappe.get_meta(doctype).has_field("pick_list"):
         found = frappe.get_all(
             doctype,
@@ -603,21 +649,16 @@ def header_fields():
     return [field for field in HEADER_FIELDS if field in ALWAYS_PRESENT or meta.has_field(field)]
 
 
-def item_totals(names):
-    if not names:
+def child_rows(parents):
+    """Rows of several pick lists in one query, grouped by parent."""
+    if not parents:
         return {}
-    data = frappe.get_all(
-        PICK_LIST_ITEM,
-        filters={"parent": ["in", names], "parenttype": PICK_LIST},
-        fields=[
-            "parent",
-            "count(name) as item_count",
-            "sum(stock_qty) as required_qty",
-            "sum(custom_wms_picked_qty) as picked_qty",
-        ],
-        group_by="parent",
-    )
-    return {row.parent: row for row in data}
+    meta = frappe.get_meta(PICK_LIST_ITEM)
+    fields = [f for f in ROW_FIELDS if f in ("name", "idx", "parent") or meta.has_field(f)]
+    grouped = {}
+    for row in frappe.get_all(PICK_LIST_ITEM, filters={"parent": ["in", parents], "parenttype": PICK_LIST}, fields=fields, order_by="parent asc, idx asc"):
+        grouped.setdefault(row.parent, []).append(row)
+    return grouped
 
 
 def customer_name_for(customer, cache={}):
@@ -632,9 +673,23 @@ def str_or_none(value):
     return None if value in (None, "") else str(value)
 
 
-def serialize_header(source, totals=None):
-    totals = totals or {}
+def row_totals(rows, user):
+    picked_rows = [r for r in rows if r.get("custom_row_status") == rules.ROW_PICKED]
+    mine = [r for r in rows if r.get("custom_picker") == user]
     return {
+        "item_count": len(rows),
+        "picked_rows": len(picked_rows),
+        "required_qty": sum(required_qty(r) for r in rows),
+        "picked_qty": sum(flt(r.get("custom_wms_picked_qty")) for r in rows),
+        "my_row_count": len(mine),
+        "my_picked_rows": len([r for r in mine if r.get("custom_row_status") == rules.ROW_PICKED]),
+        "my_open_rows": len([r for r in mine if r.get("custom_row_status") != rules.ROW_PICKED]),
+        "all_rows_picked": rules.card_complete([r.get("custom_row_status") for r in rows]),
+    }
+
+
+def serialize_header(source, rows, user):
+    header = {
         "name": source.get("name"),
         "purpose": source.get("purpose"),
         "company": source.get("company"),
@@ -644,22 +699,17 @@ def serialize_header(source, totals=None):
         "target_warehouse": source.get("custom_target_warehouse"),
         "status": source.get("status"),
         "picking_status": source.get("custom_picking_status") or rules.STATUS_READY,
-        "picker": source.get("custom_picker"),
-        "assigned_to": rules.assigned_users(source.get("_assign")),
-        "picking_started_at": str_or_none(source.get("custom_picking_started_at")),
-        "picking_started_by": source.get("custom_picking_started_by"),
-        "picking_completed_at": str_or_none(source.get("custom_picking_completed_at")),
-        "picking_completed_by": source.get("custom_picking_completed_by"),
+        "card_started_at": str_or_none(source.get("custom_card_started_at")),
+        "card_completed_at": str_or_none(source.get("custom_card_completed_at")),
         "generated_doctype": source.get("custom_generated_doctype"),
         "generated_docname": source.get("custom_generated_docname"),
         "work_order": source.get("work_order"),
         "material_request": source.get("material_request"),
         "modified": str_or_none(source.get("modified")),
         "creation": str_or_none(source.get("creation")),
-        "item_count": cint(totals.get("item_count")),
-        "required_qty": flt(totals.get("required_qty")),
-        "picked_qty": flt(totals.get("picked_qty")),
     }
+    header.update(row_totals(rows, user))
+    return header
 
 
 def row_target_warehouses(doc):
@@ -680,80 +730,70 @@ def row_target_warehouses(doc):
     return targets
 
 
-def serialize_pick_list(doc):
+def serialize_row(row, user, info=None, expiry_date=None, target_warehouse=None):
+    info = info or {}
+    required = required_qty(row)
+    picked = flt(row.get("custom_wms_picked_qty"))
+    return {
+        "name": row.name,
+        "idx": row.idx,
+        "item_code": row.item_code,
+        "item_name": row.get("item_name") or info.get("item_name") or row.item_code,
+        "description": row.get("description"),
+        "warehouse": row.get("warehouse"),
+        "target_warehouse": target_warehouse,
+        "batch_no": row.get("batch_no"),
+        "expiry_date": str_or_none(expiry_date),
+        "serial_no": row.get("serial_no"),
+        "required_qty": required,
+        "picked_qty": picked,
+        "uom": row.get("stock_uom") or row.get("uom"),
+        "order_qty": flt(row.get("qty")),
+        "order_uom": row.get("uom"),
+        "conversion_factor": flt(row.get("conversion_factor")) or 1,
+        "has_batch_no": cint(info.get("has_batch_no")),
+        "sales_order": row.get("sales_order"),
+        "material_request": row.get("material_request"),
+        "picker": row.get("custom_picker"),
+        "is_mine": bool(user) and row.get("custom_picker") == user,
+        "row_status": row.get("custom_row_status") or rules.ROW_NOT_PICKED,
+        "row_started_at": str_or_none(row.get("custom_row_started_at")),
+        "row_completed_at": str_or_none(row.get("custom_row_completed_at")),
+        "duration_seconds": flt(row.get("custom_picking_duration_seconds")) if row.get("custom_picking_duration_seconds") not in (None, "") else None,
+    }
+
+
+def serialize_pick_list(doc, user):
     rows = doc.get("locations") or []
     item_codes = list({row.item_code for row in rows if row.item_code})
     batch_nos = list({row.batch_no for row in rows if row.get("batch_no")})
 
     item_info = {}
-    barcodes = {}
     if item_codes:
-        for item in frappe.get_all("Item", filters={"name": ["in", item_codes]}, fields=["name", "item_name", "has_batch_no", "has_serial_no"]):
+        for item in frappe.get_all("Item", filters={"name": ["in", item_codes]}, fields=["name", "item_name", "has_batch_no"]):
             item_info[item.name] = item
-        for barcode in frappe.get_all("Item Barcode", filters={"parent": ["in", item_codes], "parenttype": "Item"}, fields=["parent", "barcode"]):
-            barcodes.setdefault(barcode.parent, []).append(barcode.barcode)
     expiries = {}
     if batch_nos:
         for batch in frappe.get_all("Batch", filters={"name": ["in", batch_nos]}, fields=["name", "expiry_date"]):
             expiries[batch.name] = batch.expiry_date
     targets = row_target_warehouses(doc)
 
-    items = []
-    for row in rows:
-        required = required_qty(row)
-        picked = flt(row.get("custom_wms_picked_qty"))
-        info = item_info.get(row.item_code) or {}
-        items.append(
-            {
-                "name": row.name,
-                "idx": row.idx,
-                "item_code": row.item_code,
-                "item_name": row.get("item_name") or info.get("item_name") or row.item_code,
-                "description": row.get("description"),
-                "warehouse": row.get("warehouse"),
-                "target_warehouse": targets.get(row.name),
-                "batch_no": row.get("batch_no"),
-                "expiry_date": str_or_none(expiries.get(row.get("batch_no"))),
-                "serial_no": row.get("serial_no"),
-                "required_qty": required,
-                "picked_qty": picked,
-                "uom": row.get("stock_uom") or row.get("uom"),
-                "order_qty": flt(row.get("qty")),
-                "order_uom": row.get("uom"),
-                "conversion_factor": flt(row.get("conversion_factor")) or 1,
-                "has_batch_no": cint(info.get("has_batch_no")),
-                "has_serial_no": cint(info.get("has_serial_no")),
-                "optional": cint(row.get("custom_optional")),
-                "barcodes": barcodes.get(row.item_code, []),
-                "sales_order": row.get("sales_order"),
-                "material_request": row.get("material_request"),
-                "row_status": rules.row_status(picked, required),
-            }
-        )
-
-    header = serialize_header(doc)
-    header["item_count"] = len(items)
-    header["required_qty"] = sum(item["required_qty"] for item in items)
-    header["picked_qty"] = sum(item["picked_qty"] for item in items)
-    header["items"] = items
+    header = serialize_header(doc, rows, user)
+    header["items"] = [
+        serialize_row(row, user, item_info.get(row.item_code), expiries.get(row.get("batch_no")), targets.get(row.name)) for row in rows
+    ]
     return header
 
 
-def pick_row(rows, predicate):
-    matches = [row for row in rows if predicate(row)]
-    if not matches:
-        return None
-    for row in matches:  # prefer a row that still needs picking
-        if not rules.is_row_complete(row.get("custom_wms_picked_qty"), required_qty(row), cint(row.get("custom_optional"))):
-            return row
-    return matches[0]
-
-
-def scan_result(row, match, batch_no=None, expiry_date=None):
+def row_result(name, row_name, row_completed, card_completed):
+    doc = frappe.get_doc(PICK_LIST, name)
+    serialized = serialize_pick_list(doc, frappe.session.user)
+    row = next((r for r in serialized["items"] if r["name"] == row_name), None)
     return {
-        "row_name": row.name,
-        "item_code": row.item_code,
-        "batch_no": batch_no,
-        "match": match,
-        "expiry_date": str_or_none(expiry_date),
+        "pick_list": serialized,
+        "row": row,
+        "row_completed": bool(row_completed),
+        "card_completed": bool(card_completed),
+        # Only the request that flipped the card to Picked is the last picker.
+        "is_last_picker": bool(card_completed),
     }
