@@ -19,8 +19,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.wmserp.app.R
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
@@ -42,8 +44,8 @@ fun SplashScreen() {
                 Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, tint = Color.White, modifier = Modifier.size(44.dp))
             }
             Spacer(Modifier.height(16.dp))
-            Text("WMS ERP", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("Warehouse management for ERPNext", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.app_name), color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.splash_tagline), color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(28.dp))
             CircularProgressIndicator(color = Color.White)
         }

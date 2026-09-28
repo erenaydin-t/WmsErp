@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.ScannerSettings
 import com.wmserp.app.domain.repository.SettingsRepository
@@ -34,9 +35,19 @@ class AndroidSettingsRepository(private val dataStore: DataStore<Preferences>) :
         dataStore.edit { it[KEY_VIBRATE] = enabled }
     }
 
+    override val appLanguage: Flow<AppLanguage> = dataStore.data.map { prefs -> AppLanguage.fromTag(prefs[KEY_LANGUAGE]) }
+
+    override suspend fun setAppLanguage(language: AppLanguage) {
+        dataStore.edit { prefs ->
+            val tag = language.tag
+            if (tag == null) prefs.remove(KEY_LANGUAGE) else prefs[KEY_LANGUAGE] = tag
+        }
+    }
+
     private companion object {
         val KEY_SCANNER_MODE = stringPreferencesKey("scanner_mode")
         val KEY_BEEP = booleanPreferencesKey("scanner_beep")
         val KEY_VIBRATE = booleanPreferencesKey("scanner_vibrate")
+        val KEY_LANGUAGE = stringPreferencesKey("app_language")
     }
 }

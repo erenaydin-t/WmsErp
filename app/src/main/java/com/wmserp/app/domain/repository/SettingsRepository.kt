@@ -1,5 +1,6 @@
 package com.wmserp.app.domain.repository
 
+import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.ScannerSettings
 import kotlinx.coroutines.flow.Flow
@@ -9,4 +10,7 @@ interface SettingsRepository {
     suspend fun setScannerMode(mode: ScannerMode)
     suspend fun setBeepOnScan(enabled: Boolean)
     suspend fun setVibrateOnScan(enabled: Boolean)
+
+    val appLanguage: Flow<AppLanguage>
+    suspend fun setAppLanguage(language: AppLanguage)
 }

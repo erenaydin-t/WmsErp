@@ -1,12 +1,15 @@
 package com.wmserp.app.presentation.login
 
 import app.cash.turbine.test
+import com.wmserp.app.R
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.Credentials
 import com.wmserp.app.domain.model.LoginPrefill
 import com.wmserp.app.domain.usecase.GetLoginPrefillUseCase
 import com.wmserp.app.domain.usecase.LoginUseCase
+import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
 import io.mockk.coEvery
@@ -61,13 +64,13 @@ class LoginViewModelTest {
 
     @Test
     fun `failed login exposes the error and keeps the form`() = runTest {
-        coEvery { loginUseCase(any(), any(), any()) } returns AppResult.Failure(AppError.Unauthorized("Invalid username or password"))
+        coEvery { loginUseCase(any(), any(), any()) } returns AppResult.Failure(AppError.Unauthorized("Invalid username or password", ErrorCode.INVALID_CREDENTIALS))
         val vm = createViewModel()
         vm.onPasswordChange("bad")
 
         vm.login()
 
-        assertEquals("Invalid username or password", vm.uiState.value.error)
+        assertEquals(UiText.Res(R.string.error_invalid_credentials), vm.uiState.value.error)
         assertEquals("bad", vm.uiState.value.password)
         vm.dismissError()
         assertNull(vm.uiState.value.error)

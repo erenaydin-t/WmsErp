@@ -18,7 +18,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.PopupProperties
+import com.wmserp.app.R
 import com.wmserp.app.domain.model.Warehouse
 
 /** Editable warehouse field with a suggestion list; typing filters the suggestions. */
@@ -53,7 +55,7 @@ fun WarehousePicker(
                 IconButton(onClick = { expanded = !expanded }, enabled = enabled) {
                     Icon(
                         if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = if (expanded) "Hide warehouses" else "Show warehouses",
+                        contentDescription = stringResource(if (expanded) R.string.picker_hide_warehouses else R.string.picker_show_warehouses),
                     )
                 }
             },

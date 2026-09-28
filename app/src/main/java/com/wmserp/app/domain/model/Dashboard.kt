@@ -78,10 +78,14 @@ data class StockAgingReport(
         get() = rangeLabels.indices.map { i -> rows.sumOf { it.qtyByRange.getOrElse(i) { 0.0 } } }
 }
 
+enum class AnalyticsSection { KPIS, DELIVERY_DELAYS, ACTIVITY_HEATMAP, STOCK_AGING }
+
+data class AnalyticsError(val section: AnalyticsSection, val error: com.wmserp.app.domain.common.AppError)
+
 data class InventoryAnalytics(
     val kpis: InventoryKpis,
     val delays: DeliveryDelayReport?,
     val heatmap: ActivityHeatmap?,
     val aging: StockAgingReport?,
-    val errors: List<String> = emptyList(),
+    val errors: List<AnalyticsError> = emptyList(),
 )

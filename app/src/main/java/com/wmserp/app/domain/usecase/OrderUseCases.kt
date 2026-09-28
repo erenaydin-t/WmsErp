@@ -2,6 +2,7 @@ package com.wmserp.app.domain.usecase
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.DeliveryNote
 import com.wmserp.app.domain.model.DeliveryNoteDraft
 import com.wmserp.app.domain.model.DeliveryNoteLine
@@ -21,7 +22,7 @@ class GetOpenPurchaseOrdersUseCase @Inject constructor(private val orderReposito
 class GetPurchaseOrderUseCase @Inject constructor(private val orderRepository: OrderRepository) {
     suspend operator fun invoke(name: String): AppResult<PurchaseOrder> =
         orderRepository.getPurchaseOrder(name.trim()).flatMap { po ->
-            if (po == null) AppResult.Failure(AppError.NotFound("Purchase Order $name not found")) else AppResult.Success(po)
+            if (po == null) AppResult.Failure(AppError.NotFound("Purchase Order $name not found", ErrorCode.PURCHASE_ORDER_NOT_FOUND, listOf(name))) else AppResult.Success(po)
         }
 }
 
@@ -41,14 +42,18 @@ class ReceivePurchaseOrderUseCase @Inject constructor(private val orderRepositor
         for (line in lines) {
             if (line.qty <= 0.0) continue
             val poItem = itemsByRow[line.purchaseOrderRow]
-                ?: return AppResult.Failure(AppError.Validation("Unknown purchase order row ${line.purchaseOrderRow}"))
+                ?: return AppResult.Failure(AppError.Validation("Unknown purchase order row ${line.purchaseOrderRow}", ErrorCode.UNKNOWN_ORDER_ROW, listOf(line.purchaseOrderRow)))
             if (line.qty > poItem.pendingQty + QTY_TOLERANCE) {
                 return AppResult.Failure(
-                    AppError.Validation("${poItem.itemCode}: cannot receive ${line.qty.trimZeros()} (pending ${poItem.pendingQty.trimZeros()})")
+                    AppError.Validation(
+                        "${poItem.itemCode}: cannot receive ${line.qty.trimZeros()} (pending ${poItem.pendingQty.trimZeros()})",
+                        ErrorCode.OVER_RECEIVE,
+                        listOf(poItem.itemCode, line.qty.trimZeros(), poItem.pendingQty.trimZeros()),
+                    )
                 )
             }
             val warehouse = line.warehouse?.ifBlank { null } ?: poItem.warehouse ?: purchaseOrder.setWarehouse ?: defaultWarehouse
-                ?: return AppResult.Failure(AppError.Validation("${poItem.itemCode}: select a warehouse"))
+                ?: return AppResult.Failure(AppError.Validation("${poItem.itemCode}: select a warehouse", ErrorCode.SELECT_WAREHOUSE_FOR_ITEM, listOf(poItem.itemCode)))
             receiptLines += PurchaseReceiptLine(
                 itemCode = poItem.itemCode,
                 qty = line.qty,
@@ -58,7 +63,7 @@ class ReceivePurchaseOrderUseCase @Inject constructor(private val orderRepositor
                 rate = poItem.rate,
             )
         }
-        if (receiptLines.isEmpty()) return AppResult.Failure(AppError.Validation("Enter at least one quantity to receive"))
+        if (receiptLines.isEmpty()) return AppResult.Failure(AppError.Validation("Enter at least one quantity to receive", ErrorCode.NOTHING_TO_RECEIVE))
         return orderRepository.createPurchaseReceipt(
             PurchaseReceiptDraft(
                 purchaseOrderName = purchaseOrder.name,
@@ -83,7 +88,7 @@ class GetOpenSalesOrdersUseCase @Inject constructor(private val orderRepository:
 class GetSalesOrderUseCase @Inject constructor(private val orderRepository: OrderRepository) {
     suspend operator fun invoke(name: String): AppResult<SalesOrder> =
         orderRepository.getSalesOrder(name.trim()).flatMap { so ->
-            if (so == null) AppResult.Failure(AppError.NotFound("Sales Order $name not found")) else AppResult.Success(so)
+            if (so == null) AppResult.Failure(AppError.NotFound("Sales Order $name not found", ErrorCode.SALES_ORDER_NOT_FOUND, listOf(name))) else AppResult.Success(so)
         }
 }
 
@@ -102,14 +107,18 @@ class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository:
         for (line in lines) {
             if (line.qty <= 0.0) continue
             val soItem = itemsByRow[line.salesOrderRow]
-                ?: return AppResult.Failure(AppError.Validation("Unknown sales order row ${line.salesOrderRow}"))
+                ?: return AppResult.Failure(AppError.Validation("Unknown sales order row ${line.salesOrderRow}", ErrorCode.UNKNOWN_ORDER_ROW, listOf(line.salesOrderRow)))
             if (line.qty > soItem.pendingQty + QTY_TOLERANCE) {
                 return AppResult.Failure(
-                    AppError.Validation("${soItem.itemCode}: cannot dispatch ${line.qty.trimZeros()} (pending ${soItem.pendingQty.trimZeros()})")
+                    AppError.Validation(
+                        "${soItem.itemCode}: cannot dispatch ${line.qty.trimZeros()} (pending ${soItem.pendingQty.trimZeros()})",
+                        ErrorCode.OVER_DISPATCH,
+                        listOf(soItem.itemCode, line.qty.trimZeros(), soItem.pendingQty.trimZeros()),
+                    )
                 )
             }
             val warehouse = line.warehouse?.ifBlank { null } ?: soItem.warehouse ?: salesOrder.setWarehouse ?: defaultWarehouse
-                ?: return AppResult.Failure(AppError.Validation("${soItem.itemCode}: select a warehouse"))
+                ?: return AppResult.Failure(AppError.Validation("${soItem.itemCode}: select a warehouse", ErrorCode.SELECT_WAREHOUSE_FOR_ITEM, listOf(soItem.itemCode)))
             noteLines += DeliveryNoteLine(
                 itemCode = soItem.itemCode,
                 qty = line.qty,
@@ -119,7 +128,7 @@ class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository:
                 rate = soItem.rate,
             )
         }
-        if (noteLines.isEmpty()) return AppResult.Failure(AppError.Validation("Enter at least one quantity to dispatch"))
+        if (noteLines.isEmpty()) return AppResult.Failure(AppError.Validation("Enter at least one quantity to dispatch", ErrorCode.NOTHING_TO_DISPATCH))
         return orderRepository.createDeliveryNote(
             DeliveryNoteDraft(
                 salesOrderName = salesOrder.name,

@@ -7,6 +7,8 @@ import com.wmserp.app.domain.model.Credentials
 import com.wmserp.app.domain.model.UserSession
 import com.wmserp.app.domain.usecase.GetLoginPrefillUseCase
 import com.wmserp.app.domain.usecase.LoginUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +31,7 @@ data class LoginUiState(
     val apiKey: String = "",
     val apiSecret: String = "",
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val prefillLoaded: Boolean = false,
 ) {
     val isInsecureUrl: Boolean get() = url.trim().startsWith("http://", ignoreCase = true)
@@ -98,7 +100,7 @@ class LoginViewModel @Inject constructor(
                     _uiState.update { it.copy(isLoading = false, password = "", error = null) }
                     _events.tryEmit(LoginEvent.LoggedIn(result.data))
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.toUiText()) }
             }
         }
     }

@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.InventoryAnalytics
 import com.wmserp.app.domain.usecase.GetInventoryAnalyticsUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,17 +16,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class AnalyticsTab(val title: String) {
-    DELIVERY_DELAYS("Delivery Delays"),
-    ACTIVITY_HEATMAP("Activity Heatmap"),
-    STOCK_AGING("Stock Aging"),
+enum class AnalyticsTab {
+    DELIVERY_DELAYS,
+    ACTIVITY_HEATMAP,
+    STOCK_AGING,
 }
 
 data class InventoryUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val analytics: InventoryAnalytics? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     val selectedTab: AnalyticsTab = AnalyticsTab.DELIVERY_DELAYS,
 )
 
@@ -49,7 +51,7 @@ class InventoryViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             when (val result = getInventoryAnalytics()) {
                 is AppResult.Success -> _uiState.update { it.copy(isLoading = false, isRefreshing = false, analytics = result.data) }
-                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, isRefreshing = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, isRefreshing = false, error = result.error.toUiText()) }
             }
         }
     }

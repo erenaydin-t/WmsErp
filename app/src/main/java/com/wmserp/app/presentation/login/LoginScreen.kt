@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -54,6 +55,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wmserp.app.R
+import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.theme.WmsTheme
@@ -126,8 +129,8 @@ fun LoginScreen(
                 Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, tint = Color.White, modifier = Modifier.size(38.dp))
             }
             Spacer(Modifier.height(14.dp))
-            Text("WMS ERP", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("Sign in to your ERPNext workspace", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.app_name), color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.login_subtitle), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(28.dp))
 
             Card(
@@ -137,7 +140,7 @@ fun LoginScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
             ) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("Welcome back", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.login_title), style = MaterialTheme.typography.titleLarge)
 
                     OutlinedTextField(
                         value = state.url,
@@ -145,8 +148,8 @@ fun LoginScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("login_url"),
-                        label = { Text("ERPNext URL") },
-                        placeholder = { Text("https://erp.company.com") },
+                        label = { Text(stringResource(R.string.login_url_label)) },
+                        placeholder = { Text(stringResource(R.string.login_url_placeholder)) },
                         leadingIcon = { Icon(Icons.Outlined.Link, contentDescription = null) },
                         singleLine = true,
                         enabled = !state.isLoading,
@@ -154,7 +157,7 @@ fun LoginScreen(
                     )
                     if (state.isInsecureUrl) {
                         InfoBanner(
-                            "This server uses plain HTTP. Credentials will not be encrypted in transit; prefer HTTPS.",
+                            stringResource(R.string.login_insecure_warning),
                             container = colors.warningContainer,
                             content = MaterialTheme.colorScheme.onSurface,
                         )
@@ -167,7 +170,7 @@ fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("login_username"),
-                            label = { Text("Username / Email") },
+                            label = { Text(stringResource(R.string.login_username_label)) },
                             leadingIcon = { Icon(Icons.Outlined.Email, contentDescription = null) },
                             singleLine = true,
                             enabled = !state.isLoading,
@@ -179,13 +182,13 @@ fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("login_password"),
-                            label = { Text("Password") },
+                            label = { Text(stringResource(R.string.login_password_label)) },
                             leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null) },
                             trailingIcon = {
                                 IconButton(onClick = onTogglePasswordVisibility, modifier = Modifier.testTag("login_toggle_password")) {
                                     Icon(
                                         if (state.passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                        contentDescription = if (state.passwordVisible) "Hide password" else "Show password",
+                                        contentDescription = stringResource(if (state.passwordVisible) R.string.login_hide_password else R.string.login_show_password),
                                     )
                                 }
                             },
@@ -202,7 +205,7 @@ fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("login_api_key"),
-                            label = { Text("API Key") },
+                            label = { Text(stringResource(R.string.login_api_key)) },
                             leadingIcon = { Icon(Icons.Outlined.Key, contentDescription = null) },
                             singleLine = true,
                             enabled = !state.isLoading,
@@ -214,14 +217,17 @@ fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("login_api_secret"),
-                            label = { Text("API Secret") },
+                            label = { Text(stringResource(R.string.login_api_secret)) },
                             leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null) },
                             singleLine = true,
                             enabled = !state.isLoading,
                             visualTransformation = if (state.passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             trailingIcon = {
                                 IconButton(onClick = onTogglePasswordVisibility) {
-                                    Icon(if (state.passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = "Toggle visibility")
+                                    Icon(
+                                        if (state.passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                        contentDescription = stringResource(R.string.login_toggle_visibility),
+                                    )
                                 }
                             },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
@@ -234,7 +240,7 @@ fun LoginScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text("Remember me", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.login_remember_me), style = MaterialTheme.typography.bodyMedium)
                         Switch(
                             checked = state.rememberMe,
                             onCheckedChange = onRememberMeChange,
@@ -243,8 +249,8 @@ fun LoginScreen(
                         )
                     }
 
-                    if (state.error != null) {
-                        ErrorBanner(state.error, modifier = Modifier.testTag("login_error"), onDismiss = onDismissError)
+                    state.error?.let { error ->
+                        ErrorBanner(error.asString(), modifier = Modifier.testTag("login_error"), onDismiss = onDismissError)
                     }
 
                     Button(
@@ -259,12 +265,12 @@ fun LoginScreen(
                         if (state.isLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
                         } else {
-                            Text("Sign in", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.login_button), style = MaterialTheme.typography.titleMedium)
                         }
                     }
 
                     TextButton(onClick = onToggleAdvanced, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text(if (state.useApiToken) "Advanced: API key sign-in" else "Advanced options")
+                        Text(stringResource(if (state.useApiToken) R.string.login_advanced_token else R.string.login_advanced))
                         Icon(
                             if (state.showAdvanced) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
                             contentDescription = null,
@@ -277,9 +283,9 @@ fun LoginScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Use API key & secret", style = MaterialTheme.typography.bodyMedium)
+                                Text(stringResource(R.string.login_use_token), style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    "Token authentication instead of a password session",
+                                    stringResource(R.string.login_use_token_hint),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -291,7 +297,7 @@ fun LoginScreen(
             }
             Spacer(Modifier.height(24.dp))
             Text(
-                "Your credentials are encrypted with the Android Keystore and only sent to the server you specify.",
+                stringResource(R.string.login_security_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 8.dp),

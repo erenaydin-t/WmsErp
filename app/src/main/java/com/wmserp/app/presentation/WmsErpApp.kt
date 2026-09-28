@@ -2,12 +2,12 @@ package com.wmserp.app.presentation
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -25,6 +26,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.wmserp.app.R
+import com.wmserp.app.presentation.common.LocaleDefaults
+import com.wmserp.app.presentation.common.LocalizedContent
+import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.components.BottomNavItem
 import com.wmserp.app.presentation.components.WmsBottomBar
 import com.wmserp.app.presentation.dashboard.DashboardRoute
@@ -33,25 +38,38 @@ import com.wmserp.app.presentation.login.LoginRoute
 import com.wmserp.app.presentation.navigation.Routes
 import com.wmserp.app.presentation.orders.DispatchRoute
 import com.wmserp.app.presentation.orders.OrdersRoute
+import com.wmserp.app.presentation.orders.OrdersTab
 import com.wmserp.app.presentation.orders.ReceiveRoute
 import com.wmserp.app.presentation.profile.ProfileRoute
 import com.wmserp.app.presentation.scan.ScanRoute
 import com.wmserp.app.presentation.splash.SplashScreen
 
 private val bottomNavItems = listOf(
-    BottomNavItem(Routes.DASHBOARD, "Home", Icons.Outlined.Home, Icons.Filled.Home),
-    BottomNavItem(Routes.INVENTORY, "Inventory", Icons.Outlined.Insights),
-    BottomNavItem(Routes.ORDERS, "Orders", Icons.Outlined.ReceiptLong),
-    BottomNavItem(Routes.PROFILE, "Profile", Icons.Outlined.Person, Icons.Filled.Person),
+    BottomNavItem(Routes.DASHBOARD, R.string.nav_home, Icons.Outlined.Home, Icons.Filled.Home),
+    BottomNavItem(Routes.INVENTORY, R.string.nav_inventory, Icons.Outlined.Insights),
+    BottomNavItem(Routes.ORDERS, R.string.nav_orders, Icons.AutoMirrored.Outlined.ReceiptLong),
+    BottomNavItem(Routes.PROFILE, R.string.nav_profile, Icons.Outlined.Person, Icons.Filled.Person),
 )
 
 @Composable
 fun WmsErpApp(mainViewModel: MainViewModel = hiltViewModel()) {
     val navController = rememberNavController()
+    val language by mainViewModel.language.collectAsStateWithLifecycle()
+
+    LaunchedEffect(language) { LocaleDefaults.apply(language) }
+
+    LocalizedContent(language = language) {
+        WmsErpScaffold(mainViewModel = mainViewModel, navController = navController)
+    }
+}
+
+@Composable
+private fun WmsErpScaffold(mainViewModel: MainViewModel, navController: NavHostController) {
     val state by mainViewModel.uiState.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = Routes.base(backStackEntry?.destination?.route)
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(state.status) {
         when (val status = state.status) {
@@ -70,9 +88,13 @@ fun WmsErpApp(mainViewModel: MainViewModel = hiltViewModel()) {
                         launchSingleTop = true
                     }
                 }
-                status.message?.let {
+                status.message?.let { message ->
                     mainViewModel.consumeMessage()
-                    snackbarHostState.showSnackbar(it)
+                    val text = when (message) {
+                        is UiText.Res -> context.getString(message.id, *message.args.toTypedArray())
+                        is UiText.Plain -> message.value
+                    }
+                    snackbarHostState.showSnackbar(text)
                 }
             }
             SessionStatus.Loading -> Unit
@@ -115,8 +137,8 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
         composable(Routes.DASHBOARD) {
             DashboardRoute(
                 onScan = { navController.navigateToTab(Routes.SCAN) },
-                onReceive = { navController.navigateToTab(Routes.orders(com.wmserp.app.presentation.orders.OrdersTab.RECEIVE)) },
-                onDispatch = { navController.navigateToTab(Routes.orders(com.wmserp.app.presentation.orders.OrdersTab.DISPATCH)) },
+                onReceive = { navController.navigateToTab(Routes.orders(OrdersTab.RECEIVE)) },
+                onDispatch = { navController.navigateToTab(Routes.orders(OrdersTab.DISPATCH)) },
                 onReport = { navController.navigateToTab(Routes.INVENTORY) },
             )
         }

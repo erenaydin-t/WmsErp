@@ -1,6 +1,7 @@
 package com.wmserp.app.data.remote
 
 import com.wmserp.app.domain.common.AppError
+import com.wmserp.app.domain.common.ErrorCode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -28,21 +29,28 @@ object ErpNextErrorParser {
         val parsed = body?.takeIf { it.isNotBlank() }?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() }
         val obj = parsed as? JsonObject
         val excType = obj?.get("exc_type")?.asStringOrNull()
-        val message = obj?.let { extractMessage(it) } ?: defaultMessage(httpCode)
+        val serverMessage = obj?.let { extractMessage(it) }
+        val message = serverMessage ?: defaultMessage(httpCode)
+        // Free text from the server is shown verbatim; only our own defaults are localizable.
+        fun code(fallback: ErrorCode): ErrorCode? = if (serverMessage == null) fallback else null
 
         return when {
             excType == "AuthenticationError" || excType == "SessionExpired" || excType == "SessionStopped" ->
-                AppError.Unauthorized(message)
-            excType == "PermissionError" -> AppError.Forbidden(message)
-            excType == "DoesNotExistError" -> AppError.NotFound(message)
-            excType == "CSRFTokenError" -> AppError.Unauthorized(message)
-            excType != null && excType in VALIDATION_TYPES -> AppError.Validation(message)
-            httpCode == 401 -> AppError.Unauthorized(message)
-            httpCode == 403 -> if (looksLikeAuthFailure(message)) AppError.Unauthorized(message) else AppError.Forbidden(message)
-            httpCode == 404 -> AppError.NotFound(message)
-            httpCode == 417 || httpCode == 400 || httpCode == 409 || httpCode == 422 -> AppError.Validation(message)
-            httpCode >= 500 -> AppError.Server(message, httpCode)
-            else -> AppError.Server(message, httpCode)
+                AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
+            excType == "PermissionError" -> AppError.Forbidden(message, code(ErrorCode.FORBIDDEN))
+            excType == "DoesNotExistError" -> AppError.NotFound(message, code(ErrorCode.NOT_FOUND))
+            excType == "CSRFTokenError" -> AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
+            excType != null && excType in VALIDATION_TYPES -> AppError.Validation(message, code(ErrorCode.BAD_REQUEST))
+            httpCode == 401 -> AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
+            httpCode == 403 -> if (looksLikeAuthFailure(message)) {
+                AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
+            } else {
+                AppError.Forbidden(message, code(ErrorCode.FORBIDDEN))
+            }
+            httpCode == 404 -> AppError.NotFound(message, code(ErrorCode.NOT_FOUND))
+            httpCode == 417 || httpCode == 400 || httpCode == 409 || httpCode == 422 -> AppError.Validation(message, code(ErrorCode.BAD_REQUEST))
+            httpCode in 502..504 -> AppError.Server(message, httpCode, code(ErrorCode.SERVER_UNAVAILABLE))
+            else -> AppError.Server(message, httpCode, code(ErrorCode.SERVER_ERROR))
         }
     }
 

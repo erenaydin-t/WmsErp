@@ -2,21 +2,28 @@ package com.wmserp.app.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wmserp.app.R
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.SessionEvent
 import com.wmserp.app.domain.model.UserSession
 import com.wmserp.app.domain.repository.AuthRepository
+import com.wmserp.app.domain.usecase.ObserveAppLanguageUseCase
 import com.wmserp.app.domain.usecase.RestoreSessionUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 sealed interface SessionStatus {
     data object Loading : SessionStatus
-    data class SignedOut(val message: String? = null) : SessionStatus
+    data class SignedOut(val message: UiText? = null) : SessionStatus
     data class SignedIn(val session: UserSession) : SessionStatus
 }
 
@@ -27,10 +34,15 @@ data class MainUiState(val status: SessionStatus = SessionStatus.Loading)
 class MainViewModel @Inject constructor(
     private val restoreSession: RestoreSessionUseCase,
     private val authRepository: AuthRepository,
+    observeAppLanguage: ObserveAppLanguageUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    /** Current UI language; [AppLanguage.SYSTEM] follows the device locale. */
+    val language: StateFlow<AppLanguage> = observeAppLanguage()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppLanguage.SYSTEM)
 
     @Volatile
     private var restoreCompleted = false
@@ -42,7 +54,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val status = when (val result = restoreSession()) {
                 is AppResult.Success -> result.data?.let { SessionStatus.SignedIn(it) } ?: SessionStatus.SignedOut()
-                is AppResult.Failure -> SessionStatus.SignedOut(result.error.message)
+                is AppResult.Failure -> SessionStatus.SignedOut(result.error.toUiText())
             }
             restoreCompleted = true
             _uiState.value = MainUiState(status)
@@ -88,6 +100,6 @@ class MainViewModel @Inject constructor(
     }
 
     companion object {
-        const val SESSION_EXPIRED_MESSAGE = "Your session has expired. Please sign in again."
+        val SESSION_EXPIRED_MESSAGE: UiText = UiText.Res(R.string.session_expired)
     }
 }

@@ -1,6 +1,7 @@
 package com.wmserp.app.presentation.orders
 
 import androidx.lifecycle.SavedStateHandle
+import com.wmserp.app.R
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.ScanLookup
@@ -13,6 +14,7 @@ import com.wmserp.app.domain.usecase.LookupScanUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.ReceivePurchaseOrderUseCase
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
+import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.FakeScannerController
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
@@ -66,7 +68,9 @@ class ReceiveViewModelTest {
         val line = vm.uiState.value.lines.first { it.item.itemCode == "ITEM-002" }
         assertEquals("3", line.qtyText)
         assertTrue(line.highlighted)
-        assertTrue(vm.uiState.value.message!!.contains("already counted"))
+        val message = vm.uiState.value.message as UiText.Res
+        assertEquals(R.string.receive_already_counted, message.id)
+        assertEquals(listOf("3", "ITEM-002"), message.args)
         assertEquals(4, scanner.feedbackCalls.size)
     }
 
@@ -90,6 +94,6 @@ class ReceiveViewModelTest {
         vm.submit(asDraft = false)
 
         assertNotNull(vm.uiState.value.completed)
-        assertTrue(vm.uiState.value.message!!.contains("MAT-PRE-00001"))
+        assertEquals(UiText.Res(R.string.receive_submitted, listOf("MAT-PRE-00001")), vm.uiState.value.message)
     }
 }

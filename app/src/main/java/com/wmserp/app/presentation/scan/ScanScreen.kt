@@ -58,12 +58,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.Item
 import com.wmserp.app.domain.model.PurchaseOrder
@@ -73,6 +76,8 @@ import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.StockLevel
 import com.wmserp.app.domain.model.Warehouse
+import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
@@ -135,9 +140,15 @@ fun ScanScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Scan", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.scan_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    if (state.cameraActive) "Using the camera scanner" else if (state.hasHardwareScanner) "Hardware scanner ready — pull the trigger" else "Keyboard scanner input",
+                    stringResource(
+                        when {
+                            state.cameraActive -> R.string.scan_mode_camera
+                            state.hasHardwareScanner -> R.string.scan_mode_hardware
+                            else -> R.string.scan_mode_keyboard
+                        }
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -145,7 +156,7 @@ fun ScanScreen(
             IconButton(onClick = onToggleCamera, modifier = Modifier.testTag("scan_toggle_camera")) {
                 Icon(
                     if (state.cameraActive) Icons.Outlined.Keyboard else Icons.Outlined.CameraAlt,
-                    contentDescription = if (state.cameraActive) "Use hardware scanner" else "Use camera",
+                    contentDescription = stringResource(if (state.cameraActive) R.string.scan_use_hardware else R.string.scan_use_camera),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -158,7 +169,7 @@ fun ScanScreen(
                     onClick = { onTargetChange(target) },
                     shape = SegmentedButtonDefaults.itemShape(index = index, count = ScanTarget.entries.size),
                     modifier = Modifier.testTag("scan_target_${target.name}"),
-                    label = { Text(target.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    label = { Text(stringResource(target.labelRes()), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 )
             }
         }
@@ -173,7 +184,7 @@ fun ScanScreen(
                     .weight(1f)
                     .scannerAwareFocus()
                     .testTag("scan_manual_input"),
-                placeholder = { Text("Type or scan a code") },
+                placeholder = { Text(stringResource(R.string.scan_manual_placeholder)) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -184,14 +195,14 @@ fun ScanScreen(
                 enabled = state.manualInput.isNotBlank() && !state.isLookingUp,
                 modifier = Modifier.testTag("scan_manual_submit"),
                 shape = RoundedCornerShape(14.dp),
-            ) { Text("Look up") }
+            ) { Text(stringResource(R.string.scan_look_up)) }
         }
 
         if (state.isLookingUp) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        state.message?.let { InfoBanner(it, container = WmsTheme.colors.successContainer, content = MaterialTheme.colorScheme.onSurface) }
-        state.error?.let { ErrorBanner(it, onDismiss = onDismissMessage, modifier = Modifier.testTag("scan_error")) }
+        state.message?.let { InfoBanner(it.asString(), container = WmsTheme.colors.successContainer, content = MaterialTheme.colorScheme.onSurface) }
+        state.error?.let { ErrorBanner(it.asString(), onDismiss = onDismissMessage, modifier = Modifier.testTag("scan_error")) }
 
         state.result?.let { lookup ->
             Box(modifier = Modifier.testTag("scan_result")) {
@@ -205,7 +216,7 @@ fun ScanScreen(
         }
 
         if (state.history.isNotEmpty()) {
-            SectionHeader("Recent scans")
+            SectionHeader(stringResource(R.string.scan_recent))
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = MaterialTheme.shapes.large,
@@ -217,9 +228,9 @@ fun ScanScreen(
                         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(entry.code, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(entry.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(entry.summary.asString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            StatusChip(entry.target.label, if (entry.found) WmsTheme.colors.success else WmsTheme.colors.danger)
+                            StatusChip(stringResource(entry.target.labelRes()), if (entry.found) WmsTheme.colors.success else WmsTheme.colors.danger)
                         }
                         if (index < state.history.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
@@ -277,7 +288,7 @@ private fun Viewfinder(state: ScanUiState, onCameraBarcode: (String, String?) ->
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(
-                        state.statusText,
+                        state.statusText.asString(),
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.testTag("scan_status"),
@@ -337,7 +348,7 @@ private fun ResultCard(title: String, subtitle: String?, chip: String?, chipColo
                     }
                 }
                 if (chip != null) StatusChip(chip, chipColor)
-                IconButton(onClick = onClear) { Icon(Icons.Outlined.Close, contentDescription = "Clear result") }
+                IconButton(onClick = onClear) { Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.scan_clear_result)) }
             }
             content()
         }
@@ -347,43 +358,55 @@ private fun ResultCard(title: String, subtitle: String?, chip: String?, chipColo
 @Composable
 private fun ItemResultCard(item: Item, stock: List<StockLevel>, onClear: () -> Unit, onTransfer: () -> Unit) {
     val total = stock.sumOf { it.actualQty }
-    ResultCard(title = item.name, subtitle = item.code, chip = if (item.disabled) "Disabled" else "Item", chipColor = if (item.disabled) WmsTheme.colors.danger else WmsTheme.colors.kpiPurple, onClear = onClear) {
+    ResultCard(
+        title = item.name,
+        subtitle = item.code,
+        chip = stringResource(if (item.disabled) R.string.scan_chip_disabled else R.string.scan_target_item),
+        chipColor = if (item.disabled) WmsTheme.colors.danger else WmsTheme.colors.kpiPurple,
+        onClear = onClear,
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LabelValue("Group", item.group ?: "-", Modifier.weight(1f))
-            LabelValue("UOM", item.stockUom ?: "-", Modifier.weight(1f))
-            LabelValue("Total stock", Formatters.qty(total), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_group), item.group ?: "-", Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_uom), item.stockUom ?: "-", Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_total_stock), Formatters.qty(total), Modifier.weight(1f))
         }
-        if (item.barcodes.isNotEmpty()) LabelValue("Barcodes", item.barcodes.joinToString(", "))
+        if (item.barcodes.isNotEmpty()) LabelValue(stringResource(R.string.scan_label_barcodes), item.barcodes.joinToString(", "))
         if (stock.isNotEmpty()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             stock.take(6).forEach { level ->
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(level.warehouse, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        Formatters.qty(level.actualQty) + (if (level.reservedQty > 0) " (${Formatters.qty(level.reservedQty)} reserved)" else ""),
+                        Formatters.qty(level.actualQty) + (if (level.reservedQty > 0) " " + stringResource(R.string.scan_reserved, Formatters.qty(level.reservedQty)) else ""),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
         } else {
-            Text("No stock recorded for this item.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.scan_no_stock), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         FilledTonalButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth().testTag("scan_move_stock")) {
             Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Move stock")
+            Text(stringResource(R.string.scan_move_stock))
         }
     }
 }
 
 @Composable
 private fun WarehouseResultCard(warehouse: Warehouse, stock: List<StockLevel>, onClear: () -> Unit) {
-    ResultCard(title = warehouse.warehouseName, subtitle = warehouse.name, chip = warehouse.warehouseType ?: "Warehouse", chipColor = WmsTheme.colors.kpiBlue, onClear = onClear) {
+    ResultCard(
+        title = warehouse.warehouseName,
+        subtitle = warehouse.name,
+        chip = warehouse.warehouseType ?: stringResource(R.string.scan_target_warehouse),
+        chipColor = WmsTheme.colors.kpiBlue,
+        onClear = onClear,
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LabelValue("Company", warehouse.company ?: "-", Modifier.weight(1f))
-            LabelValue("Items in stock", stock.size.toString(), Modifier.weight(1f))
-            LabelValue("Total qty", Formatters.qty(stock.sumOf { it.actualQty }), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_company), warehouse.company ?: "-", Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_items_in_stock), stock.size.toString(), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_total_qty), Formatters.qty(stock.sumOf { it.actualQty }), Modifier.weight(1f))
         }
         if (stock.isNotEmpty()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -401,9 +424,9 @@ private fun WarehouseResultCard(warehouse: Warehouse, stock: List<StockLevel>, o
 private fun PurchaseOrderResultCard(po: PurchaseOrder, onClear: () -> Unit, onReceive: () -> Unit) {
     ResultCard(title = po.name, subtitle = po.supplierName, chip = po.status, chipColor = WmsTheme.colors.warning, onClear = onClear) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LabelValue("Ordered", Formatters.date(po.transactionDate), Modifier.weight(1f))
-            LabelValue("Expected", Formatters.date(po.scheduleDate), Modifier.weight(1f))
-            LabelValue("Total", Formatters.money(po.grandTotal, po.currency), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_ordered), Formatters.date(po.transactionDate), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_expected), Formatters.date(po.scheduleDate), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_total), Formatters.money(po.grandTotal, po.currency), Modifier.weight(1f))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         po.items.take(6).forEach { line ->
@@ -412,21 +435,30 @@ private fun PurchaseOrderResultCard(po: PurchaseOrder, onClear: () -> Unit, onRe
                 Text("${Formatters.qty(line.receivedQty)} / ${Formatters.qty(line.qty)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             }
         }
-        if (po.items.size > 6) Text("+${po.items.size - 6} more items", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (po.items.size > 6) {
+            Text(stringResource(R.string.scan_more_items, po.items.size - 6), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Button(onClick = onReceive, enabled = !po.isFullyReceived, modifier = Modifier.fillMaxWidth().testTag("scan_receive_po")) {
-            Text(if (po.isFullyReceived) "Fully received" else "Receive items")
+            Text(stringResource(if (po.isFullyReceived) R.string.scan_fully_received else R.string.scan_receive_items))
         }
     }
 }
 
 @Composable
 private fun NotFoundCard(code: String, target: ScanTarget, onClear: () -> Unit) {
-    ResultCard(title = "No ${target.label.lowercase()} found", subtitle = code, chip = "Not found", chipColor = WmsTheme.colors.danger, onClear = onClear) {
+    val targetLabel = stringResource(target.labelRes())
+    ResultCard(
+        title = stringResource(R.string.scan_not_found_title, targetLabel),
+        subtitle = code,
+        chip = stringResource(R.string.scan_chip_not_found),
+        chipColor = WmsTheme.colors.danger,
+        onClear = onClear,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(8.dp))
             Text(
-                "Check that the ${target.label.lowercase()} exists in ERPNext and that the barcode is linked to it.",
+                stringResource(R.string.scan_not_found_message, targetLabel),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -447,24 +479,24 @@ private fun TransferSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Move stock", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.transfer_title), style = MaterialTheme.typography.titleLarge)
             Text(item?.let { "${it.name} (${it.code})" } ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            WarehousePicker("From warehouse", form.fromWarehouse, form.warehouses, onFromChange)
-            WarehousePicker("To warehouse", form.toWarehouse, form.warehouses, onToChange)
+            WarehousePicker(stringResource(R.string.transfer_from), form.fromWarehouse, form.warehouses, onFromChange)
+            WarehousePicker(stringResource(R.string.transfer_to), form.toWarehouse, form.warehouses, onToChange)
             OutlinedTextField(
                 value = form.qtyText,
                 onValueChange = onQtyChange,
-                label = { Text("Quantity") },
+                label = { Text(stringResource(R.string.transfer_qty)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().scannerAwareFocus(),
-                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             )
-            form.error?.let { ErrorBanner(it) }
+            form.error?.let { ErrorBanner(it.asString()) }
             Button(onClick = onSubmit, enabled = form.canSubmit, modifier = Modifier.fillMaxWidth().height(50.dp)) {
                 if (form.submitting) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                 } else {
-                    Text("Submit Material Transfer")
+                    Text(stringResource(R.string.transfer_submit))
                 }
             }
         }

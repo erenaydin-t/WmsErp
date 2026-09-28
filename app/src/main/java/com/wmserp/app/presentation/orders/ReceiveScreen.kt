@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -31,12 +33,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
+import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
@@ -85,23 +90,23 @@ fun ReceiveScreen(
     val po = state.purchaseOrder
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { WmsTopBar(title = po?.name ?: "Receive", subtitle = po?.supplierName, onBack = onBack) },
+        topBar = { WmsTopBar(title = po?.name ?: stringResource(R.string.receive_title), subtitle = po?.supplierName, onBack = onBack) },
         bottomBar = {
             if (po != null && state.completed == null) {
                 Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
                     Column(modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Counted: ${Formatters.qty(state.totalQty)}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                            TextButton(onClick = onReceiveAll, modifier = Modifier.testTag("receive_all")) { Text("Receive all") }
-                            TextButton(onClick = onClearAll) { Text("Clear") }
+                            Text(stringResource(R.string.receive_counted, Formatters.qty(state.totalQty)), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            TextButton(onClick = onReceiveAll, modifier = Modifier.testTag("receive_all")) { Text(stringResource(R.string.receive_all)) }
+                            TextButton(onClick = onClearAll) { Text(stringResource(R.string.common_clear)) }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(onClick = { onSubmit(true) }, enabled = state.canSubmit, modifier = Modifier.weight(1f)) { Text("Save draft") }
+                            OutlinedButton(onClick = { onSubmit(true) }, enabled = state.canSubmit, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_save_draft)) }
                             Button(onClick = { onSubmit(false) }, enabled = state.canSubmit, modifier = Modifier.weight(1f).testTag("receive_submit")) {
                                 if (state.isSubmitting) {
-                                    CircularProgressIndicator(modifier = Modifier.height(18.dp).width(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                                 } else {
-                                    Text("Submit receipt")
+                                    Text(stringResource(R.string.receive_submit))
                                 }
                             }
                         }
@@ -119,10 +124,12 @@ fun ReceiveScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (state.isLoading) {
-                item { LoadingState(modifier = Modifier.height(240.dp), message = "Loading purchase order...") }
+                item { LoadingState(modifier = Modifier.height(240.dp), message = stringResource(R.string.receive_loading)) }
                 return@LazyColumn
             }
-            state.error?.let { item { ErrorBanner(it, onRetry = if (po == null) onRetry else null, onDismiss = if (po != null) onDismissMessage else null) } }
+            state.error?.let { error ->
+                item { ErrorBanner(error.asString(), onRetry = if (po == null) onRetry else null, onDismiss = if (po != null) onDismissMessage else null) }
+            }
             if (po == null) {
                 return@LazyColumn
             }
@@ -130,12 +137,12 @@ fun ReceiveScreen(
                 item {
                     Card(colors = CardDefaults.cardColors(containerColor = WmsTheme.colors.successContainer), shape = MaterialTheme.shapes.large) {
                         Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            androidx.compose.material3.Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = WmsTheme.colors.success, modifier = Modifier.height(40.dp).width(40.dp))
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = WmsTheme.colors.success, modifier = Modifier.size(40.dp))
                             Spacer(Modifier.height(8.dp))
                             Text(receipt.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("receive_completed"))
-                            Text(state.message ?: receipt.status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(state.message?.asString() ?: receipt.status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
-                            Button(onClick = onBack) { Text("Done") }
+                            Button(onClick = onBack) { Text(stringResource(R.string.common_done)) }
                         }
                     }
                 }
@@ -145,22 +152,22 @@ fun ReceiveScreen(
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = MaterialTheme.shapes.large, elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Purchase order", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.receive_po_card), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                             StatusChip(po.status, WmsTheme.colors.warning)
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            LabelValue("Expected", Formatters.date(po.scheduleDate), Modifier.weight(1f))
-                            LabelValue("Received", Formatters.percent(po.perReceived), Modifier.weight(1f))
-                            LabelValue("Total", Formatters.money(po.grandTotal, po.currency), Modifier.weight(1f))
+                            LabelValue(stringResource(R.string.label_expected), Formatters.date(po.scheduleDate), Modifier.weight(1f))
+                            LabelValue(stringResource(R.string.label_received), Formatters.percent(po.perReceived), Modifier.weight(1f))
+                            LabelValue(stringResource(R.string.label_total), Formatters.money(po.grandTotal, po.currency), Modifier.weight(1f))
                         }
-                        WarehousePicker("Receive into warehouse", state.warehouse, state.warehouses, onWarehouseChange, modifier = Modifier.testTag("receive_warehouse"))
+                        WarehousePicker(stringResource(R.string.receive_warehouse), state.warehouse, state.warehouses, onWarehouseChange, modifier = Modifier.testTag("receive_warehouse"))
                     }
                 }
             }
-            state.message?.let { item { InfoBanner(it, container = WmsTheme.colors.successContainer, content = MaterialTheme.colorScheme.onSurface) } }
-            item { Text("Scan items or enter counted quantities", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            state.message?.let { message -> item { InfoBanner(message.asString(), container = WmsTheme.colors.successContainer, content = MaterialTheme.colorScheme.onSurface) } }
+            item { Text(stringResource(R.string.receive_scan_hint), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (state.lines.isEmpty()) {
-                item { EmptyState(Icons.Outlined.CheckCircle, "No items", "This purchase order has no item rows.") }
+                item { EmptyState(Icons.Outlined.CheckCircle, stringResource(R.string.receive_no_items_title), stringResource(R.string.receive_no_items_message)) }
             }
             items(state.lines, key = { it.item.rowName }) { line ->
                 val container = if (line.highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
@@ -168,12 +175,19 @@ fun ReceiveScreen(
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(line.item.itemName, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${line.item.itemCode} · ordered ${Formatters.qty(line.item.qty)} · received ${Formatters.qty(line.item.receivedQty)} · pending ${Formatters.qty(line.item.pendingQty)} ${line.item.uom ?: ""}",
+                            stringResource(
+                                R.string.receive_line_details,
+                                line.item.itemCode,
+                                Formatters.qty(line.item.qty),
+                                Formatters.qty(line.item.receivedQty),
+                                Formatters.qty(line.item.pendingQty),
+                                line.item.uom ?: "",
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Receiving now", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.receive_now), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                             QtyStepper(
                                 value = line.qtyText,
                                 onValueChange = { onSetQty(line.item.rowName, it) },

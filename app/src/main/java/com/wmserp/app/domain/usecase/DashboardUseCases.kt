@@ -3,6 +3,8 @@ package com.wmserp.app.domain.usecase
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ActivityEntry
+import com.wmserp.app.domain.model.AnalyticsError
+import com.wmserp.app.domain.model.AnalyticsSection
 import com.wmserp.app.domain.model.DashboardKpis
 import com.wmserp.app.domain.model.InventoryAnalytics
 import com.wmserp.app.domain.repository.AnalyticsRepository
@@ -14,7 +16,7 @@ import javax.inject.Inject
 data class DashboardData(
     val kpis: DashboardKpis,
     val recentActivity: List<ActivityEntry>,
-    val activityError: String? = null,
+    val activityError: AppError? = null,
 )
 
 /** Loads dashboard KPIs and the recent activity feed concurrently. */
@@ -35,7 +37,7 @@ class GetDashboardUseCase @Inject constructor(
             DashboardData(
                 kpis = kpis,
                 recentActivity = activity.getOrNull().orEmpty(),
-                activityError = activity.errorOrNull()?.message,
+                activityError = activity.errorOrNull(),
             )
         )
     }
@@ -60,10 +62,10 @@ class GetInventoryAnalyticsUseCase @Inject constructor(
         val agingResult = aging.await()
 
         val errors = buildList {
-            kpiResult.errorOrNull()?.let { add("KPIs: ${it.message}") }
-            delaysResult.errorOrNull()?.let { add("Delivery delays: ${it.message}") }
-            heatmapResult.errorOrNull()?.let { add("Activity heatmap: ${it.message}") }
-            agingResult.errorOrNull()?.let { add("Stock aging: ${it.message}") }
+            kpiResult.errorOrNull()?.let { add(AnalyticsError(AnalyticsSection.KPIS, it)) }
+            delaysResult.errorOrNull()?.let { add(AnalyticsError(AnalyticsSection.DELIVERY_DELAYS, it)) }
+            heatmapResult.errorOrNull()?.let { add(AnalyticsError(AnalyticsSection.ACTIVITY_HEATMAP, it)) }
+            agingResult.errorOrNull()?.let { add(AnalyticsError(AnalyticsSection.STOCK_AGING, it)) }
         }
         AppResult.Success(
             InventoryAnalytics(

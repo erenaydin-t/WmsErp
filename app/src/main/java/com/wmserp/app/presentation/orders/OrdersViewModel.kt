@@ -8,6 +8,8 @@ import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.SalesOrder
 import com.wmserp.app.domain.usecase.GetOpenPurchaseOrdersUseCase
 import com.wmserp.app.domain.usecase.GetOpenSalesOrdersUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -19,7 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class OrdersTab(val title: String) { RECEIVE("Receive"), DISPATCH("Dispatch") }
+enum class OrdersTab { RECEIVE, DISPATCH }
 
 data class OrdersUiState(
     val tab: OrdersTab = OrdersTab.RECEIVE,
@@ -28,7 +30,7 @@ data class OrdersUiState(
     val salesOrders: List<SalesOrder> = emptyList(),
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /** Lists open Purchase Orders (to receive) and Sales Orders (to dispatch). */
@@ -73,7 +75,7 @@ class OrdersViewModel @Inject constructor(
             val so = async { getOpenSalesOrders(query) }
             val poResult = po.await()
             val soResult = so.await()
-            val error = listOfNotNull(poResult.errorOrNull(), soResult.errorOrNull()).firstOrNull()?.message
+            val error = listOfNotNull(poResult.errorOrNull(), soResult.errorOrNull()).firstOrNull()?.toUiText()
             _uiState.update {
                 it.copy(
                     isLoading = false,

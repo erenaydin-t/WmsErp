@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,14 +27,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.SalesOrder
+import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.common.titleRes
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.LoadingState
@@ -89,9 +92,9 @@ fun OrdersScreen(
             .statusBarsPadding(),
     ) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-            Text("Orders", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.orders_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
-                if (state.tab == OrdersTab.RECEIVE) "Purchase orders waiting to be received" else "Sales orders waiting to be dispatched",
+                stringResource(if (state.tab == OrdersTab.RECEIVE) R.string.orders_subtitle_receive else R.string.orders_subtitle_dispatch),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -101,7 +104,7 @@ fun OrdersScreen(
                 Tab(
                     selected = state.tab == tab,
                     onClick = { onSelectTab(tab) },
-                    text = { Text(tab.title) },
+                    text = { Text(stringResource(tab.titleRes())) },
                     modifier = Modifier.testTag("orders_tab_${tab.name}"),
                 )
             }
@@ -109,7 +112,7 @@ fun OrdersScreen(
         SearchField(
             value = state.query,
             onValueChange = onQueryChange,
-            placeholder = if (state.tab == OrdersTab.RECEIVE) "Search PO number or supplier" else "Search SO number or customer",
+            placeholder = stringResource(if (state.tab == OrdersTab.RECEIVE) R.string.orders_search_po else R.string.orders_search_so),
             leadingIcon = Icons.Outlined.Search,
             modifier = Modifier
                 .padding(horizontal = 20.dp, vertical = 10.dp)
@@ -121,20 +124,20 @@ fun OrdersScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                state.error?.let { item { ErrorBanner(it, onRetry = onRefresh) } }
+                state.error?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
                 if (state.isLoading) {
                     item { LoadingState(modifier = Modifier.height(220.dp)) }
                 } else {
                     when (state.tab) {
                         OrdersTab.RECEIVE -> {
                             if (state.purchaseOrders.isEmpty()) {
-                                item { EmptyState(Icons.Outlined.Inbox, "Nothing to receive", "Open purchase orders will show up here.") }
+                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_receive_title), stringResource(R.string.orders_empty_receive_message)) }
                             }
                             items(state.purchaseOrders, key = { it.name }) { po -> PurchaseOrderCard(po) { onOpenPurchaseOrder(po.name) } }
                         }
                         OrdersTab.DISPATCH -> {
                             if (state.salesOrders.isEmpty()) {
-                                item { EmptyState(Icons.Outlined.Inbox, "Nothing to dispatch", "Open sales orders will show up here.") }
+                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_dispatch_title), stringResource(R.string.orders_empty_dispatch_message)) }
                             }
                             items(state.salesOrders, key = { it.name }) { so -> SalesOrderCard(so) { onOpenSalesOrder(so.name) } }
                         }
@@ -163,12 +166,16 @@ private fun PurchaseOrderCard(po: PurchaseOrder, onClick: () -> Unit) {
                 StatusChip(po.status, WmsTheme.colors.warning)
             }
             ProgressRow(
-                label = "Received ${Formatters.percent(po.perReceived)}",
+                label = stringResource(R.string.orders_received_pct, Formatters.percent(po.perReceived)),
                 fraction = (po.perReceived / 100.0).toFloat(),
                 valueText = Formatters.money(po.grandTotal, po.currency),
                 color = WmsTheme.colors.kpiTeal,
             )
-            Text("Expected ${Formatters.date(po.scheduleDate)} · ordered ${Formatters.date(po.transactionDate)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                stringResource(R.string.orders_expected_ordered, Formatters.date(po.scheduleDate), Formatters.date(po.transactionDate)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -191,13 +198,16 @@ private fun SalesOrderCard(so: SalesOrder, onClick: () -> Unit) {
                 StatusChip(so.status, WmsTheme.colors.info)
             }
             ProgressRow(
-                label = "Delivered ${Formatters.percent(so.perDelivered)}",
+                label = stringResource(R.string.orders_delivered_pct, Formatters.percent(so.perDelivered)),
                 fraction = (so.perDelivered / 100.0).toFloat(),
                 valueText = Formatters.money(so.grandTotal, so.currency),
                 color = WmsTheme.colors.kpiBlue,
             )
-            Text("Deliver by ${Formatters.date(so.deliveryDate)} · ordered ${Formatters.date(so.transactionDate)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(0.dp))
+            Text(
+                stringResource(R.string.orders_deliver_by_ordered, Formatters.date(so.deliveryDate), Formatters.date(so.transactionDate)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

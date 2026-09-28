@@ -1,11 +1,13 @@
 package com.wmserp.app.presentation.dashboard
 
+import com.wmserp.app.R
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.DashboardKpis
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.DashboardData
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
+import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
 import io.mockk.coEvery
@@ -55,7 +57,7 @@ class DashboardViewModelTest {
         coEvery { getDashboard() } returns AppResult.Failure(AppError.Network("offline")) andThen AppResult.Success(data)
 
         val vm = DashboardViewModel(getDashboard, authRepository)
-        assertEquals("offline", vm.uiState.value.error)
+        assertEquals(UiText.Res(R.string.error_network_unreachable), vm.uiState.value.error)
         assertNull(vm.uiState.value.data)
 
         vm.refresh()

@@ -2,6 +2,7 @@ package com.wmserp.app.domain.usecase
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.repository.InventoryRepository
@@ -23,7 +24,7 @@ class LookupScanUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(rawCode: String, target: ScanTarget): AppResult<ScanLookup> {
         val code = ScanCodeSanitizer.sanitize(rawCode)
-        if (code.isEmpty()) return AppResult.Failure(AppError.Validation("Empty barcode"))
+        if (code.isEmpty()) return AppResult.Failure(AppError.Validation("Empty barcode", ErrorCode.EMPTY_BARCODE))
 
         return when (target) {
             ScanTarget.ITEM -> inventoryRepository.findItemByBarcode(code).flatMap { item ->

@@ -3,6 +3,8 @@ package com.wmserp.app.data.remote
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.data.remote.interceptor.NoServerConfiguredException
 import com.wmserp.app.domain.model.SessionEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,17 +40,25 @@ class ApiCaller(private val eventBus: SessionEventBus) {
             val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
             handle(ErpNextErrorParser.parse(e.code(), body), notifyOnAuthFailure)
         } catch (e: SerializationException) {
-            AppResult.Failure(AppError.Server("Unexpected response from ERPNext: ${e.message ?: "invalid JSON"}"))
+            AppResult.Failure(AppError.Server("Unexpected response from ERPNext: ${e.message ?: "invalid JSON"}", code = ErrorCode.INVALID_RESPONSE))
         } catch (e: IllegalArgumentException) {
-            AppResult.Failure(AppError.Server("Unexpected response from ERPNext: ${e.message ?: "invalid data"}"))
+            AppResult.Failure(AppError.Server("Unexpected response from ERPNext: ${e.message ?: "invalid data"}", code = ErrorCode.INVALID_RESPONSE))
         } catch (e: IOException) {
-            AppResult.Failure(AppError.Network(networkMessage(e)))
+            AppResult.Failure(AppError.Network(networkMessage(e), networkCode(e)))
         }
     }
 
     private fun <T> handle(error: AppError, notify: Boolean): AppResult<T> {
         if (notify && error is AppError.Unauthorized) eventBus.emit(SessionEvent.Expired)
         return AppResult.Failure(error)
+    }
+
+    private fun networkCode(e: IOException): ErrorCode = when (e) {
+        is NoServerConfiguredException -> ErrorCode.NO_SERVER_CONFIGURED
+        is UnknownHostException -> ErrorCode.NETWORK_DNS
+        is SocketTimeoutException -> ErrorCode.NETWORK_TIMEOUT
+        is SSLException -> ErrorCode.NETWORK_TLS
+        else -> ErrorCode.NETWORK_UNREACHABLE
     }
 
     private fun networkMessage(e: IOException): String = when (e) {

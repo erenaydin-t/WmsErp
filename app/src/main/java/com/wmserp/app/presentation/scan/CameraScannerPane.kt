@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,9 +27,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.wmserp.app.R
 import com.wmserp.app.core.scanner.camera.CameraBarcodeView
 
 /** Requests the CAMERA runtime permission gracefully and shows the ML Kit viewfinder once granted. */
@@ -56,18 +59,18 @@ fun CameraScannerPane(modifier: Modifier = Modifier, onBarcode: (String, String?
                 .fillMaxSize()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+            verticalArrangement = Arrangement.Center,
         ) {
             Icon(Icons.Outlined.CameraAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(40.dp))
             Spacer(Modifier.height(10.dp))
             Text(
-                if (denied) "Camera access was denied. Allow it to scan with the camera, or use the hardware scanner." else "Camera permission is needed for camera scanning.",
+                stringResource(if (denied) R.string.camera_permission_denied else R.string.camera_permission_needed),
                 color = Color.White,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(12.dp))
-            Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) { Text("Allow camera") }
+            Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) { Text(stringResource(R.string.camera_allow)) }
         }
     }
 }

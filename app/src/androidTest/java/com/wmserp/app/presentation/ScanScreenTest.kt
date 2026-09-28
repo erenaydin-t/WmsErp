@@ -13,6 +13,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.wmserp.app.R
 import com.wmserp.app.domain.model.Item
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanTarget
@@ -34,6 +36,8 @@ class ScanScreenTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
     fun hardwareScanIsDeliveredToTheScreenListener() {
@@ -61,9 +65,9 @@ class ScanScreenTest {
         composeRule.setContent { WmsErpTheme { ScanHost(ScanUiState(hasHardwareScanner = true, cameraActive = false)) } }
 
         composeRule.onNodeWithTag("scan_status").assertIsDisplayed()
-        composeRule.onNodeWithText("Ready to scan item barcode...").assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.scan_hint_item)).assertIsDisplayed()
         composeRule.onNodeWithTag("scan_target_WAREHOUSE").performClick()
-        composeRule.onNodeWithText("Ready to scan warehouse label...").assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.scan_hint_warehouse)).assertIsDisplayed()
     }
 
     @Test

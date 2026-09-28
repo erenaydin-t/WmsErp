@@ -3,6 +3,7 @@ package com.wmserp.app.presentation.orders
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PurchaseOrder
@@ -20,6 +21,8 @@ import com.wmserp.app.domain.usecase.ReceiveLine
 import com.wmserp.app.domain.usecase.ReceivePurchaseOrderUseCase
 import com.wmserp.app.domain.usecase.ScanCodeSanitizer
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,8 +46,8 @@ data class ReceiveUiState(
     val warehouse: String = "",
     val warehouses: List<Warehouse> = emptyList(),
     val isSubmitting: Boolean = false,
-    val error: String? = null,
-    val message: String? = null,
+    val error: UiText? = null,
+    val message: UiText? = null,
     val completed: PurchaseReceipt? = null,
     val beep: Boolean = true,
     val vibrate: Boolean = true,
@@ -94,7 +97,7 @@ class ReceiveViewModel @Inject constructor(
                     val warehouses = searchWarehouses("").getOrNull().orEmpty()
                     _uiState.update { it.copy(warehouses = warehouses) }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.toUiText()) }
             }
         }
     }
@@ -134,12 +137,16 @@ class ReceiveViewModel @Inject constructor(
                     val lookup = result.data
                     if (lookup is ScanLookup.ItemFound) {
                         val idx = _uiState.value.lines.indexOfFirst { it.item.itemCode.equals(lookup.item.code, ignoreCase = true) }
-                        if (idx >= 0) addOne(idx) else _uiState.update { it.copy(error = "${lookup.item.code} is not on ${state.purchaseOrder.name}") }
+                        if (idx >= 0) {
+                            addOne(idx)
+                        } else {
+                            _uiState.update { it.copy(error = UiText.Res(R.string.receive_not_on_order, listOf(lookup.item.code, state.purchaseOrder.name))) }
+                        }
                     } else {
-                        _uiState.update { it.copy(error = "No item found for barcode $value") }
+                        _uiState.update { it.copy(error = UiText.Res(R.string.scan_item_not_found, listOf(value))) }
                     }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(error = result.error.toUiText()) }
             }
         }
     }
@@ -161,10 +168,10 @@ class ReceiveViewModel @Inject constructor(
                     it.copy(
                         isSubmitting = false,
                         completed = result.data,
-                        message = if (asDraft) "Draft Purchase Receipt ${result.data.name} saved" else "Purchase Receipt ${result.data.name} submitted",
+                        message = UiText.Res(if (asDraft) R.string.receive_draft_saved else R.string.receive_submitted, listOf(result.data.name)),
                     )
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isSubmitting = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isSubmitting = false, error = result.error.toUiText()) }
             }
         }
     }
@@ -175,12 +182,12 @@ class ReceiveViewModel @Inject constructor(
             val pending = line.item.pendingQty
             if (line.qty + 1 > pending + 1e-9) {
                 state.copy(
-                    message = "All ${pending.format()} × ${line.item.itemCode} already counted",
+                    message = UiText.Res(R.string.receive_already_counted, listOf(pending.format(), line.item.itemCode)),
                     lines = state.lines.mapIndexed { i, l -> l.copy(highlighted = i == index) },
                 )
             } else {
                 state.copy(
-                    message = "Added 1 × ${line.item.itemCode}",
+                    message = UiText.Res(R.string.receive_added, listOf(line.item.itemCode)),
                     error = null,
                     lines = state.lines.mapIndexed { i, l -> if (i == index) l.copy(qtyText = (l.qty + 1).format(), highlighted = true) else l.copy(highlighted = false) },
                 )

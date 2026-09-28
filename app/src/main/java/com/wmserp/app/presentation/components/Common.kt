@@ -34,12 +34,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wmserp.app.R
 
 @Composable
 fun WmsTopBar(
@@ -68,7 +70,7 @@ fun WmsTopBar(
         navigationIcon = {
             if (onBack != null) {
                 IconButton(onClick = onBack, modifier = Modifier.testTagCompat("back_button")) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.common_back))
                 }
             }
         },
@@ -129,11 +131,11 @@ fun ErrorBanner(message: String, modifier: Modifier = Modifier, onRetry: (() -> 
             )
             if (onRetry != null) {
                 IconButton(onClick = onRetry) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "Retry", tint = MaterialTheme.colorScheme.onErrorContainer)
+                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.common_retry), tint = MaterialTheme.colorScheme.onErrorContainer)
                 }
             }
             if (onDismiss != null) {
-                TextButton(onClick = onDismiss) { Text("Dismiss", color = MaterialTheme.colorScheme.onErrorContainer) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_dismiss), color = MaterialTheme.colorScheme.onErrorContainer) }
             }
         }
     }
@@ -177,7 +179,7 @@ fun EmptyState(icon: ImageVector, title: String, message: String, modifier: Modi
 }
 
 @Composable
-fun LoadingState(modifier: Modifier = Modifier, message: String = "Loading...") {
+fun LoadingState(modifier: Modifier = Modifier, message: String = stringResource(R.string.common_loading)) {
     Column(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,

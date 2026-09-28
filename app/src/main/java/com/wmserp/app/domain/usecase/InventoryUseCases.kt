@@ -2,6 +2,7 @@ package com.wmserp.app.domain.usecase
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.Item
 import com.wmserp.app.domain.model.StockEntry
 import com.wmserp.app.domain.model.StockEntryItem
@@ -37,22 +38,22 @@ class CreateStockEntryUseCase @Inject constructor(private val inventoryRepositor
         submit: Boolean = true,
         remarks: String? = null,
     ): AppResult<StockEntry> {
-        if (itemCode.isBlank()) return AppResult.Failure(AppError.Validation("Item is required"))
-        if (qty <= 0.0) return AppResult.Failure(AppError.Validation("Quantity must be greater than zero"))
+        if (itemCode.isBlank()) return AppResult.Failure(AppError.Validation("Item is required", ErrorCode.ITEM_REQUIRED))
+        if (qty <= 0.0) return AppResult.Failure(AppError.Validation("Quantity must be greater than zero", ErrorCode.QTY_MUST_BE_POSITIVE))
         val source = sourceWarehouse?.trim()?.ifBlank { null }
         val target = targetWarehouse?.trim()?.ifBlank { null }
         when (type) {
             StockEntryType.MATERIAL_TRANSFER -> {
                 if (source == null || target == null) {
-                    return AppResult.Failure(AppError.Validation("Source and target warehouses are required"))
+                    return AppResult.Failure(AppError.Validation("Source and target warehouses are required", ErrorCode.WAREHOUSES_REQUIRED))
                 }
-                if (source == target) return AppResult.Failure(AppError.Validation("Source and target must differ"))
+                if (source == target) return AppResult.Failure(AppError.Validation("Source and target must differ", ErrorCode.WAREHOUSES_MUST_DIFFER))
             }
             StockEntryType.MATERIAL_RECEIPT -> if (target == null) {
-                return AppResult.Failure(AppError.Validation("Target warehouse is required"))
+                return AppResult.Failure(AppError.Validation("Target warehouse is required", ErrorCode.TARGET_WAREHOUSE_REQUIRED))
             }
             StockEntryType.MATERIAL_ISSUE -> if (source == null) {
-                return AppResult.Failure(AppError.Validation("Source warehouse is required"))
+                return AppResult.Failure(AppError.Validation("Source warehouse is required", ErrorCode.SOURCE_WAREHOUSE_REQUIRED))
             }
         }
         val entry = StockEntry(

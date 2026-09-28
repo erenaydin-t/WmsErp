@@ -6,6 +6,9 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import java.io.IOException
 
+/** Thrown when a request is attempted before an ERPNext server URL has been configured. */
+class NoServerConfiguredException(message: String) : IOException(message)
+
 /**
  * Rewrites every request so that it targets the ERPNext instance the user configured at login.
  * Retrofit is created with a placeholder base URL; only the relative path/query is kept.
@@ -15,9 +18,9 @@ class BaseUrlInterceptor(private val sessionStore: SessionStore) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val baseUrl = sessionStore.current.baseUrl
-            ?: throw IOException("No ERPNext server configured. Please sign in again.")
+            ?: throw NoServerConfiguredException("No ERPNext server configured. Please sign in again.")
         val base = baseUrl.toHttpUrlOrNull()
-            ?: throw IOException("The configured ERPNext URL is invalid: $baseUrl")
+            ?: throw NoServerConfiguredException("The configured ERPNext URL is invalid: $baseUrl")
 
         val basePath = base.encodedPath.trimEnd('/')
         val newUrl = request.url.newBuilder()

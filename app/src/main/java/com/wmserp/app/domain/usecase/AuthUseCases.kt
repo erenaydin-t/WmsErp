@@ -2,6 +2,7 @@ package com.wmserp.app.domain.usecase
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.common.UrlNormalizer
 import com.wmserp.app.domain.model.Credentials
 import com.wmserp.app.domain.model.LoginPrefill
@@ -18,20 +19,20 @@ class LoginUseCase @Inject constructor(private val authRepository: AuthRepositor
         rememberMe: Boolean,
     ): AppResult<UserSession> {
         val baseUrl = UrlNormalizer.normalize(rawUrl)
-            ?: return AppResult.Failure(AppError.Validation("Enter a valid ERPNext URL, e.g. https://erp.company.com"))
+            ?: return AppResult.Failure(AppError.Validation("Enter a valid ERPNext URL, e.g. https://erp.company.com", ErrorCode.INVALID_URL))
 
         when (credentials) {
             is Credentials.Password -> {
                 if (credentials.username.isBlank()) {
-                    return AppResult.Failure(AppError.Validation("Username or email is required"))
+                    return AppResult.Failure(AppError.Validation("Username or email is required", ErrorCode.USERNAME_REQUIRED))
                 }
                 if (credentials.password.isEmpty()) {
-                    return AppResult.Failure(AppError.Validation("Password is required"))
+                    return AppResult.Failure(AppError.Validation("Password is required", ErrorCode.PASSWORD_REQUIRED))
                 }
             }
             is Credentials.ApiToken -> {
                 if (credentials.apiKey.isBlank() || credentials.apiSecret.isBlank()) {
-                    return AppResult.Failure(AppError.Validation("API key and API secret are required"))
+                    return AppResult.Failure(AppError.Validation("API key and API secret are required", ErrorCode.API_TOKEN_REQUIRED))
                 }
             }
         }
@@ -57,12 +58,12 @@ class GetLoginPrefillUseCase @Inject constructor(private val authRepository: Aut
 
 class ChangePasswordUseCase @Inject constructor(private val authRepository: AuthRepository) {
     suspend operator fun invoke(oldPassword: String, newPassword: String, confirmPassword: String): AppResult<Unit> {
-        if (oldPassword.isEmpty()) return AppResult.Failure(AppError.Validation("Current password is required"))
+        if (oldPassword.isEmpty()) return AppResult.Failure(AppError.Validation("Current password is required", ErrorCode.CURRENT_PASSWORD_REQUIRED))
         if (newPassword.length < MIN_PASSWORD_LENGTH) {
-            return AppResult.Failure(AppError.Validation("New password must be at least $MIN_PASSWORD_LENGTH characters"))
+            return AppResult.Failure(AppError.Validation("New password must be at least $MIN_PASSWORD_LENGTH characters", ErrorCode.PASSWORD_TOO_SHORT, listOf(MIN_PASSWORD_LENGTH.toString())))
         }
-        if (newPassword != confirmPassword) return AppResult.Failure(AppError.Validation("Passwords do not match"))
-        if (newPassword == oldPassword) return AppResult.Failure(AppError.Validation("New password must differ from the current one"))
+        if (newPassword != confirmPassword) return AppResult.Failure(AppError.Validation("Passwords do not match", ErrorCode.PASSWORDS_DO_NOT_MATCH))
+        if (newPassword == oldPassword) return AppResult.Failure(AppError.Validation("New password must differ from the current one", ErrorCode.PASSWORD_UNCHANGED))
         return authRepository.changePassword(oldPassword, newPassword)
     }
 

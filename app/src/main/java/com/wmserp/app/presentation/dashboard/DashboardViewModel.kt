@@ -6,6 +6,8 @@ import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.DashboardData
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +21,7 @@ data class DashboardUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val data: DashboardData? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     val greetingName: String = "",
 )
 
@@ -49,7 +51,7 @@ class DashboardViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             when (val result = getDashboard()) {
                 is AppResult.Success -> _uiState.update { it.copy(isLoading = false, isRefreshing = false, data = result.data, error = null) }
-                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, isRefreshing = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, isRefreshing = false, error = result.error.toUiText()) }
             }
         }
     }

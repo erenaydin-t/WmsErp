@@ -11,6 +11,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.wmserp.app.R
+import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.login.LoginScreen
 import com.wmserp.app.presentation.login.LoginUiState
 import com.wmserp.app.presentation.theme.WmsErpTheme
@@ -25,6 +28,8 @@ class LoginScreenTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
     fun loginButtonIsDisabledUntilFormIsValid() {
@@ -54,12 +59,21 @@ class LoginScreenTest {
     @Test
     fun errorsAndInsecureUrlWarningsAreShown() {
         composeRule.setContent {
-            WmsErpTheme { LoginHost(LoginUiState(url = "http://10.0.0.5", error = "Invalid username or password")) }
+            WmsErpTheme { LoginHost(LoginUiState(url = "http://10.0.0.5", error = UiText.Plain("Invalid username or password"))) }
         }
 
         composeRule.onNodeWithTag("login_error").assertIsDisplayed()
         composeRule.onNodeWithText("Invalid username or password").assertIsDisplayed()
-        composeRule.onNodeWithText("This server uses plain HTTP. Credentials will not be encrypted in transit; prefer HTTPS.").assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.login_insecure_warning)).assertIsDisplayed()
+    }
+
+    @Test
+    fun codedErrorsAreLocalizedThroughResources() {
+        composeRule.setContent {
+            WmsErpTheme { LoginHost(LoginUiState(url = "https://erp.example.com", error = UiText.Res(R.string.error_invalid_credentials))) }
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.error_invalid_credentials)).assertIsDisplayed()
     }
 
     @Test

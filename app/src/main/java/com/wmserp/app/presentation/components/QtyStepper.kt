@@ -15,9 +15,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.wmserp.app.R
 
 @Composable
 fun QtyStepper(
@@ -30,7 +32,7 @@ fun QtyStepper(
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         FilledTonalIconButton(onClick = onDecrement, enabled = enabled, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Outlined.Remove, contentDescription = "Decrease")
+            Icon(Icons.Outlined.Remove, contentDescription = stringResource(R.string.qty_decrease))
         }
         OutlinedTextField(
             value = value,
@@ -44,7 +46,7 @@ fun QtyStepper(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         )
         FilledTonalIconButton(onClick = onIncrement, enabled = enabled, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Outlined.Add, contentDescription = "Increase")
+            Icon(Icons.Outlined.Add, contentDescription = stringResource(R.string.qty_increase))
         }
     }
 }

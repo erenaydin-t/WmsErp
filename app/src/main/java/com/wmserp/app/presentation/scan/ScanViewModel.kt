@@ -3,6 +3,7 @@ package com.wmserp.app.presentation.scan
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ScanLookup
@@ -17,6 +18,9 @@ import com.wmserp.app.domain.usecase.LookupScanUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.ScanCodeSanitizer
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.hintRes
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +33,7 @@ import javax.inject.Inject
 data class ScanHistoryEntry(
     val code: String,
     val target: ScanTarget,
-    val summary: String,
+    val summary: UiText,
     val found: Boolean,
     val timeMillis: Long,
 )
@@ -42,7 +46,7 @@ data class TransferFormState(
     val warehouses: List<Warehouse> = emptyList(),
     val loadingWarehouses: Boolean = false,
     val submitting: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 ) {
     val qty: Double get() = qtyText.replace(',', '.').toDoubleOrNull() ?: 0.0
     val canSubmit: Boolean get() = !submitting && fromWarehouse.isNotBlank() && toWarehouse.isNotBlank() && fromWarehouse != toWarehouse && qty > 0
@@ -53,8 +57,8 @@ data class ScanUiState(
     val isLookingUp: Boolean = false,
     val lastScan: ScannedCode? = null,
     val result: ScanLookup? = null,
-    val error: String? = null,
-    val message: String? = null,
+    val error: UiText? = null,
+    val message: UiText? = null,
     val manualInput: String = "",
     val history: List<ScanHistoryEntry> = emptyList(),
     val scannerMode: ScannerMode = ScannerMode.AUTO,
@@ -64,10 +68,12 @@ data class ScanUiState(
     val vibrate: Boolean = true,
     val transfer: TransferFormState = TransferFormState(),
 ) {
-    val statusText: String
-        get() = when {
-            isLookingUp -> "Looking up ${lastScan?.value.orEmpty()}..."
-            else -> target.hint
+    /** Text shown under the viewfinder. */
+    val statusText: UiText
+        get() = if (isLookingUp) {
+            UiText.Res(R.string.scan_looking_up, listOf(lastScan?.value.orEmpty()))
+        } else {
+            UiText.Res(target.hintRes())
         }
 }
 
@@ -168,7 +174,7 @@ class ScanViewModel @Inject constructor(
                         )
                     }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isLookingUp = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isLookingUp = false, error = result.error.toUiText()) }
             }
         }
     }
@@ -211,22 +217,37 @@ class ScanViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             transfer = TransferFormState(),
-                            message = "Stock Entry ${result.data.name ?: ""} submitted: moved ${form.qtyText} × ${item.code} to ${form.toWarehouse}",
+                            message = UiText.Res(
+                                R.string.transfer_success,
+                                listOf(result.data.name.orEmpty(), form.qtyText, item.code, form.toWarehouse),
+                            ),
                         )
                     }
                     // Refresh stock levels for the item, keeping the confirmation message visible.
                     state.lastScan?.let { startLookup(it.copy(source = ScanSource.MANUAL), state.target, clearMessage = false) }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(transfer = it.transfer.copy(submitting = false, error = result.error.message)) }
+                is AppResult.Failure -> _uiState.update { it.copy(transfer = it.transfer.copy(submitting = false, error = result.error.toUiText())) }
             }
         }
     }
 
     private fun historyEntry(lookup: ScanLookup, time: Long): ScanHistoryEntry = when (lookup) {
-        is ScanLookup.ItemFound -> ScanHistoryEntry(lookup.code, ScanTarget.ITEM, "${lookup.item.name} · ${lookup.stock.sumOf { it.actualQty }.trimQty()} in stock", true, time)
-        is ScanLookup.WarehouseFound -> ScanHistoryEntry(lookup.code, ScanTarget.WAREHOUSE, "${lookup.warehouse.warehouseName} · ${lookup.stock.size} items", true, time)
-        is ScanLookup.PurchaseOrderFound -> ScanHistoryEntry(lookup.code, ScanTarget.PURCHASE_ORDER, "${lookup.purchaseOrder.supplierName} · ${lookup.purchaseOrder.status}", true, time)
-        is ScanLookup.NotFound -> ScanHistoryEntry(lookup.code, lookup.target, "Not found", false, time)
+        is ScanLookup.ItemFound -> ScanHistoryEntry(
+            lookup.code, ScanTarget.ITEM,
+            UiText.Res(R.string.history_item_summary, listOf(lookup.item.name, lookup.stock.sumOf { it.actualQty }.trimQty())),
+            true, time,
+        )
+        is ScanLookup.WarehouseFound -> ScanHistoryEntry(
+            lookup.code, ScanTarget.WAREHOUSE,
+            UiText.Res(R.string.history_warehouse_summary, listOf(lookup.warehouse.warehouseName, lookup.stock.size)),
+            true, time,
+        )
+        is ScanLookup.PurchaseOrderFound -> ScanHistoryEntry(
+            lookup.code, ScanTarget.PURCHASE_ORDER,
+            UiText.Res(R.string.history_po_summary, listOf(lookup.purchaseOrder.supplierName, lookup.purchaseOrder.status)),
+            true, time,
+        )
+        is ScanLookup.NotFound -> ScanHistoryEntry(lookup.code, lookup.target, UiText.Res(R.string.scan_chip_not_found), false, time)
     }
 
     private fun Double.trimQty(): String = if (this == Math.floor(this)) toLong().toString() else String.format(java.util.Locale.US, "%.3f", this).trimEnd('0').trimEnd('.')

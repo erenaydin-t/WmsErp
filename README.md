@@ -47,8 +47,9 @@ app/src/main/java/com/wmserp/app
 3. **Inventory / Analytics** – KPI cards (Pending Deliveries, Receipts, Picklists) and tabs:
    Delivery Delays (bar chart), Activity Heatmap (7 days × 3h blocks), Stock Aging (ERPNext *Stock Ageing* report).
 4. **Scan** – Item / Warehouse / Purchase Order targets, viewfinder with status text
-   ("Ready to scan item barcode..."), manual entry, result cards, stock transfer (Material Transfer Stock Entry).
-5. **Profile / Settings** – avatar, role, editable personal info, password change, scanner preferences, sign out.
+   ("Ready to scan item barcode…"), manual entry, result cards, stock transfer (Material Transfer Stock Entry).
+5. **Profile / Settings** – avatar, role, editable personal info, password change, scanner preferences,
+   app language (System / English / فارسی), sign out.
 6. **Orders → Receive / Dispatch** – count goods against Purchase Orders (creates *Purchase Receipt*) and pick
    against Sales Orders (creates *Delivery Note*); scanning an item barcode increments the matching line.
 
@@ -134,6 +135,31 @@ For Play-ready signed builds add the repository secrets `KEYSTORE_BASE64` (base6
 A second job runs the Compose UI tests on an emulator when the workflow is dispatched manually with
 *Run Compose UI tests on an emulator* enabled.
 
+## Localization (English / فارسی)
+
+The app ships in English and Persian (Farsi) with full right-to-left support.
+
+* Every user-facing string lives in `app/src/main/res/values/strings.xml`; the Persian translation is
+  `values-fa/strings.xml` (same keys, same `%1$s` placeholders). A missing key in either file fails the
+  resource check, so the two stay in sync.
+* Language switching is instant and does not restart the app: **Profile → Settings → Language** offers
+  *System*, *English* and *فارسی*. The choice is stored in DataStore (`app_language`) and applied by
+  `LocalizedContent`, which provides a locale-specific `Context`, `Configuration` and `LayoutDirection`
+  to the whole Compose tree. `LocaleDefaults` keeps `java.util.Locale` in step so day/month names in the
+  analytics charts follow the app language.
+* *System* follows the device locale, and `android:localeConfig` (`res/xml/locales_config.xml`) lets
+  Android 13+ users pick the app language from **Settings → Apps → WMS ERP → Language** as well.
+* ViewModels and use cases never build display text: app-generated messages carry an `ErrorCode` /
+  string-resource id (`UiText.Res`) and are resolved in the UI, so they translate automatically.
+  Messages that come from the ERPNext server (`_server_messages`, `exc_type`) are shown verbatim
+  (`UiText.Plain`) because they arrive in the server’s own language.
+* `android:supportsRtl="true"` mirrors layouts, and directional icons (back arrow, orders icon) use the
+  `AutoMirrored` Material icon variants. Numbers keep ASCII digits so barcodes, quantities and document
+  names match ERPNext exactly.
+
+To add another language, copy `values/strings.xml` to `values-<lang>/strings.xml`, translate the values,
+add the locale to `locales_config.xml` and a case to `AppLanguage` (with its label in `UiText.kt`).
+
 ## Google Play compliance & security
 
 * Permissions: only `INTERNET` and `CAMERA` (camera declared as not required, requested at runtime with rationale).
@@ -146,6 +172,7 @@ A second job runs the Compose UI tests on an emulator when the workflow is dispa
 
 * **Unit tests** (`app/src/test`): use cases, URL normaliser, ERPNext error parser, query builder, session store,
   repositories against a real Retrofit/OkHttp stack with MockWebServer, keyboard-wedge decoder, intent parser,
-  AES/GCM cipher, formatters, and ViewModels (Login, Dashboard, Scan, Receive, Main).
+  AES/GCM cipher, formatters, and ViewModels (Login, Dashboard, Scan, Receive, Main) including the
+  resource-id based (`UiText`) messages they emit.
 * **Compose UI tests** (`app/src/androidTest`): login form validation and submission, dashboard KPIs, quick
   actions and bottom navigation, hardware scanner input delivered to the scan screen, manual code entry.

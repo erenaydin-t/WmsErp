@@ -14,6 +14,7 @@ import com.wmserp.app.data.util.ignoringErrors
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.Credentials
 import com.wmserp.app.domain.model.LoginPrefill
 import com.wmserp.app.domain.model.SessionEvent
@@ -69,7 +70,7 @@ class AuthRepositoryImpl(
             val error = ErpNextErrorParser.parse(response.code(), body)
             throw AppException(
                 if (error is AppError.Unauthorized || response.code() == 401) {
-                    AppError.Unauthorized("Invalid username or password")
+                    AppError.Unauthorized("Invalid username or password", ErrorCode.INVALID_CREDENTIALS)
                 } else {
                     error
                 }
@@ -77,7 +78,7 @@ class AuthRepositoryImpl(
         }
         val fullNameFromLogin = response.body()?.fullName?.takeIf { it.isNotBlank() }
         if (sessionStore.current.sid == null) {
-            throw AppException(AppError.Server("Login succeeded but ERPNext did not return a session cookie"))
+            throw AppException(AppError.Server("Login succeeded but ERPNext did not return a session cookie", code = ErrorCode.NO_SESSION_COOKIE))
         }
         val userId = dataSource.loggedUser()?.takeIf { it.isNotBlank() && it != "Guest" } ?: credentials.username
         val fullName = fullNameFromLogin ?: userId
@@ -96,7 +97,7 @@ class AuthRepositoryImpl(
     private suspend fun loginWithToken(baseUrl: String, rememberMe: Boolean): AppResult<UserSession> {
         val result = apiCaller.call(notifyOnAuthFailure = false) {
             val userId = dataSource.loggedUser()?.takeIf { it.isNotBlank() && it != "Guest" }
-                ?: throw AppException(AppError.Unauthorized("Invalid API key or secret"))
+                ?: throw AppException(AppError.Unauthorized("Invalid API key or secret", ErrorCode.INVALID_API_TOKEN))
             val user = ignoringErrors { dataSource.getDocOrNull<UserDto>("User", userId) }
             val fullName = user?.fullName?.takeIf { it.isNotBlank() } ?: userId
             sessionStore.update { s ->
@@ -116,7 +117,7 @@ class AuthRepositoryImpl(
         if (result is AppResult.Failure) {
             sessionStore.update { it.copy(apiKey = null, apiSecret = null, userId = null) }
             if (result.error is AppError.Unauthorized) {
-                return AppResult.Failure(AppError.Unauthorized("Invalid API key or secret"))
+                return AppResult.Failure(AppError.Unauthorized("Invalid API key or secret", ErrorCode.INVALID_API_TOKEN))
             }
         }
         return result
@@ -198,7 +199,7 @@ class AuthRepositoryImpl(
                 result
             }
             is AppResult.Failure -> if (result.error is AppError.Unauthorized) {
-                AppResult.Failure(AppError.Validation("Current password is incorrect"))
+                AppResult.Failure(AppError.Validation("Current password is incorrect", ErrorCode.CURRENT_PASSWORD_INCORRECT))
             } else {
                 result
             }

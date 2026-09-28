@@ -1,5 +1,6 @@
 package com.wmserp.app.presentation.components
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -31,14 +32,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.wmserp.app.R
 import com.wmserp.app.presentation.theme.WmsTheme
 
 data class BottomNavItem(
     val route: String,
-    val label: String,
+    @StringRes val labelRes: Int,
     val icon: ImageVector,
     val selectedIcon: ImageVector = icon,
 )
@@ -55,6 +58,7 @@ fun WmsBottomBar(
 ) {
     require(items.size == 4) { "WmsBottomBar expects exactly four items" }
     val extended = WmsTheme.colors
+    val scanLabel = stringResource(R.string.nav_scan)
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -82,7 +86,7 @@ fun WmsBottomBar(
                         .clip(CircleShape)
                         .background(Brush.linearGradient(listOf(extended.gradientStart, extended.gradientEnd)))
                         .clickable(interactionSource = interaction, indication = null, onClick = onScan)
-                        .semantics { contentDescription = "Scan" }
+                        .semantics { contentDescription = scanLabel }
                         .testTagCompat("nav_scan"),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -100,6 +104,7 @@ fun WmsBottomBar(
 private fun BottomBarItem(item: BottomNavItem, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     val interaction = remember { MutableInteractionSource() }
+    val label = stringResource(item.labelRes)
     Column(
         modifier = modifier
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
@@ -113,9 +118,9 @@ private fun BottomBarItem(item: BottomNavItem, selected: Boolean, onClick: () ->
                 .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(if (selected) item.selectedIcon else item.icon, contentDescription = item.label, tint = color, modifier = Modifier.size(22.dp))
+            Icon(if (selected) item.selectedIcon else item.icon, contentDescription = label, tint = color, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.height(2.dp))
-        Text(item.label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
     }
 }

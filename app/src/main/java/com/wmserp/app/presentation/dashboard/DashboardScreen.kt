@@ -41,13 +41,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.ActivityEntry
+import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.common.toUiText
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.KpiCard
@@ -105,7 +109,7 @@ fun DashboardScreen(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (state.greetingName.isBlank()) "Hello 👋" else "Hello, ${state.greetingName} 👋",
+                            text = if (state.greetingName.isBlank()) stringResource(R.string.dashboard_hello) else stringResource(R.string.dashboard_hello_name, state.greetingName),
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.testTag("dashboard_greeting"),
@@ -113,7 +117,7 @@ fun DashboardScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            "Here is what is happening in your warehouse",
+                            stringResource(R.string.dashboard_subtitle),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -134,12 +138,12 @@ fun DashboardScreen(
                 }
             }
 
-            if (state.error != null) {
-                item { ErrorBanner(state.error, onRetry = onRetry, modifier = Modifier.testTag("dashboard_error")) }
+            state.error?.let { error ->
+                item { ErrorBanner(error.asString(), onRetry = onRetry, modifier = Modifier.testTag("dashboard_error")) }
             }
 
             if (state.isLoading && state.data == null) {
-                item { LoadingState(modifier = Modifier.height(240.dp), message = "Loading dashboard...") }
+                item { LoadingState(modifier = Modifier.height(240.dp), message = stringResource(R.string.dashboard_loading)) }
             }
 
             state.data?.let { data ->
@@ -148,46 +152,46 @@ fun DashboardScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             KpiCard(
-                                title = "Total Items",
+                                title = stringResource(R.string.kpi_total_items),
                                 value = Formatters.int(kpis.totalItems),
                                 icon = Icons.Outlined.Inventory2,
                                 accent = colors.kpiPurple,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("kpi_total_items"),
-                                subtitle = "active stock items",
+                                subtitle = stringResource(R.string.kpi_total_items_sub),
                             )
                             KpiCard(
-                                title = "Pending Orders",
+                                title = stringResource(R.string.kpi_pending_orders),
                                 value = Formatters.int(kpis.pendingOrders),
                                 icon = Icons.Outlined.ShoppingCart,
                                 accent = colors.kpiAmber,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("kpi_pending_orders"),
-                                subtitle = "to receive or deliver",
+                                subtitle = stringResource(R.string.kpi_pending_orders_sub),
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             KpiCard(
-                                title = "Revenue",
+                                title = stringResource(R.string.kpi_revenue),
                                 value = Formatters.compactMoney(kpis.revenue, kpis.currency),
                                 icon = Icons.Outlined.AttachMoney,
                                 accent = colors.kpiTeal,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("kpi_revenue"),
-                                subtitle = "invoiced in ${kpis.periodLabel}",
+                                subtitle = stringResource(R.string.kpi_revenue_sub, kpis.periodLabel),
                             )
                             KpiCard(
-                                title = "Dispatched",
+                                title = stringResource(R.string.kpi_dispatched),
                                 value = Formatters.int(kpis.dispatched),
                                 icon = Icons.Outlined.LocalShipping,
                                 accent = colors.kpiBlue,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("kpi_dispatched"),
-                                subtitle = "delivery notes in ${kpis.periodLabel}",
+                                subtitle = stringResource(R.string.kpi_dispatched_sub, kpis.periodLabel),
                             )
                         }
                     }
@@ -195,24 +199,24 @@ fun DashboardScreen(
             }
 
             item {
-                SectionHeader("Quick actions")
+                SectionHeader(stringResource(R.string.dashboard_quick_actions))
                 Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    QuickActionButton("Scan", Icons.Outlined.QrCodeScanner, colors.kpiPurple, onScan, Modifier.testTag("action_scan"))
-                    QuickActionButton("Receive", Icons.Outlined.MoveToInbox, colors.kpiTeal, onReceive, Modifier.testTag("action_receive"))
-                    QuickActionButton("Dispatch", Icons.Outlined.Outbox, colors.kpiBlue, onDispatch, Modifier.testTag("action_dispatch"))
-                    QuickActionButton("Report", Icons.Outlined.Assessment, colors.kpiAmber, onReport, Modifier.testTag("action_report"))
+                    QuickActionButton(stringResource(R.string.action_scan), Icons.Outlined.QrCodeScanner, colors.kpiPurple, onScan, Modifier.testTag("action_scan"))
+                    QuickActionButton(stringResource(R.string.action_receive), Icons.Outlined.MoveToInbox, colors.kpiTeal, onReceive, Modifier.testTag("action_receive"))
+                    QuickActionButton(stringResource(R.string.action_dispatch), Icons.Outlined.Outbox, colors.kpiBlue, onDispatch, Modifier.testTag("action_dispatch"))
+                    QuickActionButton(stringResource(R.string.action_report), Icons.Outlined.Assessment, colors.kpiAmber, onReport, Modifier.testTag("action_report"))
                 }
             }
 
             state.data?.let { data ->
-                item { SectionHeader("Recent activity") }
+                item { SectionHeader(stringResource(R.string.dashboard_recent_activity)) }
                 if (data.recentActivity.isEmpty()) {
                     item {
                         EmptyState(
                             icon = Icons.Outlined.History,
-                            title = "No stock movements yet",
-                            message = data.activityError ?: "Stock ledger entries will appear here as goods move.",
+                            title = stringResource(R.string.dashboard_no_activity_title),
+                            message = data.activityError?.toUiText()?.asString() ?: stringResource(R.string.dashboard_no_activity_message),
                         )
                     }
                 } else {

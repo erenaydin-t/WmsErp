@@ -9,6 +9,8 @@ import com.wmserp.app.data.remote.dto.SalesOrderDto
 import com.wmserp.app.data.remote.dto.StockLedgerEntryDto
 import com.wmserp.app.data.util.DateProvider
 import com.wmserp.app.domain.common.AppError
+import com.wmserp.app.domain.common.AppException
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ActivityHeatmap
 import com.wmserp.app.domain.model.DashboardKpis
@@ -165,7 +167,7 @@ class AnalyticsRepositoryImpl(
         val today = dateProvider.today()
         val company = dataSource.getSingleValue("Global Defaults", "default_company")
             ?: dataSource.getList<CompanyName>("Company", listOf("name"), limit = 1).firstOrNull()?.name
-            ?: throw com.wmserp.app.domain.common.AppException(AppError.Validation("No company configured in ERPNext"))
+            ?: throw AppException(AppError.Validation("No company configured in ERPNext", ErrorCode.NO_COMPANY_CONFIGURED))
         val filters = buildJsonObject {
             put("company", company)
             put("to_date", today.toString())

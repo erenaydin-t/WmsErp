@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Checklist
@@ -31,15 +32,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.ActivityHeatmap
 import com.wmserp.app.domain.model.DeliveryDelayReport
+import com.wmserp.app.domain.model.InventoryAnalytics
 import com.wmserp.app.domain.model.StockAgingReport
+import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.common.titleRes
+import com.wmserp.app.presentation.common.toUiText
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
@@ -83,25 +90,25 @@ fun InventoryScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                Text("Inventory analytics", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Live insights from your ERPNext stock data", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.inventory_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.inventory_subtitle), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (state.error != null) {
-                item { ErrorBanner(state.error, onRetry = onRetry) }
+            state.error?.let { error ->
+                item { ErrorBanner(error.asString(), onRetry = onRetry) }
             }
             if (state.isLoading && state.analytics == null) {
-                item { LoadingState(modifier = Modifier.height(260.dp), message = "Crunching numbers...") }
+                item { LoadingState(modifier = Modifier.height(260.dp), message = stringResource(R.string.inventory_loading)) }
             }
             state.analytics?.let { analytics ->
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        KpiCard("Pending Deliveries", Formatters.int(analytics.kpis.pendingDeliveries), Icons.Outlined.LocalShipping, colors.kpiBlue, Modifier.weight(1f).testTag("kpi_pending_deliveries"))
-                        KpiCard("Receipts (7d)", Formatters.int(analytics.kpis.receipts), Icons.Outlined.MoveToInbox, colors.kpiTeal, Modifier.weight(1f).testTag("kpi_receipts"))
-                        KpiCard("Picklists", Formatters.int(analytics.kpis.pickLists), Icons.Outlined.Checklist, colors.kpiPurple, Modifier.weight(1f).testTag("kpi_picklists"))
+                        KpiCard(stringResource(R.string.kpi_pending_deliveries), Formatters.int(analytics.kpis.pendingDeliveries), Icons.Outlined.LocalShipping, colors.kpiBlue, Modifier.weight(1f).testTag("kpi_pending_deliveries"))
+                        KpiCard(stringResource(R.string.kpi_receipts_7d), Formatters.int(analytics.kpis.receipts), Icons.Outlined.MoveToInbox, colors.kpiTeal, Modifier.weight(1f).testTag("kpi_receipts"))
+                        KpiCard(stringResource(R.string.kpi_picklists), Formatters.int(analytics.kpis.pickLists), Icons.Outlined.Checklist, colors.kpiPurple, Modifier.weight(1f).testTag("kpi_picklists"))
                     }
                 }
                 if (analytics.errors.isNotEmpty()) {
-                    item { InfoBanner(analytics.errors.joinToString("\n"), container = colors.warningContainer, content = MaterialTheme.colorScheme.onSurface) }
+                    item { PartialErrors(analytics) }
                 }
                 item {
                     TabRow(
@@ -113,7 +120,7 @@ fun InventoryScreen(
                             Tab(
                                 selected = state.selectedTab == tab,
                                 onClick = { onSelectTab(tab) },
-                                text = { Text(tab.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                text = { Text(stringResource(tab.titleRes()), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 modifier = Modifier.testTag("tab_${tab.name}"),
                             )
                         }
@@ -129,15 +136,24 @@ fun InventoryScreen(
     }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?) {
+@Composable
+private fun PartialErrors(analytics: InventoryAnalytics) {
+    val lines = analytics.errors.map { stringResource(R.string.analytics_error_format, stringResource(it.section.titleRes()), it.error.toUiText().asString()) }
+    InfoBanner(lines.joinToString("\n"), container = WmsTheme.colors.warningContainer, content = MaterialTheme.colorScheme.onSurface)
+}
+
+private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?) {
     if (report == null) {
-        item { EmptyState(Icons.Outlined.Schedule, "Delivery delays unavailable", "Could not load overdue sales orders.") }
+        item { EmptyState(Icons.Outlined.Schedule, stringResource(R.string.delays_unavailable_title), stringResource(R.string.delays_unavailable_message)) }
         return
     }
     item {
-        ChartCard(title = "Overdue sales orders", subtitle = "${report.totalOverdue} overdue · avg ${"%.1f".format(report.averageDaysLate)} days late") {
+        ChartCard(
+            title = stringResource(R.string.delays_chart_title),
+            subtitle = stringResource(R.string.delays_chart_subtitle, report.totalOverdue, "%.1f".format(report.averageDaysLate)),
+        ) {
             if (report.orders.isEmpty()) {
-                Text("No overdue deliveries. Great job!", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.delays_none), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 BarChart(entries = report.buckets.map { BarEntry(it.label, it.count.toDouble()) })
             }
@@ -155,10 +171,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.deliveryDelaysContent
                 Column(modifier = Modifier.weight(1f)) {
                     Text(delay.orderName, style = MaterialTheme.typography.titleSmall)
                     Text(delay.customerName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("Due ${Formatters.date(delay.deliveryDate)} · ${Formatters.money(delay.grandTotal, delay.currency)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.delays_due, Formatters.date(delay.deliveryDate), Formatters.money(delay.grandTotal, delay.currency)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 StatusChip(
-                    text = "${delay.daysLate}d late",
+                    text = stringResource(R.string.delays_days_late, delay.daysLate),
                     color = when {
                         delay.daysLate >= 15 -> colors.danger
                         delay.daysLate >= 4 -> colors.warning
@@ -170,35 +190,38 @@ private fun androidx.compose.foundation.lazy.LazyListScope.deliveryDelaysContent
     }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.heatmapContent(heatmap: ActivityHeatmap?) {
+private fun LazyListScope.heatmapContent(heatmap: ActivityHeatmap?) {
     if (heatmap == null) {
-        item { EmptyState(Icons.Outlined.Insights, "Heatmap unavailable", "Could not load stock ledger activity.") }
+        item { EmptyState(Icons.Outlined.Insights, stringResource(R.string.heatmap_unavailable_title), stringResource(R.string.heatmap_unavailable_message)) }
         return
     }
     item {
-        ChartCard(title = "Stock movements · last 7 days", subtitle = "${heatmap.total} ledger entries by day and time block") {
+        ChartCard(
+            title = stringResource(R.string.heatmap_chart_title),
+            subtitle = stringResource(R.string.heatmap_chart_subtitle, heatmap.total),
+        ) {
             HeatmapGrid(dayLabels = heatmap.dayLabels, blockLabels = heatmap.blockLabels, cells = heatmap.cells)
         }
     }
     item {
         val busiest = heatmap.cells.withIndex().maxByOrNull { it.value.sum() }
         if (busiest != null && busiest.value.sum() > 0) {
-            InfoBanner("Busiest day: ${heatmap.dayLabels.getOrNull(busiest.index) ?: "-"} with ${busiest.value.sum()} movements")
+            InfoBanner(stringResource(R.string.heatmap_busiest, heatmap.dayLabels.getOrNull(busiest.index) ?: "-", busiest.value.sum()))
         }
     }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.stockAgingContent(report: StockAgingReport?) {
+private fun LazyListScope.stockAgingContent(report: StockAgingReport?) {
     if (report == null) {
-        item { EmptyState(Icons.Outlined.Schedule, "Stock aging unavailable", "The Stock Ageing report could not be loaded.") }
+        item { EmptyState(Icons.Outlined.Schedule, stringResource(R.string.aging_unavailable_title), stringResource(R.string.aging_unavailable_message)) }
         return
     }
     item {
         val colors = WmsTheme.colors
         val palette = listOf(colors.kpiTeal, colors.kpiBlue, colors.kpiAmber, colors.danger, colors.kpiPurple)
-        ChartCard(title = "Stock by age", subtitle = "Quantity on hand per age bucket (days)") {
+        ChartCard(title = stringResource(R.string.aging_chart_title), subtitle = stringResource(R.string.aging_chart_subtitle)) {
             if (report.rows.isEmpty()) {
-                Text("No stock aging data.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.aging_no_data), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 StackedDistributionBar(
                     segments = report.rangeLabels.mapIndexed { i, label ->
@@ -220,12 +243,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.stockAgingContent(rep
                 ProgressRow(
                     label = "${row.itemName} (${row.itemCode})",
                     fraction = (row.averageAge / maxAge).toFloat(),
-                    valueText = "${row.averageAge.toInt()} days",
+                    valueText = stringResource(R.string.aging_days, row.averageAge.toInt()),
                     color = if (row.averageAge > 90) WmsTheme.colors.danger else if (row.averageAge > 60) WmsTheme.colors.warning else MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Qty ${Formatters.qty(row.totalQty)}" + (row.warehouse?.let { " · $it" } ?: ""),
+                    stringResource(R.string.aging_qty, Formatters.qty(row.totalQty)) + (row.warehouse?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

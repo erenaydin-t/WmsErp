@@ -2,8 +2,10 @@ package com.wmserp.app.presentation.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.ProfileUpdate
 import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.ScannerSettings
@@ -12,9 +14,13 @@ import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.ChangePasswordUseCase
 import com.wmserp.app.domain.usecase.GetProfileUseCase
 import com.wmserp.app.domain.usecase.LogoutUseCase
+import com.wmserp.app.domain.usecase.ObserveAppLanguageUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
+import com.wmserp.app.domain.usecase.SetAppLanguageUseCase
 import com.wmserp.app.domain.usecase.UpdateProfileUseCase
 import com.wmserp.app.domain.usecase.UpdateScannerSettingsUseCase
+import com.wmserp.app.presentation.common.UiText
+import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,23 +32,24 @@ import javax.inject.Inject
 data class ProfileUiState(
     val isLoading: Boolean = true,
     val profile: UserProfile? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     val firstName: String = "",
     val lastName: String = "",
     val phone: String = "",
     val mobileNo: String = "",
     val location: String = "",
     val isSaving: Boolean = false,
-    val saveMessage: String? = null,
+    val saveMessage: UiText? = null,
     val oldPassword: String = "",
     val newPassword: String = "",
     val confirmPassword: String = "",
     val passwordVisible: Boolean = false,
     val isChangingPassword: Boolean = false,
-    val passwordMessage: String? = null,
-    val passwordError: String? = null,
+    val passwordMessage: UiText? = null,
+    val passwordError: UiText? = null,
     val scannerSettings: ScannerSettings = ScannerSettings(),
     val hasHardwareScanner: Boolean = false,
+    val language: AppLanguage = AppLanguage.SYSTEM,
     val serverUrl: String = "",
     val isLoggingOut: Boolean = false,
 ) {
@@ -63,6 +70,8 @@ class ProfileViewModel @Inject constructor(
     private val logout: LogoutUseCase,
     observeScannerSettings: ObserveScannerSettingsUseCase,
     private val updateScannerSettings: UpdateScannerSettingsUseCase,
+    observeAppLanguage: ObserveAppLanguageUseCase,
+    private val setAppLanguage: SetAppLanguageUseCase,
     authRepository: AuthRepository,
     scanner: ScannerController,
 ) : ViewModel() {
@@ -72,6 +81,7 @@ class ProfileViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { observeScannerSettings().collect { s -> _uiState.update { it.copy(scannerSettings = s) } } }
+        viewModelScope.launch { observeAppLanguage().collect { l -> _uiState.update { it.copy(language = l) } } }
         viewModelScope.launch { authRepository.session.collect { s -> _uiState.update { it.copy(serverUrl = s?.baseUrl.orEmpty()) } } }
         load()
     }
@@ -81,7 +91,7 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             when (val result = getProfile(forceRefresh)) {
                 is AppResult.Success -> applyProfile(result.data)
-                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.toUiText()) }
             }
         }
     }
@@ -115,9 +125,9 @@ class ProfileViewModel @Inject constructor(
             when (val result = updateProfile(update)) {
                 is AppResult.Success -> {
                     applyProfile(result.data)
-                    _uiState.update { it.copy(isSaving = false, saveMessage = "Profile updated") }
+                    _uiState.update { it.copy(isSaving = false, saveMessage = UiText.Res(R.string.profile_updated)) }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isSaving = false, error = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isSaving = false, error = result.error.toUiText()) }
             }
         }
     }
@@ -134,9 +144,15 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             when (val result = changePassword(state.oldPassword, state.newPassword, state.confirmPassword)) {
                 is AppResult.Success -> _uiState.update {
-                    it.copy(isChangingPassword = false, oldPassword = "", newPassword = "", confirmPassword = "", passwordMessage = "Password changed successfully")
+                    it.copy(
+                        isChangingPassword = false,
+                        oldPassword = "",
+                        newPassword = "",
+                        confirmPassword = "",
+                        passwordMessage = UiText.Res(R.string.profile_password_changed),
+                    )
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isChangingPassword = false, passwordError = result.error.message) }
+                is AppResult.Failure -> _uiState.update { it.copy(isChangingPassword = false, passwordError = result.error.toUiText()) }
             }
         }
     }
@@ -144,6 +160,7 @@ class ProfileViewModel @Inject constructor(
     fun setScannerMode(mode: ScannerMode) = viewModelScope.launch { updateScannerSettings.setMode(mode) }
     fun setBeep(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setBeep(enabled) }
     fun setVibrate(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setVibrate(enabled) }
+    fun setLanguage(language: AppLanguage) = viewModelScope.launch { setAppLanguage(language) }
 
     fun signOut() {
         if (_uiState.value.isLoggingOut) return

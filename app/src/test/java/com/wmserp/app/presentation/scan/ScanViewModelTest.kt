@@ -1,6 +1,7 @@
 package com.wmserp.app.presentation.scan
 
 import androidx.lifecycle.SavedStateHandle
+import com.wmserp.app.R
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ScanLookup
@@ -16,6 +17,7 @@ import com.wmserp.app.domain.usecase.CreateStockEntryUseCase
 import com.wmserp.app.domain.usecase.LookupScanUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
+import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.FakeScannerController
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
@@ -74,6 +76,16 @@ class ScanViewModelTest {
     }
 
     @Test
+    fun `status text follows the selected target and localizes through resources`() = runTest {
+        val vm = createViewModel()
+        assertEquals(UiText.Res(R.string.scan_hint_item), vm.uiState.value.statusText)
+
+        vm.setTarget(ScanTarget.WAREHOUSE)
+
+        assertEquals(UiText.Res(R.string.scan_hint_warehouse), vm.uiState.value.statusText)
+    }
+
+    @Test
     fun `manual entry does not beep and unknown codes are reported`() = runTest {
         coEvery { lookupScan("nope", ScanTarget.WAREHOUSE) } returns AppResult.Success(ScanLookup.NotFound("nope", ScanTarget.WAREHOUSE))
         val vm = createViewModel(ScanTarget.WAREHOUSE)
@@ -94,7 +106,7 @@ class ScanViewModelTest {
 
         vm.onScanned(ScannedCode("X1", ScanSource.CAMERA))
 
-        assertEquals("offline", vm.uiState.value.error)
+        assertEquals(UiText.Res(R.string.error_network_unreachable), vm.uiState.value.error)
         assertNull(vm.uiState.value.result)
     }
 
@@ -117,6 +129,8 @@ class ScanViewModelTest {
         vm.submitTransfer()
 
         assertFalse(vm.uiState.value.transfer.visible)
-        assertTrue(vm.uiState.value.message!!.contains("MAT-STE-00001"))
+        val message = vm.uiState.value.message as UiText.Res
+        assertEquals(R.string.transfer_success, message.id)
+        assertTrue(message.args.contains("MAT-STE-00001"))
     }
 }
