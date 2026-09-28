@@ -6,6 +6,10 @@ import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.AnalyticsSection
 import com.wmserp.app.domain.model.AppLanguage
+import com.wmserp.app.domain.model.PickListPurpose
+import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickTargetDocument
+import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.presentation.inventory.AnalyticsTab
@@ -70,7 +74,45 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.SERVER_ERROR -> R.string.error_server_error
     ErrorCode.SERVER_UNAVAILABLE -> R.string.error_server_unavailable
     ErrorCode.INVALID_RESPONSE -> R.string.error_invalid_response
+    ErrorCode.OVER_PICK -> R.string.error_over_pick
+    ErrorCode.PICKING_INCOMPLETE -> R.string.error_picking_incomplete
+    ErrorCode.PICKING_NOT_STARTED -> R.string.error_picking_not_started
+    ErrorCode.PICKING_NOT_COMPLETED -> R.string.error_picking_not_completed
+    ErrorCode.PICK_LIST_ALREADY_PICKED -> R.string.error_pick_list_already_picked
+    ErrorCode.PICK_LIST_NOT_FOUND -> R.string.error_pick_list_not_found
+    ErrorCode.UNSUPPORTED_PICK_PURPOSE -> R.string.error_unsupported_pick_purpose
     ErrorCode.UNKNOWN -> R.string.error_unknown
+}
+
+@StringRes
+fun PickingStatus.labelRes(): Int = when (this) {
+    PickingStatus.READY_TO_PICK -> R.string.pick_status_ready
+    PickingStatus.PICKING -> R.string.pick_status_picking
+    PickingStatus.PICKED -> R.string.pick_status_picked
+}
+
+@StringRes
+fun PickListPurpose.labelRes(): Int = when (this) {
+    PickListPurpose.DELIVERY -> R.string.pick_purpose_delivery
+    PickListPurpose.MATERIAL_TRANSFER -> R.string.pick_purpose_material_transfer
+    PickListPurpose.MATERIAL_ISSUE -> R.string.pick_purpose_material_issue
+    PickListPurpose.MATERIAL_TRANSFER_FOR_MANUFACTURE -> R.string.pick_purpose_manufacture
+    PickListPurpose.OTHER -> R.string.pick_purpose_other
+}
+
+@StringRes
+fun PickRowStatus.labelRes(): Int = when (this) {
+    PickRowStatus.NOT_PICKED -> R.string.pick_row_not_picked
+    PickRowStatus.PARTIAL -> R.string.pick_row_partial
+    PickRowStatus.PICKED -> R.string.pick_row_picked
+}
+
+/** Label of the "create document" call to action, or null when the purpose has no target document. */
+@StringRes
+fun PickTargetDocument.createLabelRes(): Int = when (this) {
+    PickTargetDocument.DELIVERY_NOTE -> R.string.pick_create_delivery_note
+    PickTargetDocument.STOCK_ENTRY_MATERIAL_TRANSFER -> R.string.pick_create_material_transfer
+    PickTargetDocument.STOCK_ENTRY_MATERIAL_ISSUE -> R.string.pick_create_material_issue
 }
 
 fun AppError.toUiText(): UiText {
@@ -111,6 +153,7 @@ fun AnalyticsSection.titleRes(): Int = when (this) {
 fun OrdersTab.titleRes(): Int = when (this) {
     OrdersTab.RECEIVE -> R.string.tab_receive
     OrdersTab.DISPATCH -> R.string.tab_dispatch
+    OrdersTab.PICK -> R.string.tab_pick
 }
 
 @StringRes

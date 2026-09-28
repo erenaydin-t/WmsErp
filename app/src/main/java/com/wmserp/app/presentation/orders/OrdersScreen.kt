@@ -32,12 +32,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
+import com.wmserp.app.domain.model.PickList
+import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.SalesOrder
 import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.common.titleRes
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
@@ -52,17 +56,25 @@ import com.wmserp.app.presentation.theme.WmsTheme
 fun OrdersRoute(
     onOpenPurchaseOrder: (String) -> Unit,
     onOpenSalesOrder: (String) -> Unit,
+    onOpenPickList: (String) -> Unit,
     viewModel: OrdersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // Pick lists change state on their detail screen, so refresh silently when coming back.
+    LifecycleResumeEffect(Unit) {
+        viewModel.onResumed()
+        onPauseOrDispose { }
+    }
     // Scanning an order barcode on the list filters it (and opens it when it matches exactly).
     ScannerListener { code ->
         val value = code.value.trim()
         val po = state.purchaseOrders.firstOrNull { it.name.equals(value, ignoreCase = true) }
         val so = state.salesOrders.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        val pl = state.pickLists.firstOrNull { it.name.equals(value, ignoreCase = true) }
         when {
             po != null -> onOpenPurchaseOrder(po.name)
             so != null -> onOpenSalesOrder(so.name)
+            pl != null -> onOpenPickList(pl.name)
             else -> viewModel.onQueryChange(value)
         }
     }
@@ -73,6 +85,7 @@ fun OrdersRoute(
         onRefresh = viewModel::refresh,
         onOpenPurchaseOrder = onOpenPurchaseOrder,
         onOpenSalesOrder = onOpenSalesOrder,
+        onOpenPickList = onOpenPickList,
     )
 }
 
@@ -84,6 +97,7 @@ fun OrdersScreen(
     onRefresh: () -> Unit,
     onOpenPurchaseOrder: (String) -> Unit,
     onOpenSalesOrder: (String) -> Unit,
+    onOpenPickList: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -94,7 +108,13 @@ fun OrdersScreen(
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
             Text(stringResource(R.string.orders_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
-                stringResource(if (state.tab == OrdersTab.RECEIVE) R.string.orders_subtitle_receive else R.string.orders_subtitle_dispatch),
+                stringResource(
+                    when (state.tab) {
+                        OrdersTab.RECEIVE -> R.string.orders_subtitle_receive
+                        OrdersTab.DISPATCH -> R.string.orders_subtitle_dispatch
+                        OrdersTab.PICK -> R.string.orders_subtitle_pick
+                    }
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -104,7 +124,7 @@ fun OrdersScreen(
                 Tab(
                     selected = state.tab == tab,
                     onClick = { onSelectTab(tab) },
-                    text = { Text(stringResource(tab.titleRes())) },
+                    text = { Text(stringResource(tab.titleRes()), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.testTag("orders_tab_${tab.name}"),
                 )
             }
@@ -112,7 +132,13 @@ fun OrdersScreen(
         SearchField(
             value = state.query,
             onValueChange = onQueryChange,
-            placeholder = stringResource(if (state.tab == OrdersTab.RECEIVE) R.string.orders_search_po else R.string.orders_search_so),
+            placeholder = stringResource(
+                when (state.tab) {
+                    OrdersTab.RECEIVE -> R.string.orders_search_po
+                    OrdersTab.DISPATCH -> R.string.orders_search_so
+                    OrdersTab.PICK -> R.string.orders_search_pick
+                }
+            ),
             leadingIcon = Icons.Outlined.Search,
             modifier = Modifier
                 .padding(horizontal = 20.dp, vertical = 10.dp)
@@ -124,7 +150,11 @@ fun OrdersScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                state.error?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                if (state.tab == OrdersTab.PICK) {
+                    state.pickListError?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                } else {
+                    state.error?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                }
                 if (state.isLoading) {
                     item { LoadingState(modifier = Modifier.height(220.dp)) }
                 } else {
@@ -140,6 +170,13 @@ fun OrdersScreen(
                                 item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_dispatch_title), stringResource(R.string.orders_empty_dispatch_message)) }
                             }
                             items(state.salesOrders, key = { it.name }) { so -> SalesOrderCard(so) { onOpenSalesOrder(so.name) } }
+                        }
+                        OrdersTab.PICK -> {
+                            val pickLists = state.filteredPickLists
+                            if (pickLists.isEmpty()) {
+                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_pick_title), stringResource(R.string.orders_empty_pick_message)) }
+                            }
+                            items(pickLists, key = { it.name }) { pl -> PickListCard(pl) { onOpenPickList(pl.name) } }
                         }
                     }
                 }
@@ -205,6 +242,49 @@ private fun SalesOrderCard(so: SalesOrder, onClick: () -> Unit) {
             )
             Text(
                 stringResource(R.string.orders_deliver_by_ordered, Formatters.date(so.deliveryDate), Formatters.date(so.transactionDate)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PickListCard(pickList: PickList, onClick: () -> Unit) {
+    val statusColor = when (pickList.pickingStatus) {
+        PickingStatus.READY_TO_PICK -> WmsTheme.colors.info
+        PickingStatus.PICKING -> WmsTheme.colors.warning
+        PickingStatus.PICKED -> WmsTheme.colors.success
+    }
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth().testTag("pick_${pickList.name}"),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(pickList.name, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        pickList.customerName ?: stringResource(pickList.purpose.labelRes()),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StatusChip(stringResource(pickList.pickingStatus.labelRes()), statusColor)
+            }
+            ProgressRow(
+                label = stringResource(R.string.pick_card_progress, Formatters.qty(pickList.pickedQty), Formatters.qty(pickList.requiredQty)),
+                fraction = pickList.progress,
+                valueText = stringResource(R.string.pick_card_items, pickList.itemCount),
+                color = statusColor,
+            )
+            Text(
+                listOfNotNull(stringResource(pickList.purpose.labelRes()), pickList.parentWarehouse).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

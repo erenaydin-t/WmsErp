@@ -2,9 +2,11 @@ package com.wmserp.app.data.remote
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
+import com.wmserp.app.domain.common.ErrorCode
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -107,6 +109,27 @@ class ErpNextDataSource(
     suspend fun runReport(reportName: String, filters: JsonObject): JsonElement? {
         val params = mapOf("report_name" to reportName, "filters" to filters.toString(), "ignore_prepared_report" to "1")
         return api.callMethod("frappe.desk.query_report.run", params).message
+    }
+
+    /** Calls a whitelisted method with GET and decodes its `message`. */
+    suspend fun <T> getMethod(method: String, params: Map<String, String>, serializer: KSerializer<T>): T =
+        decodeMessage(method, api.callMethod(method, params).message, serializer)
+
+    suspend inline fun <reified T> getMethod(method: String, params: Map<String, String> = emptyMap()): T =
+        getMethod(method, params, serializer<T>())
+
+    /** Calls a whitelisted method with a JSON POST body and decodes its `message`. */
+    suspend fun <T> postMethod(method: String, body: JsonObject, serializer: KSerializer<T>): T =
+        decodeMessage(method, api.postMethod(method, body).message, serializer)
+
+    suspend inline fun <reified T> postMethod(method: String, body: JsonObject): T =
+        postMethod(method, body, serializer<T>())
+
+    private fun <T> decodeMessage(method: String, message: JsonElement?, serializer: KSerializer<T>): T {
+        if (message == null || message is JsonNull) {
+            throw AppException(AppError.Server("Empty response from $method", code = ErrorCode.INVALID_RESPONSE))
+        }
+        return json.decodeFromJsonElement(serializer, message)
     }
 
     suspend fun loggedUser(): String? = api.getLoggedUser().message?.let { (it as? JsonPrimitive)?.content }

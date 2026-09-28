@@ -13,6 +13,7 @@ import com.wmserp.app.data.repository.AndroidSettingsRepository
 import com.wmserp.app.data.repository.AuthRepositoryImpl
 import com.wmserp.app.data.repository.InventoryRepositoryImpl
 import com.wmserp.app.data.repository.OrderRepositoryImpl
+import com.wmserp.app.data.repository.PickListRepositoryImpl
 import com.wmserp.app.data.repository.ProfileRepositoryImpl
 import com.wmserp.app.data.util.DateProvider
 import com.wmserp.app.data.util.SystemDateProvider
@@ -20,6 +21,7 @@ import com.wmserp.app.domain.repository.AnalyticsRepository
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.repository.InventoryRepository
 import com.wmserp.app.domain.repository.OrderRepository
+import com.wmserp.app.domain.repository.PickListRepository
 import com.wmserp.app.domain.repository.ProfileRepository
 import com.wmserp.app.domain.repository.SettingsRepository
 import dagger.Module
@@ -61,6 +63,11 @@ object RepositoryModule {
     @Singleton
     fun provideOrderRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): OrderRepository =
         OrderRepositoryImpl(dataSource, apiCaller)
+
+    @Provides
+    @Singleton
+    fun providePickListRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): PickListRepository =
+        PickListRepositoryImpl(dataSource, apiCaller)
 
     @Provides
     @Singleton

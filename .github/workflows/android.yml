@@ -70,6 +70,9 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "WMSERP_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
+      - name: ERPNext picking app rules tests (pure Python, no bench needed)
+        run: python3 -m unittest discover -s erpnext/wmserp_picking -p "test_*.py" -v
+
       - name: Lint and unit tests
         run: ./gradlew --no-daemon lintDebug testDebugUnitTest --stacktrace
 

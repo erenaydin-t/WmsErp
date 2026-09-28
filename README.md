@@ -52,6 +52,9 @@ app/src/main/java/com/wmserp/app
    app language (System / English / فارسی), sign out.
 6. **Orders → Receive / Dispatch** – count goods against Purchase Orders (creates *Purchase Receipt*) and pick
    against Sales Orders (creates *Delivery Note*); scanning an item barcode increments the matching line.
+7. **Orders → Pick** – ERPNext *Pick Lists* assigned to the signed-in user, driven through
+   *Ready to Pick → Picking → Picked* and finished with a context-aware "Create Delivery Note /
+   Material Transfer / Material Issue" button (see [Pick List workflow](#pick-list-workflow)).
 
 ## ERPNext integration
 
@@ -72,6 +75,45 @@ The base URL is dynamic: `BaseUrlInterceptor` rewrites every request to the serv
 CSRF: the app logs in with `device=mobile`; if a server still answers `CSRFTokenError`, `CsrfRetryInterceptor`
 fetches a token and retries once. Session expiry triggers a silent re-login when *Remember me* is on,
 otherwise the user is returned to the login screen.
+
+## Pick List workflow
+
+Physical picking runs on the standard ERPNext *Pick List* plus a small custom Frappe app,
+[`erpnext/wmserp_picking`](erpnext/wmserp_picking/README.md), that adds custom fields and whitelisted
+APIs **without modifying ERPNext core and without writing stock ledger or GL entries**.
+
+```
+Ready to Pick ──start_picking──▶ Picking ──save_progress (n×)──▶ ──complete_picking──▶ Picked
+                                                                                   └──generate_document──▶ draft Delivery Note / Stock Entry
+```
+
+**Backend (install once per site):**
+
+```bash
+bench get-app wmserp_picking /path/to/WmsErp/erpnext/wmserp_picking
+bench --site <site> install-app wmserp_picking
+```
+
+This adds `custom_picker`, `custom_picking_status`, started/completed timestamps and the generated-document
+link to *Pick List*, `custom_wms_picked_qty` / `custom_optional` to *Pick List Item*, appends *Material Issue*
+to the purpose options, and mirrors the picker into the standard *Assign To*. The API reference, validation
+rules (item, warehouse, batch, expiry, quantity) and duplicate prevention are documented in the app's README.
+
+**App:**
+
+* **Orders → Pick** lists the pick lists assigned to the user (`get_my_pick_lists`) with status, purpose and
+  picked/required progress; pull to refresh, search, or scan a pick list barcode to open it.
+* **Ready to Pick** shows the header (purpose, customer, source/target warehouse, picker) and the rows, with a
+  single **Start Picking** button (visible only in that state).
+* **Picking** lists every row with item code/name, source → target warehouse, batch and expiry, required and
+  picked quantity in the stock UOM, and a *Not picked / Partial / Picked* chip. Scanning an item barcode, item
+  code or batch label with the PDA scanner (or camera / manual entry) increments the matching row; codes the
+  device does not know are resolved by `resolve_scan`. **Save progress** syncs partial quantities so picking can
+  be paused and resumed on any device; **Complete picking** stays disabled until every mandatory row has its
+  required quantity (rows flagged optional may be short).
+* **Picked** shows a summary and one **Create Delivery Note / Create Material Transfer / Create Material Issue**
+  button depending on the pick list purpose. The backend creates the draft once; a second tap (or another
+  device) returns the existing document instead of a duplicate. Nothing is submitted automatically.
 
 ## Hardware scanners
 
