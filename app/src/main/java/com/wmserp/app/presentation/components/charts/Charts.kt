@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.wmserp.app.R
+import java.util.Locale
 
 data class BarEntry(val label: String, val value: Double, val color: Color? = null)
 
@@ -38,7 +39,7 @@ fun BarChart(
     modifier: Modifier = Modifier,
     barColor: Color = MaterialTheme.colorScheme.primary,
     chartHeight: Dp = 160.dp,
-    valueFormatter: (Double) -> String = { if (it == it.toLong().toDouble()) it.toLong().toString() else "%.1f".format(it) },
+    valueFormatter: (Double) -> String = { if (it == it.toLong().toDouble()) it.toLong().toString() else "%.1f".format(Locale.US, it) },
 ) {
     val max = entries.maxOfOrNull { it.value }?.takeIf { it > 0 } ?: 1.0
     Column(modifier = modifier.fillMaxWidth()) {
@@ -184,7 +185,7 @@ fun StackedDistributionBar(segments: List<StackedSegment>, modifier: Modifier = 
                     Column {
                         Text(seg.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            if (seg.value == seg.value.toLong().toDouble()) seg.value.toLong().toString() else "%.1f".format(seg.value),
+                            if (seg.value == seg.value.toLong().toDouble()) seg.value.toLong().toString() else "%.1f".format(Locale.US, seg.value),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                         )

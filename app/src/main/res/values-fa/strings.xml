@@ -89,21 +89,21 @@
     <string name="delays_unavailable_title">اطلاعات تأخیر تحویل در دسترس نیست</string>
     <string name="delays_unavailable_message">سفارش‌های فروش معوق بارگذاری نشد.</string>
     <string name="delays_chart_title">سفارش‌های فروش معوق</string>
-    <string name="delays_chart_subtitle">%1$d معوق · میانگین %2$s روز تأخیر</string>
+    <string name="delays_chart_subtitle">%1$s معوق · میانگین %2$s روز تأخیر</string>
     <string name="delays_none">هیچ تحویل معوقی وجود ندارد. عالی!</string>
     <string name="delays_due">موعد %1$s · %2$s</string>
-    <string name="delays_days_late">%1$d روز تأخیر</string>
+    <string name="delays_days_late">%1$s روز تأخیر</string>
     <string name="heatmap_unavailable_title">نقشه فعالیت در دسترس نیست</string>
     <string name="heatmap_unavailable_message">فعالیت دفتر موجودی بارگذاری نشد.</string>
     <string name="heatmap_chart_title">جابه‌جایی موجودی · ۷ روز گذشته</string>
-    <string name="heatmap_chart_subtitle">%1$d رکورد دفتر بر اساس روز و بازه زمانی</string>
-    <string name="heatmap_busiest">شلوغ‌ترین روز: %1$s با %2$d جابه‌جایی</string>
+    <string name="heatmap_chart_subtitle">%1$s رکورد دفتر بر اساس روز و بازه زمانی</string>
+    <string name="heatmap_busiest">شلوغ‌ترین روز: %1$s با %2$s جابه‌جایی</string>
     <string name="aging_unavailable_title">عمر موجودی در دسترس نیست</string>
     <string name="aging_unavailable_message">گزارش عمر موجودی بارگذاری نشد.</string>
     <string name="aging_chart_title">موجودی بر اساس عمر</string>
     <string name="aging_chart_subtitle">مقدار موجود در هر بازه عمر (روز)</string>
     <string name="aging_no_data">داده‌ای برای عمر موجودی وجود ندارد.</string>
-    <string name="aging_days">%1$d روز</string>
+    <string name="aging_days">%1$s روز</string>
     <string name="aging_qty">مقدار %1$s</string>
 
     <!-- Scan -->
@@ -141,12 +141,12 @@
     <string name="scan_label_ordered">تاریخ سفارش</string>
     <string name="scan_label_expected">موعد دریافت</string>
     <string name="scan_label_total">مبلغ کل</string>
-    <string name="scan_more_items">+%1$d کالای دیگر</string>
+    <string name="scan_more_items">+%1$s کالای دیگر</string>
     <string name="scan_receive_items">دریافت کالاها</string>
     <string name="scan_fully_received">به‌طور کامل دریافت شده</string>
     <string name="scan_item_not_found">کالایی برای بارکد %1$s پیدا نشد</string>
     <string name="history_item_summary">%1$s · موجودی %2$s</string>
-    <string name="history_warehouse_summary">%1$s · %2$d کالا</string>
+    <string name="history_warehouse_summary">%1$s · %2$s کالا</string>
     <string name="history_po_summary">%1$s · %2$s</string>
     <string name="transfer_title">انتقال موجودی</string>
     <string name="transfer_from">از انبار</string>

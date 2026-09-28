@@ -3,6 +3,7 @@ package com.wmserp.app.presentation.common
 import android.content.Context
 import android.content.res.Configuration
 import android.text.TextUtils
+import android.view.ContextThemeWrapper
 import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,6 +19,10 @@ import java.util.Locale
  * Applies the in-app language choice to everything below it: string resources, layout direction
  * and configuration. [AppLanguage.SYSTEM] leaves the system locale untouched so Android 13+
  * per-app language settings keep working.
+ *
+ * The localized context is a [ContextThemeWrapper] around the current (activity) context rather
+ * than a bare `createConfigurationContext` result, so code that unwraps `ContextWrapper`s to find
+ * the host activity (Hilt's `hiltViewModel()`, dialogs, permission launchers) keeps working.
  */
 @Composable
 fun LocalizedContent(language: AppLanguage, content: @Composable () -> Unit) {
@@ -30,13 +35,13 @@ fun LocalizedContent(language: AppLanguage, content: @Composable () -> Unit) {
     }
     val localized = remember(baseContext, baseConfiguration, tag) {
         val locale = Locale.forLanguageTag(tag)
-        val configuration = Configuration(baseConfiguration).apply {
+        val override = Configuration(baseConfiguration).apply {
             setLocale(locale)
             setLayoutDirection(locale)
         }
-        val context = baseContext.createConfigurationContext(configuration)
+        val context = ContextThemeWrapper(baseContext, baseContext.theme).apply { applyOverrideConfiguration(override) }
         val direction = if (TextUtils.getLayoutDirectionFromLocale(locale) == View.LAYOUT_DIRECTION_RTL) LayoutDirection.Rtl else LayoutDirection.Ltr
-        Localized(context, configuration, direction)
+        Localized(context, context.resources.configuration, direction)
     }
     CompositionLocalProvider(
         LocalContext provides localized.context,

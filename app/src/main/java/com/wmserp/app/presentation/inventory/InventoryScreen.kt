@@ -60,6 +60,7 @@ import com.wmserp.app.presentation.components.charts.ProgressRow
 import com.wmserp.app.presentation.components.charts.StackedDistributionBar
 import com.wmserp.app.presentation.components.charts.StackedSegment
 import com.wmserp.app.presentation.theme.WmsTheme
+import java.util.Locale
 
 @Composable
 fun InventoryRoute(viewModel: InventoryViewModel = hiltViewModel()) {
@@ -150,7 +151,7 @@ private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?) {
     item {
         ChartCard(
             title = stringResource(R.string.delays_chart_title),
-            subtitle = stringResource(R.string.delays_chart_subtitle, report.totalOverdue, "%.1f".format(report.averageDaysLate)),
+            subtitle = stringResource(R.string.delays_chart_subtitle, report.totalOverdue, "%.1f".format(Locale.US, report.averageDaysLate)),
         ) {
             if (report.orders.isEmpty()) {
                 Text(stringResource(R.string.delays_none), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

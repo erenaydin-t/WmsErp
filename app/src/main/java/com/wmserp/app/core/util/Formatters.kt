@@ -14,8 +14,9 @@ object Formatters {
     private val qtyFormat = DecimalFormat("#,##0.###", DecimalFormatSymbols(Locale.US))
     private val moneyFormat = DecimalFormat("#,##0.00", DecimalFormatSymbols(Locale.US))
     private val intFormat = DecimalFormat("#,##0", DecimalFormatSymbols(Locale.US))
-    private val dateOut = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
-    private val dateTimeOut = DateTimeFormatter.ofPattern("dd MMM, HH:mm", Locale.ENGLISH)
+    // Month names follow the app language (see LocaleDefaults); digits stay ASCII so they match ERPNext.
+    private val dateOut get() = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
+    private val dateTimeOut get() = DateTimeFormatter.ofPattern("dd MMM, HH:mm", Locale.getDefault())
 
     fun qty(value: Double): String = qtyFormat.format(value)
 

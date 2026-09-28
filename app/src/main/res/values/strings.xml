@@ -89,21 +89,21 @@
     <string name="delays_unavailable_title">Delivery delays unavailable</string>
     <string name="delays_unavailable_message">Could not load overdue sales orders.</string>
     <string name="delays_chart_title">Overdue sales orders</string>
-    <string name="delays_chart_subtitle">%1$d overdue · avg %2$s days late</string>
+    <string name="delays_chart_subtitle">%1$s overdue · avg %2$s days late</string>
     <string name="delays_none">No overdue deliveries. Great job!</string>
     <string name="delays_due">Due %1$s · %2$s</string>
-    <string name="delays_days_late">%1$dd late</string>
+    <string name="delays_days_late">%1$sd late</string>
     <string name="heatmap_unavailable_title">Heatmap unavailable</string>
     <string name="heatmap_unavailable_message">Could not load stock ledger activity.</string>
     <string name="heatmap_chart_title">Stock movements · last 7 days</string>
-    <string name="heatmap_chart_subtitle">%1$d ledger entries by day and time block</string>
-    <string name="heatmap_busiest">Busiest day: %1$s with %2$d movements</string>
+    <string name="heatmap_chart_subtitle">%1$s ledger entries by day and time block</string>
+    <string name="heatmap_busiest">Busiest day: %1$s with %2$s movements</string>
     <string name="aging_unavailable_title">Stock aging unavailable</string>
     <string name="aging_unavailable_message">The Stock Ageing report could not be loaded.</string>
     <string name="aging_chart_title">Stock by age</string>
     <string name="aging_chart_subtitle">Quantity on hand per age bucket (days)</string>
     <string name="aging_no_data">No stock aging data.</string>
-    <string name="aging_days">%1$d days</string>
+    <string name="aging_days">%1$s days</string>
     <string name="aging_qty">Qty %1$s</string>
 
     <!-- Scan -->
@@ -141,12 +141,12 @@
     <string name="scan_label_ordered">Ordered</string>
     <string name="scan_label_expected">Expected</string>
     <string name="scan_label_total">Total</string>
-    <string name="scan_more_items">+%1$d more items</string>
+    <string name="scan_more_items">+%1$s more items</string>
     <string name="scan_receive_items">Receive items</string>
     <string name="scan_fully_received">Fully received</string>
     <string name="scan_item_not_found">No item found for barcode %1$s</string>
     <string name="history_item_summary">%1$s · %2$s in stock</string>
-    <string name="history_warehouse_summary">%1$s · %2$d items</string>
+    <string name="history_warehouse_summary">%1$s · %2$s items</string>
     <string name="history_po_summary">%1$s · %2$s</string>
     <string name="transfer_title">Move stock</string>
     <string name="transfer_from">From warehouse</string>
