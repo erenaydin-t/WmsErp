@@ -1,0 +1,38 @@
+package com.wmserp.app.presentation.navigation
+
+import android.net.Uri
+import com.wmserp.app.domain.model.ScanTarget
+import com.wmserp.app.presentation.orders.OrdersTab
+
+object Routes {
+    const val SPLASH = "splash"
+    const val LOGIN = "login"
+    const val DASHBOARD = "dashboard"
+    const val INVENTORY = "inventory"
+    const val SCAN = "scan"
+    const val ORDERS = "orders"
+    const val PROFILE = "profile"
+    const val RECEIVE_DETAIL = "receive"
+    const val DISPATCH_DETAIL = "dispatch"
+
+    const val ARG_TARGET = "target"
+    const val ARG_TAB = "tab"
+    const val ARG_PO_NAME = "poName"
+    const val ARG_SO_NAME = "soName"
+
+    const val SCAN_PATTERN = "$SCAN?$ARG_TARGET={$ARG_TARGET}"
+    const val ORDERS_PATTERN = "$ORDERS?$ARG_TAB={$ARG_TAB}"
+    const val RECEIVE_PATTERN = "$RECEIVE_DETAIL/{$ARG_PO_NAME}"
+    const val DISPATCH_PATTERN = "$DISPATCH_DETAIL/{$ARG_SO_NAME}"
+
+    /** Destinations that show the bottom navigation bar. */
+    val topLevel: Set<String> = setOf(DASHBOARD, INVENTORY, SCAN, ORDERS, PROFILE)
+
+    fun scan(target: ScanTarget? = null): String = if (target == null) SCAN else "$SCAN?$ARG_TARGET=${target.name}"
+    fun orders(tab: OrdersTab? = null): String = if (tab == null) ORDERS else "$ORDERS?$ARG_TAB=${tab.name}"
+    fun receive(poName: String): String = "$RECEIVE_DETAIL/${Uri.encode(poName)}"
+    fun dispatch(soName: String): String = "$DISPATCH_DETAIL/${Uri.encode(soName)}"
+
+    /** Strips query parameters so "scan?target={target}" compares equal to "scan". */
+    fun base(route: String?): String? = route?.substringBefore('?')?.substringBefore('/')
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme. All real theming happens in Compose (WmsErpTheme). -->
+    <style name="Theme.WmsErp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/brand_white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- Splash screen theme (AndroidX SplashScreen), hands over to Theme.WmsErp. -->
+    <style name="Theme.WmsErp.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brand_purple</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.WmsErp</item>
+    </style>
+</resources>

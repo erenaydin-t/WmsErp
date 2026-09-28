@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ERPNext servers on warehouse LANs are frequently reachable over plain HTTP.
+  Cleartext is therefore permitted, but the app warns the user on the login screen
+  whenever a non-HTTPS URL is used. HTTPS is always preferred.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

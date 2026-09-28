@@ -1,0 +1,156 @@
+package com.wmserp.app.presentation.profile
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.wmserp.app.core.scanner.ScannerController
+import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.ProfileUpdate
+import com.wmserp.app.domain.model.ScannerMode
+import com.wmserp.app.domain.model.ScannerSettings
+import com.wmserp.app.domain.model.UserProfile
+import com.wmserp.app.domain.repository.AuthRepository
+import com.wmserp.app.domain.usecase.ChangePasswordUseCase
+import com.wmserp.app.domain.usecase.GetProfileUseCase
+import com.wmserp.app.domain.usecase.LogoutUseCase
+import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
+import com.wmserp.app.domain.usecase.UpdateProfileUseCase
+import com.wmserp.app.domain.usecase.UpdateScannerSettingsUseCase
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class ProfileUiState(
+    val isLoading: Boolean = true,
+    val profile: UserProfile? = null,
+    val error: String? = null,
+    val firstName: String = "",
+    val lastName: String = "",
+    val phone: String = "",
+    val mobileNo: String = "",
+    val location: String = "",
+    val isSaving: Boolean = false,
+    val saveMessage: String? = null,
+    val oldPassword: String = "",
+    val newPassword: String = "",
+    val confirmPassword: String = "",
+    val passwordVisible: Boolean = false,
+    val isChangingPassword: Boolean = false,
+    val passwordMessage: String? = null,
+    val passwordError: String? = null,
+    val scannerSettings: ScannerSettings = ScannerSettings(),
+    val hasHardwareScanner: Boolean = false,
+    val serverUrl: String = "",
+    val isLoggingOut: Boolean = false,
+) {
+    val isDirty: Boolean
+        get() = profile != null && (
+            firstName != profile.firstName || lastName != profile.lastName ||
+                phone != profile.phone.orEmpty() || mobileNo != profile.mobileNo.orEmpty() || location != profile.location.orEmpty()
+            )
+    val canSave: Boolean get() = isDirty && !isSaving && firstName.isNotBlank()
+    val canChangePassword: Boolean get() = !isChangingPassword && oldPassword.isNotEmpty() && newPassword.isNotEmpty() && confirmPassword.isNotEmpty()
+}
+
+@HiltViewModel
+class ProfileViewModel @Inject constructor(
+    private val getProfile: GetProfileUseCase,
+    private val updateProfile: UpdateProfileUseCase,
+    private val changePassword: ChangePasswordUseCase,
+    private val logout: LogoutUseCase,
+    observeScannerSettings: ObserveScannerSettingsUseCase,
+    private val updateScannerSettings: UpdateScannerSettingsUseCase,
+    authRepository: AuthRepository,
+    scanner: ScannerController,
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(ProfileUiState(hasHardwareScanner = scanner.hasHardwareScanner))
+    val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch { observeScannerSettings().collect { s -> _uiState.update { it.copy(scannerSettings = s) } } }
+        viewModelScope.launch { authRepository.session.collect { s -> _uiState.update { it.copy(serverUrl = s?.baseUrl.orEmpty()) } } }
+        load()
+    }
+
+    fun load(forceRefresh: Boolean = false) {
+        _uiState.update { it.copy(isLoading = it.profile == null, error = null) }
+        viewModelScope.launch {
+            when (val result = getProfile(forceRefresh)) {
+                is AppResult.Success -> applyProfile(result.data)
+                is AppResult.Failure -> _uiState.update { it.copy(isLoading = false, error = result.error.message) }
+            }
+        }
+    }
+
+    private fun applyProfile(profile: UserProfile) = _uiState.update {
+        it.copy(
+            isLoading = false,
+            profile = profile,
+            firstName = profile.firstName,
+            lastName = profile.lastName,
+            phone = profile.phone.orEmpty(),
+            mobileNo = profile.mobileNo.orEmpty(),
+            location = profile.location.orEmpty(),
+            error = null,
+        )
+    }
+
+    fun onFirstNameChange(v: String) = _uiState.update { it.copy(firstName = v, saveMessage = null) }
+    fun onLastNameChange(v: String) = _uiState.update { it.copy(lastName = v, saveMessage = null) }
+    fun onPhoneChange(v: String) = _uiState.update { it.copy(phone = v, saveMessage = null) }
+    fun onMobileChange(v: String) = _uiState.update { it.copy(mobileNo = v, saveMessage = null) }
+    fun onLocationChange(v: String) = _uiState.update { it.copy(location = v, saveMessage = null) }
+    fun dismissMessages() = _uiState.update { it.copy(saveMessage = null, passwordMessage = null, passwordError = null, error = null) }
+
+    fun save() {
+        val state = _uiState.value
+        if (!state.canSave) return
+        _uiState.update { it.copy(isSaving = true, saveMessage = null, error = null) }
+        viewModelScope.launch {
+            val update = ProfileUpdate(state.firstName, state.lastName, state.phone, state.mobileNo, state.location)
+            when (val result = updateProfile(update)) {
+                is AppResult.Success -> {
+                    applyProfile(result.data)
+                    _uiState.update { it.copy(isSaving = false, saveMessage = "Profile updated") }
+                }
+                is AppResult.Failure -> _uiState.update { it.copy(isSaving = false, error = result.error.message) }
+            }
+        }
+    }
+
+    fun onOldPasswordChange(v: String) = _uiState.update { it.copy(oldPassword = v, passwordError = null, passwordMessage = null) }
+    fun onNewPasswordChange(v: String) = _uiState.update { it.copy(newPassword = v, passwordError = null, passwordMessage = null) }
+    fun onConfirmPasswordChange(v: String) = _uiState.update { it.copy(confirmPassword = v, passwordError = null, passwordMessage = null) }
+    fun togglePasswordVisibility() = _uiState.update { it.copy(passwordVisible = !it.passwordVisible) }
+
+    fun submitPasswordChange() {
+        val state = _uiState.value
+        if (!state.canChangePassword) return
+        _uiState.update { it.copy(isChangingPassword = true, passwordError = null, passwordMessage = null) }
+        viewModelScope.launch {
+            when (val result = changePassword(state.oldPassword, state.newPassword, state.confirmPassword)) {
+                is AppResult.Success -> _uiState.update {
+                    it.copy(isChangingPassword = false, oldPassword = "", newPassword = "", confirmPassword = "", passwordMessage = "Password changed successfully")
+                }
+                is AppResult.Failure -> _uiState.update { it.copy(isChangingPassword = false, passwordError = result.error.message) }
+            }
+        }
+    }
+
+    fun setScannerMode(mode: ScannerMode) = viewModelScope.launch { updateScannerSettings.setMode(mode) }
+    fun setBeep(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setBeep(enabled) }
+    fun setVibrate(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setVibrate(enabled) }
+
+    fun signOut() {
+        if (_uiState.value.isLoggingOut) return
+        _uiState.update { it.copy(isLoggingOut = true) }
+        viewModelScope.launch {
+            logout()
+            _uiState.update { it.copy(isLoggingOut = false) }
+        }
+    }
+}

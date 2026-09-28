@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stylised barcode + box glyph on the brand purple background -->
+    <group android:scaleX="0.55" android:scaleY="0.55" android:translateX="24.3" android:translateY="24.3">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M12,12h20v6h-14v14h-6z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M76,12h20v20h-6v-14h-14z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M12,76h6v14h14v6h-20z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M90,76h6v20h-20v-6h14z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M30,34h6v40h-6z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M42,34h4v40h-4z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M50,34h8v40h-8z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M62,34h4v40h-4z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M70,34h8v40h-8z" />
+        <path
+            android:fillColor="#8FB3FF"
+            android:pathData="M20,52h68v4h-68z" />
+    </group>
+</vector>
