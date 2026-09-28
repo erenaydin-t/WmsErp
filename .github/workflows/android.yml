@@ -124,6 +124,29 @@ jobs:
             app/build/outputs/bundle/release/*.aab
           generate_release_notes: true
 
+  publish-backend:
+    name: Publish ERPNext app branch (wmserp_picking)
+    # bench needs a Frappe app at the root of what it clones, so the backend folder is published
+    # as its own branch: `bench get-app https://github.com/<owner>/WmsErp --branch wmserp_picking`.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history for the subtree split)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Split erpnext/wmserp_picking and push it to the wmserp_picking branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          split=$(git subtree split --prefix=erpnext/wmserp_picking)
+          echo "Split commit: $split"
+          git push --force origin "$split:refs/heads/wmserp_picking"
+
   instrumented-tests:
     name: Compose UI tests (emulator)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_instrumented_tests }}

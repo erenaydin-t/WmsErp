@@ -87,10 +87,12 @@ Ready to Pick ──start_picking──▶ Picking ──save_progress (n×)─�
                                                                                    └──generate_document──▶ draft Delivery Note / Stock Entry
 ```
 
-**Backend (install once per site):**
+**Backend (install once per site):** the app folder is published as the `wmserp_picking` branch of this
+repository by CI (a subtree split of `erpnext/wmserp_picking`), because bench needs a Frappe app at the
+root of what it clones.
 
 ```bash
-bench get-app wmserp_picking /path/to/WmsErp/erpnext/wmserp_picking
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking
 bench --site <site> install-app wmserp_picking
 ```
 

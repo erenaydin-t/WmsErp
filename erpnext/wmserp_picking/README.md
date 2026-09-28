@@ -13,11 +13,30 @@ standard ERPNext *Pick List* and exposes the whitelisted API used by the WMS ERP
 
 ## Installation
 
+The Android project and this Frappe app live in one repository, but bench needs a Frappe app at the
+root of what it clones. CI therefore publishes this folder as its own branch, **`wmserp_picking`**
+(a `git subtree split` of `erpnext/wmserp_picking`, refreshed on every push to `main`):
+
 ```bash
 cd frappe-bench
-bench get-app wmserp_picking /path/to/WmsErp/erpnext/wmserp_picking   # or a git URL
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
+```
+
+> `bench get-app https://github.com/erenaydin-t/WmsErp` **without** `--branch` fails with
+> `No such file or directory: .../apps/WmsErp/setup.py` because the repository root is the Android
+> project, not a Frappe app.
+
+To install straight from a checkout of the monorepo (for example a development bench), turn the
+folder into a small git repository so bench can clone it:
+
+```bash
+git clone --depth 1 https://github.com/erenaydin-t/WmsErp /tmp/WmsErp
+cd /tmp/WmsErp/erpnext/wmserp_picking && git init -q && git add -A && git commit -qm "wmserp_picking"
+cd ~/frappe-bench
+bench get-app /tmp/WmsErp/erpnext/wmserp_picking
+bench --site <site> install-app wmserp_picking
 ```
 
 `after_install` and `after_migrate` both run `wmserp_picking.setup.custom_fields.setup_customizations`,
