@@ -251,6 +251,27 @@
     <string name="profile_signing_out">Signing out…</string>
     <string name="profile_version">WMS ERP v%1$s</string>
 
+    <!-- In-app updates (GitHub Releases) -->
+    <string name="update_title">App updates</string>
+    <string name="update_current_version">Installed version %1$s</string>
+    <string name="update_idle">Updates are checked automatically when the app starts</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_up_to_date">You have the latest version</string>
+    <string name="update_available_title">Version %1$s is available</string>
+    <string name="update_available_message">Download the new build (%1$s) from GitHub and install it over this app.</string>
+    <string name="update_download">Update now</string>
+    <string name="update_retry">Retry download</string>
+    <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading update… %1$s%%</string>
+    <string name="update_ready_title">Version %1$s is ready to install</string>
+    <string name="update_ready">Update downloaded. Tap Install to finish; the app reopens with the new version.</string>
+    <string name="update_install">Install</string>
+    <string name="update_cancel">Cancel</string>
+    <string name="update_failed">Update failed: %1$s</string>
+    <string name="update_permission_hint">Android needs your permission first: allow WMS ERP to install unknown apps on the screen that opens, then tap Install again.</string>
+    <string name="update_release_notes">What\'s new</string>
+
     <!-- App-generated errors (server messages are shown verbatim) -->
     <string name="error_invalid_url">Enter a valid ERPNext URL, e.g. https://erp.company.com</string>
     <string name="error_username_required">Username or email is required</string>

@@ -22,6 +22,13 @@ object Formatters {
 
     fun int(value: Int): String = intFormat.format(value)
 
+    /** 13_400_000 -> "12.8 MB", 512 -> "512 B". */
+    fun fileSize(bytes: Long): String = when {
+        bytes >= 1L shl 20 -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+        bytes >= 1L shl 10 -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
+        else -> "$bytes B"
+    }
+
     fun money(value: Double, currency: String?): String {
         val symbol = currency?.takeIf { it.isNotBlank() }?.let { code ->
             runCatching { Currency.getInstance(code).getSymbol(Locale.getDefault()) }.getOrDefault(code)

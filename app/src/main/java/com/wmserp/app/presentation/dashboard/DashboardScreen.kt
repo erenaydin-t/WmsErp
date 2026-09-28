@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.ActivityEntry
+import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.toUiText
 import com.wmserp.app.presentation.components.EmptyState
@@ -63,6 +64,8 @@ import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.QuickActionButton
 import com.wmserp.app.presentation.components.SectionHeader
 import com.wmserp.app.presentation.theme.WmsTheme
+import com.wmserp.app.presentation.update.UpdateBanner
+import com.wmserp.app.presentation.update.showsBanner
 
 @Composable
 fun DashboardRoute(
@@ -73,6 +76,7 @@ fun DashboardRoute(
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     DashboardScreen(
         state = state,
         onRefresh = viewModel::refresh,
@@ -81,6 +85,9 @@ fun DashboardRoute(
         onReceive = onReceive,
         onDispatch = onDispatch,
         onReport = onReport,
+        updateState = updateState,
+        onDownloadUpdate = viewModel::downloadUpdate,
+        onDismissUpdate = viewModel::dismissUpdate,
     )
 }
 
@@ -93,6 +100,9 @@ fun DashboardScreen(
     onReceive: () -> Unit,
     onDispatch: () -> Unit,
     onReport: () -> Unit,
+    updateState: UpdateState = UpdateState.Idle,
+    onDownloadUpdate: () -> Unit = {},
+    onDismissUpdate: () -> Unit = {},
 ) {
     val colors = WmsTheme.colors
     PullToRefreshBox(
@@ -140,6 +150,10 @@ fun DashboardScreen(
                         )
                     }
                 }
+            }
+
+            if (updateState.showsBanner) {
+                item { UpdateBanner(updateState, onDownload = onDownloadUpdate, onDismiss = onDismissUpdate) }
             }
 
             state.error?.let { error ->

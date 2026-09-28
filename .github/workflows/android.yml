@@ -5,8 +5,6 @@ on:
     branches:
       - main
       - 'claude/**'
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
@@ -26,6 +24,8 @@ permissions:
 
 env:
   JAVA_VERSION: "17"
+  # Version of every build is <BASE_VERSION>.<workflow run number>; the run number is the versionCode.
+  BASE_VERSION: "1.1"
 
 jobs:
   build:
@@ -35,9 +35,20 @@ jobs:
     env:
       # The secrets context cannot be used in step conditions, so expose a flag here.
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Compute version (base version + workflow run number)
+        id: version
+        run: |
+          version_name="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          echo "WMSERP_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "WMSERP_VERSION_NAME=${version_name}" >> "$GITHUB_ENV"
+          echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
+          echo "Building WMS ERP ${version_name} (versionCode ${GITHUB_RUN_NUMBER})"
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -114,15 +125,41 @@ jobs:
             app/build/test-results/**
           if-no-files-found: ignore
 
-      - name: Attach APKs to GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release:
+    name: Publish GitHub release (feeds the in-app updater)
+    # Every build of main becomes a release "v<version>" with the release APK attached. The app reads
+    # /repos/<owner>/<repo>/releases/latest, so only main builds are offered as updates.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the release APK built by this run
+        uses: actions/download-artifact@v4
         with:
-          files: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/bundle/release/*.aab
-          generate_release_notes: true
+          name: wmserp-release-apk
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          apk="$(ls dist/*.apk | head -n 1)"
+          asset="wmserp-${VERSION}.apk"
+          cp "$apk" "$asset"
+          notes="$(git log -1 --pretty=%B)"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" "$asset#WMS ERP ${VERSION} (APK)" --clobber
+          else
+            gh release create "$tag" "$asset#WMS ERP ${VERSION} (APK)" --title "WMS ERP ${VERSION}" --notes "$notes" --latest
+          fi
+          echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
 
   publish-backend:
     name: Publish ERPNext app branch (wmserp_picking)

@@ -54,17 +54,20 @@ import com.wmserp.app.BuildConfig
 import com.wmserp.app.R
 import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.ScannerMode
+import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.StatusChip
+import com.wmserp.app.presentation.update.UpdateCard
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
 fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     ProfileScreen(
         state = state,
         onFirstNameChange = viewModel::onFirstNameChange,
@@ -85,6 +88,11 @@ fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
         onSignOut = viewModel::signOut,
         onRetry = { viewModel.load(forceRefresh = true) },
         onDismissMessages = viewModel::dismissMessages,
+        updateState = updateState,
+        currentVersion = viewModel.currentVersion,
+        onCheckUpdate = viewModel::checkForUpdate,
+        onDownloadUpdate = viewModel::downloadUpdate,
+        onCancelUpdate = viewModel::cancelUpdate,
     )
 }
 
@@ -109,6 +117,11 @@ fun ProfileScreen(
     onSignOut: () -> Unit,
     onRetry: () -> Unit,
     onDismissMessages: () -> Unit,
+    updateState: UpdateState = UpdateState.Idle,
+    currentVersion: String = BuildConfig.VERSION_NAME,
+    onCheckUpdate: () -> Unit = {},
+    onDownloadUpdate: () -> Unit = {},
+    onCancelUpdate: () -> Unit = {},
 ) {
     val colors = WmsTheme.colors
     Column(
@@ -218,6 +231,14 @@ fun ProfileScreen(
             SettingSwitch(stringResource(R.string.profile_beep), state.scannerSettings.beepOnScan, onBeepChange)
             SettingSwitch(stringResource(R.string.profile_vibrate), state.scannerSettings.vibrateOnScan, onVibrateChange)
         }
+
+        UpdateCard(
+            state = updateState,
+            currentVersion = currentVersion,
+            onCheck = onCheckUpdate,
+            onDownload = onDownloadUpdate,
+            onCancel = onCancelUpdate,
+        )
 
         OutlinedButton(
             onClick = onSignOut,

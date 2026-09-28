@@ -2,8 +2,10 @@ package com.wmserp.app.presentation.dashboard
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wmserp.app.core.update.AppUpdateManager
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PickerKpis
+import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.DashboardData
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
@@ -35,13 +37,18 @@ class DashboardViewModel @Inject constructor(
     private val getDashboard: GetDashboardUseCase,
     private val getPickerKpis: GetPickerKpisUseCase,
     authRepository: AuthRepository,
+    private val updateManager: AppUpdateManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
     private var loadJob: Job? = null
 
+    /** In-app updater (GitHub Releases); the check is throttled by the manager. */
+    val updateState: StateFlow<UpdateState> = updateManager.state
+
     init {
+        updateManager.checkForUpdate()
         viewModelScope.launch {
             authRepository.session.collect { session ->
                 val name = session?.fullName?.trim()?.substringBefore(' ')?.takeIf { it.isNotBlank() } ?: session?.userId.orEmpty()
@@ -70,4 +77,10 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun refresh() = load(refresh = true)
+
+    fun downloadUpdate() {
+        updateManager.download()
+    }
+
+    fun dismissUpdate() = updateManager.dismiss()
 }

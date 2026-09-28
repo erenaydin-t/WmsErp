@@ -16,6 +16,8 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+# ...except the stable internal-distribution key the in-app updater relies on (see app/build.gradle.kts)
+!app/keystore/internal-testing.jks
 
 # OS
 .DS_Store

@@ -180,24 +180,56 @@ keyPassword=...
 ```
 
 or provide the same values through environment variables `WMSERP_KEYSTORE_PATH`, `WMSERP_KEYSTORE_PASSWORD`,
-`WMSERP_KEY_ALIAS`, `WMSERP_KEY_PASSWORD`. Without either, release builds are signed with the debug keystore so
-CI always produces an installable APK (never upload such an APK to Google Play).
+`WMSERP_KEY_ALIAS`, `WMSERP_KEY_PASSWORD`. Without either, **both** build types are signed with the committed
+internal-distribution key `app/keystore/internal-testing.jks` (alias `wmserp`, password `wmserp-internal`).
+That key is what makes the in-app updater work: Android only installs an update over an existing app when
+both APKs carry the same signature, and the per-machine debug keystore would differ on every CI runner.
+Anyone with the repository can sign with it, so switch to your own keystore (secrets above) before handing
+the app to people outside your warehouse, and never upload such an APK to Google Play.
+
+### Versioning
+
+CI builds are versioned `<base>.<workflow run number>` (`versionName`) with the run number as `versionCode`;
+the base (`1.1`) lives in `app/build.gradle.kts` (`baseVersion`) and `.github/workflows/android.yml`
+(`BASE_VERSION`). Local builds are `1.1.0-dev` / `versionCode 1` and therefore always accept an update.
 
 ## CI / CD (GitHub Actions)
 
-`.github/workflows/android.yml` runs on every push to `main` (and `claude/**` branches), on pull requests, on
-`v*` tags and manually:
+`.github/workflows/android.yml` runs on every push to `main` (and `claude/**` branches), on pull requests and
+manually:
 
-1. Lint + unit tests (`lintDebug testDebugUnitTest`)
+1. Backend rules tests, lint + unit tests (`lintDebug testDebugUnitTest`)
 2. `assembleDebug`, `assembleRelease`, `bundleRelease`
 3. Uploads artifacts **wmserp-debug-apk**, **wmserp-release-apk**, **wmserp-release-aab** and test reports
-4. On `v*` tags the APKs/AAB are attached to a GitHub Release
+4. On `main` only: publishes a **GitHub Release** `v<version>` with the release APK attached (the feed of
+   the in-app updater) and refreshes the `wmserp_picking` backend branch
 
 For Play-ready signed builds add the repository secrets `KEYSTORE_BASE64` (base64 of the `.jks`),
 `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 
 A second job runs the Compose UI tests on an emulator when the workflow is dispatched manually with
 *Run Compose UI tests on an emulator* enabled.
+
+## In-app updates
+
+The app updates itself from the repository's GitHub Releases, so a PDA never needs a computer or a store:
+
+1. On start the dashboard asks `GET https://api.github.com/repos/erenaydin-t/WmsErp/releases/latest`
+   (unauthenticated, at most once every 6 hours; *Profile → App updates → Check for updates* always
+   checks). The repository is set at build time (`BuildConfig.UPDATE_GITHUB_REPO`).
+2. When the release tag (`v1.1.57`) is newer than the installed `versionName`, a banner on the dashboard
+   and the card in Profile offer **Update now**; *Later* hides the banner until the next check.
+3. The APK asset is streamed to `filesDir/updates/` with a progress bar (a finished download is reused,
+   partial files are deleted). Downloads keep running while you move between screens
+   (`AppUpdateManager` is a process-wide singleton).
+4. When the download completes the system installer opens through a `FileProvider`; **Install** in the
+   banner or card opens it again. On the first update Android asks you to allow WMS ERP to *install
+   unknown apps* (`REQUEST_INSTALL_PACKAGES`); the card explains this and takes you to the setting.
+5. The app reopens with the new version; the release notes are the commit message of the `main` build.
+
+Requirements for the update to install: same signature as the installed build (see *Release signing*)
+and a higher `versionCode` (see *Versioning*). A device that still runs a build from before the stable key
+was introduced must be updated by hand once (uninstall, then install any newer APK).
 
 ## Localization (English / فارسی)
 

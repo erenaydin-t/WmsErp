@@ -251,6 +251,27 @@
     <string name="profile_signing_out">در حال خروج…</string>
     <string name="profile_version">WMS ERP نسخه %1$s</string>
 
+    <!-- In-app updates (GitHub Releases) -->
+    <string name="update_title">به‌روزرسانی برنامه</string>
+    <string name="update_current_version">نسخه نصب‌شده %1$s</string>
+    <string name="update_idle">به‌روزرسانی‌ها هنگام اجرای برنامه به‌صورت خودکار بررسی می‌شوند</string>
+    <string name="update_check">بررسی به‌روزرسانی</string>
+    <string name="update_checking">در حال بررسی به‌روزرسانی…</string>
+    <string name="update_up_to_date">آخرین نسخه را دارید</string>
+    <string name="update_available_title">نسخه %1$s در دسترس است</string>
+    <string name="update_available_message">نسخه جدید (%1$s) را از GitHub دانلود کنید و روی همین برنامه نصب کنید.</string>
+    <string name="update_download">به‌روزرسانی کن</string>
+    <string name="update_retry">دانلود دوباره</string>
+    <string name="update_later">بعداً</string>
+    <string name="update_downloading">در حال دانلود به‌روزرسانی… %1$s%%</string>
+    <string name="update_ready_title">نسخه %1$s آماده نصب است</string>
+    <string name="update_ready">به‌روزرسانی دانلود شد. برای پایان کار روی «نصب» بزنید؛ برنامه با نسخه جدید دوباره باز می‌شود.</string>
+    <string name="update_install">نصب</string>
+    <string name="update_cancel">لغو</string>
+    <string name="update_failed">به‌روزرسانی ناموفق بود: %1$s</string>
+    <string name="update_permission_hint">اندروید ابتدا اجازه شما را می‌خواهد: در صفحه‌ای که باز می‌شود نصب برنامه‌های ناشناس را برای WMS ERP فعال کنید و سپس دوباره روی «نصب» بزنید.</string>
+    <string name="update_release_notes">تغییرات این نسخه</string>
+
     <!-- App-generated errors -->
     <string name="error_invalid_url">یک آدرس معتبر ERPNext وارد کنید، مثلاً https://erp.company.com</string>
     <string name="error_username_required">نام کاربری یا ایمیل الزامی است</string>
