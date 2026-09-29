@@ -137,8 +137,9 @@ jobs:
     name: Publish GitHub release (feeds the in-app updater)
     # Every build of main becomes a release "v<version>" with the release APK attached. The app reads
     # /repos/<owner>/<repo>/releases/latest, so main builds are offered as updates; a manual run with
-    # "publish_release" does the same for the dispatched branch (testing before a merge).
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    # "publish_release", or a push whose commit message contains "[publish]", does the same for another
+    # branch (testing before a merge).
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -175,7 +176,7 @@ jobs:
     # bench needs a Frappe app at the root of what it clones, so the backend folder is published
     # as its own branch: `bench get-app https://github.com/<owner>/WmsErp --branch wmserp_picking`.
     # Runs on every push to main, or on a manual run with "publish_backend" for the dispatched branch.
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_backend)
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_backend)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
