@@ -184,6 +184,20 @@ jobs:
           echo "Split commit: $split"
           git push --force origin "$split:refs/heads/wmserp_picking"
 
+      - name: Tag the published app version (wmserp_picking-v<__version__>)
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import re,pathlib; print(re.search(r'__version__\s*=\s*[\"\']([^\"\']+)', pathlib.Path('erpnext/wmserp_picking/wmserp_picking/__init__.py').read_text()).group(1))")
+          tag="wmserp_picking-v${version}"
+          split=$(git subtree split --prefix=erpnext/wmserp_picking)
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            echo "Tag ${tag} already exists; bump __version__ in wmserp_picking/__init__.py to publish a new one."
+          else
+            git tag -a "${tag}" "${split}" -m "wmserp_picking ${version}"
+            git push origin "refs/tags/${tag}"
+            echo "Tagged ${split} as ${tag}"
+          fi
+
   instrumented-tests:
     name: Compose UI tests (emulator)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_instrumented_tests }}
