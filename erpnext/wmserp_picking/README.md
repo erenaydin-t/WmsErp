@@ -29,7 +29,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.2.0     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.2.1     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -40,17 +40,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.2.0                              # or pin a version
+# git checkout wmserp_picking-v0.2.1                              # or pin a version
 cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format
 bench restart                    # no `bench build` needed: the app has no client assets
-bench version                    # should list wmserp_picking 0.2.0
+bench version                    # should list wmserp_picking 0.2.1
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.2.1 | `wmserp_picking-v0.2.1` | Fixes the *WMS Batch QR Label* print format: `wms_qr_svg` handed pyqrcode a text buffer although `QRCode.svg()` writes UTF-8 bytes, so every label failed with `string argument expected, got 'bytes'`. The QR helpers no longer import frappe at module level and are covered by `test_qr.py`. Payload format unchanged. |
 | 0.2.0 | `wmserp_picking-v0.2.0` | Row-level multi-picker workflow, WMS Settings, strict JSON QR labels, batch QR print format, timers and picker KPIs; Frappe v14–v16. Migrating from 0.1.0 removes the card-level fields (see below). |
 | 0.1.0 | – | First card-level workflow (`start_picking` / `save_progress` / `complete_picking`), superseded. |
 
@@ -160,9 +161,12 @@ app shows verbatim.
 ## Tests
 
 The pure rules (row/card completion, quantity validation, JSON QR parsing and matching, purpose
-mapping, permissions, KPI aggregation) are covered without a bench:
+mapping, permissions, KPI aggregation) and the QR label helpers (`test_qr.py`: payload format, the
+bytes-vs-text SVG regression, a well-formed SVG for a batch such as `DPL-20100067-00443`) are covered
+without a bench:
 
 ```bash
 cd erpnext/wmserp_picking
+pip install pyqrcode==1.2.1   # optional: also exercises the real renderer (skipped when missing)
 python -m unittest discover -p "test_*.py"
 ```
