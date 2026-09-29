@@ -89,8 +89,21 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "WMSERP_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
-      - name: ERPNext picking app rules tests (pure Python, no bench needed)
-        run: python3 -m unittest discover -s erpnext/wmserp_picking -p "test_*.py" -v
+      - name: Set up Python (ERPNext app tests)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pyqrcode (the QR label tests render with the real library, as a bench does)
+        # pyqrcode 1.2.1 only ships an sdist with a legacy setup.py: it needs a current setuptools
+        # and wheel (Ubuntu's patched system setuptools cannot build it, hence setup-python above).
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "pyqrcode==1.2.1"
+          python -c "import pyqrcode; print('pyqrcode', pyqrcode.__file__)"
+
+      - name: ERPNext picking app rules and QR label tests (pure Python, no bench needed)
+        run: python -m unittest discover -s erpnext/wmserp_picking -p "test_*.py" -v
 
       - name: Lint and unit tests
         run: ./gradlew --no-daemon lintDebug testDebugUnitTest --stacktrace
@@ -137,9 +150,9 @@ jobs:
     name: Publish GitHub release (feeds the in-app updater)
     # Every build of main becomes a release "v<version>" with the release APK attached. The app reads
     # /repos/<owner>/<repo>/releases/latest, so main builds are offered as updates; a manual run with
-    # "publish_release", or a push whose commit message contains "[publish]", does the same for another
-    # branch (testing before a merge).
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    # "publish_release", or a push whose commit message contains "[publish]" (both jobs) or
+    # "[publish-release]" (this job only), does the same for another branch (testing before a merge).
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]') || contains(github.event.head_commit.message, '[publish-release]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -175,8 +188,10 @@ jobs:
     name: Publish ERPNext app branch (wmserp_picking)
     # bench needs a Frappe app at the root of what it clones, so the backend folder is published
     # as its own branch: `bench get-app https://github.com/<owner>/WmsErp --branch wmserp_picking`.
-    # Runs on every push to main, or on a manual run with "publish_backend" for the dispatched branch.
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_backend)
+    # Runs on every push to main, on a manual run with "publish_backend" for the dispatched branch, or
+    # on a push whose commit message contains "[publish]" (both jobs) or "[publish-backend]" (this job
+    # only: a backend fix that must reach benches without shipping a new APK).
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]') || contains(github.event.head_commit.message, '[publish-backend]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_backend)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

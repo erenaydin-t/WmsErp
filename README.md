@@ -215,7 +215,9 @@ A second job runs the Compose UI tests on an emulator when the workflow is dispa
 *Run Compose UI tests on an emulator* enabled. The manual run also offers *publish_release* and
 *publish_backend* to publish the dispatched branch (a GitHub Release for the updater, the
 `wmserp_picking` branch and its version tag) before it is merged, for testing; a push whose commit
-message contains `[publish]` does the same.
+message contains `[publish]` does the same. `[publish-backend]` publishes only the backend branch and
+tag (a server-side fix that must reach benches without offering PDAs a new APK) and `[publish-release]`
+only the GitHub Release.
 
 ## In-app updates
 
