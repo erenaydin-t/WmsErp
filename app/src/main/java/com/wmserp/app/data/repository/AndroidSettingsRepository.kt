@@ -23,6 +23,7 @@ class AndroidSettingsRepository(private val dataStore: DataStore<Preferences>) :
             mode = prefs[KEY_SCANNER_MODE]?.let { runCatching { ScannerMode.valueOf(it) }.getOrNull() } ?: ScannerMode.AUTO,
             beepOnScan = prefs[KEY_BEEP] ?: true,
             vibrateOnScan = prefs[KEY_VIBRATE] ?: true,
+            askQuantityOnScan = prefs[KEY_ASK_QUANTITY] ?: true,
         )
     }
 
@@ -36,6 +37,10 @@ class AndroidSettingsRepository(private val dataStore: DataStore<Preferences>) :
 
     override suspend fun setVibrateOnScan(enabled: Boolean) {
         dataStore.edit { it[KEY_VIBRATE] = enabled }
+    }
+
+    override suspend fun setAskQuantityOnScan(enabled: Boolean) {
+        dataStore.edit { it[KEY_ASK_QUANTITY] = enabled }
     }
 
     override val appLanguage: Flow<AppLanguage> = dataStore.data.map { prefs -> AppLanguage.fromTag(prefs[KEY_LANGUAGE]) }
@@ -66,6 +71,7 @@ class AndroidSettingsRepository(private val dataStore: DataStore<Preferences>) :
         val KEY_SCANNER_MODE = stringPreferencesKey("scanner_mode")
         val KEY_BEEP = booleanPreferencesKey("scanner_beep")
         val KEY_VIBRATE = booleanPreferencesKey("scanner_vibrate")
+        val KEY_ASK_QUANTITY = booleanPreferencesKey("scanner_ask_quantity")
         val KEY_LANGUAGE = stringPreferencesKey("app_language")
     }
 }

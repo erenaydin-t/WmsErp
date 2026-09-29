@@ -10,6 +10,7 @@ interface SettingsRepository {
     suspend fun setScannerMode(mode: ScannerMode)
     suspend fun setBeepOnScan(enabled: Boolean)
     suspend fun setVibrateOnScan(enabled: Boolean)
+    suspend fun setAskQuantityOnScan(enabled: Boolean)
 
     val appLanguage: Flow<AppLanguage>
     suspend fun setAppLanguage(language: AppLanguage)

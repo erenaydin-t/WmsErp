@@ -9,6 +9,7 @@ import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.ScanSource
+import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.ScannerSettings
 import com.wmserp.app.domain.model.WmsQrKeys
@@ -48,7 +49,9 @@ class PickListViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     private val repository: PickListRepository = mockk()
-    private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } returns flowOf(ScannerSettings()) }
+    /** Legacy "+1 per scan" mode by default; the prompt tests switch [settings] before creating the view model. */
+    private var settings = ScannerSettings(askQuantityOnScan = false)
+    private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } answers { flowOf(settings) } }
     private val scanner = FakeScannerController(hasHardwareScanner = true)
 
     private val name = TestFixtures.pickList.name
@@ -111,7 +114,7 @@ class PickListViewModelTest {
         assertEquals(1.0, vm.line("prow1").qty, 0.0)
         assertEquals(PickRowStatus.PICKING, vm.line("prow1").status)
         assertTrue(vm.line("prow1").highlighted)
-        assertEquals(UiText.Res(R.string.pick_line_added, listOf("ITEM-001")), vm.uiState.value.message)
+        assertEquals(UiText.Res(R.string.pick_qty_added, listOf("1", "ITEM-001")), vm.uiState.value.message)
         assertEquals(1, scanner.feedbackCalls.size)
         coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 1.0, "ITEM-001", "B-001", any()) }
         assertFalse(vm.line("prow1").syncing)
@@ -131,6 +134,8 @@ class PickListViewModelTest {
         assertEquals(UiText.Res(R.string.pick_wrong_batch, listOf("B-001", "B-999")), alert.message)
         assertEquals(0.0, vm.line("prow1").qty, 0.0)
         assertTrue(vm.line("prow1").highlighted)
+        assertEquals(1, scanner.errorFeedbackCalls)
+        assertTrue(scanner.feedbackCalls.isEmpty())
         coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
     }
 
@@ -265,5 +270,124 @@ class PickListViewModelTest {
         assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
         assertTrue(vm.uiState.value.canGenerate)
         assertFalse(vm.uiState.value.canScan)
+    }
+
+    // ---- quantity prompt (default setting) --------------------------------------------------
+
+    @Test
+    fun `a matching label opens the quantity prompt prefilled with everything still open`() = runTest {
+        settings = ScannerSettings()
+        val vm = createViewModel()
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
+
+        val prompt = vm.uiState.value.pendingScan
+        assertNotNull(prompt)
+        assertEquals("prow1", prompt!!.rowName)
+        assertEquals("ITEM-001", prompt.itemCode)
+        assertEquals("B-001", prompt.batchNo)
+        assertEquals(10.0, prompt.remaining, 0.0)
+        assertEquals("10", prompt.qtyText)
+        assertTrue(prompt.isValid)
+        assertEquals("prow1", vm.uiState.value.activeRowName)
+        assertTrue(vm.line("prow1").highlighted)
+        assertNotNull(vm.line("prow1").startedAtMillis)
+        assertEquals(0.0, vm.line("prow1").qty, 0.0)
+        assertFalse(vm.uiState.value.canScan)
+        assertEquals(1, scanner.feedbackCalls.size)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `confirming the prompt syncs the whole quantity with the label and the elapsed time`() = runTest {
+        settings = ScannerSettings()
+        mockProgressFor("prow1", 10.0, { ready })
+        val vm = createViewModel()
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.CAMERA))
+        now += 30_000
+        vm.confirmPendingScan()
+
+        assertNull(vm.uiState.value.pendingScan)
+        assertEquals(10.0, vm.line("prow1").qty, 0.0)
+        assertEquals(PickRowStatus.PICKED, vm.line("prow1").item.rowStatus)
+        assertEquals(UiText.Res(R.string.pick_qty_added, listOf("10", "ITEM-001")), vm.uiState.value.message)
+        assertEquals("prow2", vm.uiState.value.activeRowName)
+        assertTrue(vm.uiState.value.canScan)
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 10.0, "ITEM-001", "B-001", 30.0) }
+    }
+
+    @Test
+    fun `the prompt quantity can be lowered but never exceeds what is still open`() = runTest {
+        settings = ScannerSettings()
+        mockProgressFor("prow1", 10.0, { ready })
+        val vm = createViewModel()
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
+
+        vm.setPendingQty("11")
+        assertFalse(vm.uiState.value.pendingScan!!.isValid)
+        vm.confirmPendingScan()
+        assertNotNull(vm.uiState.value.pendingScan)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+
+        vm.decrementPendingQty()
+        assertEquals("10", vm.uiState.value.pendingScan!!.qtyText)
+        vm.incrementPendingQty()
+        assertEquals("10", vm.uiState.value.pendingScan!!.qtyText)
+        vm.setPendingQty("0")
+        assertFalse(vm.uiState.value.pendingScan!!.isValid)
+        vm.setPendingAll()
+        assertEquals("10", vm.uiState.value.pendingScan!!.qtyText)
+        vm.setPendingQty("4")
+        assertTrue(vm.uiState.value.pendingScan!!.isValid)
+
+        vm.confirmPendingScan()
+
+        assertEquals(4.0, vm.line("prow1").qty, 0.0)
+        assertEquals(PickRowStatus.PICKING, vm.line("prow1").status)
+        assertEquals(UiText.Res(R.string.pick_qty_added, listOf("4", "ITEM-001")), vm.uiState.value.message)
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 4.0, "ITEM-001", "B-001", any()) }
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(6.0, vm.uiState.value.pendingScan!!.remaining, 0.0)
+        assertEquals("6", vm.uiState.value.pendingScan!!.qtyText)
+    }
+
+    @Test
+    fun `scans are ignored while the prompt is open and cancelling keeps the count`() = runTest {
+        settings = ScannerSettings()
+        val vm = createViewModel()
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-002"), ScanSource.HARDWARE_KEYBOARD))
+        assertEquals("prow1", vm.uiState.value.pendingScan?.rowName)
+        assertNull(vm.uiState.value.scanAlert)
+        assertEquals(1, scanner.feedbackCalls.size)
+
+        vm.cancelPendingScan()
+
+        assertNull(vm.uiState.value.pendingScan)
+        assertEquals(0.0, vm.line("prow1").qty, 0.0)
+        assertNotNull(vm.line("prow1").startedAtMillis)
+        assertTrue(vm.uiState.value.canScan)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `the camera opens by itself only in camera mode`() = runTest {
+        settings = ScannerSettings(mode = ScannerMode.CAMERA)
+        val camera = createViewModel()
+        assertTrue(camera.uiState.value.cameraActive)
+        assertFalse(camera.uiState.value.hardwareScannerReady)
+        assertTrue(camera.uiState.value.showCameraButton)
+
+        settings = ScannerSettings()
+        val pda = createViewModel()
+        assertFalse(pda.uiState.value.cameraActive)
+        assertTrue(pda.uiState.value.hardwareScannerReady)
+        assertFalse(pda.uiState.value.showCameraButton)
+
+        pda.toggleCamera()
+        assertTrue(pda.uiState.value.cameraActive)
     }
 }

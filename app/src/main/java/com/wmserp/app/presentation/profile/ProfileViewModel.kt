@@ -177,6 +177,7 @@ class ProfileViewModel @Inject constructor(
     fun setScannerMode(mode: ScannerMode) = viewModelScope.launch { updateScannerSettings.setMode(mode) }
     fun setBeep(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setBeep(enabled) }
     fun setVibrate(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setVibrate(enabled) }
+    fun setAskQuantity(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setAskQuantity(enabled) }
     fun setLanguage(language: AppLanguage) = viewModelScope.launch { setAppLanguage(language) }
 
     fun signOut() {

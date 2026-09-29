@@ -84,6 +84,7 @@ fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
         onScannerModeChange = viewModel::setScannerMode,
         onBeepChange = viewModel::setBeep,
         onVibrateChange = viewModel::setVibrate,
+        onAskQuantityChange = viewModel::setAskQuantity,
         onLanguageChange = viewModel::setLanguage,
         onSignOut = viewModel::signOut,
         onRetry = { viewModel.load(forceRefresh = true) },
@@ -114,6 +115,7 @@ fun ProfileScreen(
     onBeepChange: (Boolean) -> Unit,
     onVibrateChange: (Boolean) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
+    onAskQuantityChange: (Boolean) -> Unit = {},
     onSignOut: () -> Unit,
     onRetry: () -> Unit,
     onDismissMessages: () -> Unit,
@@ -230,6 +232,12 @@ fun ProfileScreen(
             }
             SettingSwitch(stringResource(R.string.profile_beep), state.scannerSettings.beepOnScan, onBeepChange)
             SettingSwitch(stringResource(R.string.profile_vibrate), state.scannerSettings.vibrateOnScan, onVibrateChange)
+            SettingSwitch(stringResource(R.string.profile_ask_quantity), state.scannerSettings.askQuantityOnScan, onAskQuantityChange, tag = "scanner_ask_quantity")
+            Text(
+                stringResource(R.string.profile_ask_quantity_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         UpdateCard(
@@ -273,9 +281,9 @@ private fun SettingsCard(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit, tag: String? = null) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onChange)
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange, modifier = if (tag != null) Modifier.testTag(tag) else Modifier)
     }
 }

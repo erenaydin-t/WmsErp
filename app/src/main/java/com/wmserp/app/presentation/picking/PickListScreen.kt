@@ -3,7 +3,6 @@ package com.wmserp.app.presentation.picking
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,13 +14,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -30,12 +33,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,15 +64,16 @@ import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.createLabelRes
 import com.wmserp.app.presentation.common.labelRes
+import com.wmserp.app.presentation.components.CameraScannerSheet
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
 import com.wmserp.app.presentation.components.LoadingState
+import com.wmserp.app.presentation.components.ScanQuantityDialog
 import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SectionHeader
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.WmsTopBar
-import com.wmserp.app.presentation.scan.CameraScannerPane
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
@@ -83,14 +92,23 @@ fun PickListRoute(onBack: () -> Unit, onDone: () -> Unit, viewModel: PickListVie
         onGenerate = viewModel::generateDocument,
         onDismissMessage = viewModel::dismissMessage,
         onRetry = viewModel::load,
+        onPendingQtyChange = viewModel::setPendingQty,
+        onPendingIncrement = viewModel::incrementPendingQty,
+        onPendingDecrement = viewModel::decrementPendingQty,
+        onPendingAll = viewModel::setPendingAll,
+        onConfirmPending = viewModel::confirmPendingScan,
+        onCancelPending = viewModel::cancelPendingScan,
     )
 }
 
 /**
  * Active picking for the rows assigned to the signed-in picker. Quantities only move through
- * scanned JSON QR labels (no manual batch input); a wrong batch is shown as a large red alert.
- * When the picker's rows are done the screen becomes either the "task completed" state or, for
- * the picker who closed the last row of the card, the post-picking state with the document CTA.
+ * scanned JSON QR labels (no manual batch input): a matching scan opens the quantity prompt,
+ * prefilled with everything still open on the row, and a wrong batch is shown as a large red
+ * alert. The camera is a modal sheet on top of the list (phones, or the Camera scanner mode);
+ * on a PDA the trigger of the built-in scanner feeds the screen directly. When the picker's rows
+ * are done the screen becomes either the "task completed" state or, for the picker who closed
+ * the last row of the card, the post-picking state with the document CTA.
  */
 @Composable
 fun PickListScreen(
@@ -104,8 +122,35 @@ fun PickListScreen(
     onGenerate: () -> Unit,
     onDismissMessage: () -> Unit,
     onRetry: () -> Unit,
+    onPendingQtyChange: (String) -> Unit = {},
+    onPendingIncrement: () -> Unit = {},
+    onPendingDecrement: () -> Unit = {},
+    onPendingAll: () -> Unit = {},
+    onConfirmPending: () -> Unit = {},
+    onCancelPending: () -> Unit = {},
 ) {
     val pickList = state.pickList
+    if (pickList != null && state.cameraActive && state.outcome == null) {
+        CameraScannerSheet(
+            title = stringResource(R.string.camera_sheet_title),
+            onDismiss = onToggleCamera,
+            onBarcode = onCameraBarcode,
+            scanning = state.canScan,
+            header = { state.nextLine?.let { NextToScanSummary(it) } },
+        )
+    }
+    state.pendingScan?.let { prompt ->
+        ScanQuantityDialog(
+            prompt = prompt,
+            title = stringResource(R.string.scan_qty_title_pick),
+            onQtyChange = onPendingQtyChange,
+            onIncrement = onPendingIncrement,
+            onDecrement = onPendingDecrement,
+            onAll = onPendingAll,
+            onConfirm = onConfirmPending,
+            onDismiss = onCancelPending,
+        )
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -129,20 +174,21 @@ fun PickListScreen(
         bottomBar = {
             if (pickList != null) {
                 when (state.outcome) {
-                    null -> PickingBar(state, onComplete)
+                    null -> PickingBar(state, onComplete, onToggleCamera)
                     PickOutcome.TASK_COMPLETED -> DoneBar(onDone)
                     PickOutcome.CARD_COMPLETED -> GenerateBar(state, pickList, onGenerate, onDone)
                 }
             }
         },
     ) { padding ->
+        val listState = rememberLazyListState()
+        ScrollToActiveRow(state, listState)
         Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(padding)) {
-            if (pickList != null && state.cameraActive && state.outcome == null) {
-                Box(modifier = Modifier.fillMaxWidth().height(220.dp).background(Color.Black)) {
-                    CameraScannerPane(onBarcode = onCameraBarcode)
-                }
+            if (pickList != null && state.outcome == null && !state.isLoading) {
+                state.nextLine?.let { NextToScanCard(line = it, state = state, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)) }
             }
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -194,7 +240,7 @@ private fun LazyListScope.activeContent(state: PickListUiState, pickList: PickLi
 }
 
 @Composable
-private fun PickingBar(state: PickListUiState, onComplete: () -> Unit) {
+private fun PickingBar(state: PickListUiState, onComplete: () -> Unit, onToggleCamera: () -> Unit) {
     BottomActionBar {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -207,9 +253,90 @@ private fun PickingBar(state: PickListUiState, onComplete: () -> Unit) {
             }
         }
         LinearProgressIndicator(progress = { state.myProgress }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
-        Button(onClick = onComplete, enabled = state.canComplete, modifier = Modifier.fillMaxWidth().testTag("pick_complete")) {
-            if (state.isCompleting) ButtonProgress() else Text(stringResource(R.string.pick_complete))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (state.showCameraButton) {
+                OutlinedButton(onClick = onToggleCamera, modifier = Modifier.weight(1f).testTag("pick_camera_button")) {
+                    Icon(Icons.Outlined.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.pick_scan_camera_button), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Button(onClick = onComplete, enabled = state.canComplete, modifier = Modifier.weight(1f).testTag("pick_complete")) {
+                if (state.isCompleting) ButtonProgress() else Text(stringResource(R.string.pick_complete), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
+    }
+}
+
+/** Brings the row that became active (after a completed row or a tap) into view. */
+@Composable
+private fun ScrollToActiveRow(state: PickListUiState, listState: LazyListState) {
+    var previous by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.activeRowName) {
+        val active = state.activeRowName
+        if (previous != null && active != null && active != previous && state.outcome == null) {
+            val index = state.lines.indexOfFirst { it.item.rowName == active }
+            if (index >= 0) {
+                // Items before the rows: optional error / alert / message banners, details card, hint, section header.
+                val headerCount = listOf(state.error, state.scanAlert, state.message).count { it != null } + 3
+                listState.animateScrollToItem(headerCount + index)
+            }
+        }
+        previous = active
+    }
+}
+
+/** Always visible above the list: what to scan next, how much is still open and which scanner to use. */
+@Composable
+private fun NextToScanCard(line: PickLineState, state: PickListUiState, modifier: Modifier = Modifier) {
+    val item = line.item
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = modifier.fillMaxWidth().testTag("pick_next"),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(R.string.pick_next_title),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    stringResource(R.string.pick_next_open, Formatters.qty(line.remaining), item.uom ?: ""),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.testTag("pick_next_open"),
+                )
+            }
+            Text(item.itemName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                item.batchNo ?: stringResource(R.string.pick_no_batch),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.testTag("pick_next_batch"),
+            )
+            Text(
+                stringResource(if (state.hardwareScannerReady) R.string.pick_scanner_ready else R.string.pick_scanner_camera),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("pick_scanner_status"),
+            )
+        }
+    }
+}
+
+/** Header of the camera sheet: the row the picker is about to scan. */
+@Composable
+private fun NextToScanSummary(line: PickLineState) {
+    Column {
+        Text(stringResource(R.string.pick_next_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(line.item.itemName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(line.item.batchNo ?: stringResource(R.string.pick_no_batch), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     }
 }
 

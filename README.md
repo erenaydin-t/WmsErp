@@ -52,7 +52,8 @@ app/src/main/java/com/wmserp/app
 5. **Profile / Settings** – avatar, role, editable personal info, password change, scanner preferences,
    app language (System / English / فارسی), sign out.
 6. **Orders → Receive / Dispatch** – count goods against Purchase Orders (creates *Purchase Receipt*) and pick
-   against Sales Orders (creates *Delivery Note*); scanning an item barcode increments the matching line.
+   against Sales Orders (creates *Delivery Note*); scanning an item barcode opens a quantity prompt for the
+   matching line, prefilled with everything still open (see [Scan → quantity prompt](#scan--quantity-prompt)).
    Both documents start from ERPNext's own `make_purchase_receipt` / `make_delivery_note` mapping of the
    order, so rates, taxes, accounting dimensions and custom mandatory row fields (a *Department*, a
    *Project*…) are inherited; the app only overrides the counted quantity and the warehouse. Required fields
@@ -135,7 +136,11 @@ bench --site <site> install-app wmserp_picking
   as JSON with the cached keys and validates item **and** batch against the row: a match adds one and syncs
   immediately (`save_row_progress` with the label and the elapsed time); a wrong batch shows a large red
   *Wrong batch. Expected: X, scanned: Y*; unknown items, other pickers' rows and rows already at their
-  required quantity are refused. There are no manual quantity or batch inputs.
+  required quantity are refused. Batches are never typed or chosen by hand; the quantity of a matching scan
+  is confirmed in the prompt below.
+* **Next to scan** stays visible above the list: the active row's item, its expected batch, how much is still
+  open and which scanner to use (*Hardware scanner ready — pull the trigger* on a PDA, the camera button
+  otherwise). The list scrolls to the row that becomes active after a completed one.
 * **Complete picking** becomes enabled when every row of the picker has its required quantity. It sends
   any row the server has not confirmed yet (`complete_row`) and applies the last-picker rule: the picker who
   closed the card sees the **Create Delivery Note / Create Material Transfer / Create Material Issue**
@@ -150,8 +155,24 @@ bench --site <site> install-app wmserp_picking
 * **Intent output**: broadcasts from Zebra DataWedge, Honeywell, Urovo, Newland, Sunmi, Chainway, Datalogic,
   Point Mobile and others are parsed by `IntentScanParser`. For DataWedge you can also use the generic action
   `com.wmserp.app.SCAN`.
-* **Camera fallback**: CameraX + ML Kit barcode scanning (all 1D/2D formats) with graceful runtime permission handling.
-* Mode is selectable in *Profile → Scanner* (Auto / Hardware / Camera) with beep & vibration feedback.
+* **Camera fallback**: CameraX + ML Kit barcode scanning (all 1D/2D formats) with graceful runtime permission
+  handling. On the Receive, Dispatch and Pick screens the camera is a modal sheet (`CameraScannerSheet`) with a
+  large viewfinder, the frame and scan line, a close button and, while picking, the row to scan next; it opens
+  from the camera button (offered when no hardware scanner is detected) or by itself in *Camera* mode, never
+  behind the list.
+* Mode is selectable in *Profile → Scanner* (Auto / Hardware / Camera) with beep & vibration feedback; a rejected
+  scan (wrong batch, unknown item) plays the error tone and a double vibration instead.
+
+### Scan → quantity prompt
+
+Scanning one label per unit does not scale to a pallet of 200, so on Receive, Dispatch and Pick a **matching
+scan opens a quantity prompt** (`ScanQuantityDialog`) prefilled with everything still open on that line
+(required − picked, or ordered − counted). One scan and one tap on **Take N** count the whole quantity; the
+picker lowers the number with the large −/+ buttons, by typing (the field selects itself when tapped) or
+takes it all with the **All** chip. Values above what is open are refused before anything reaches ERPNext,
+scans are ignored while the prompt is waiting, and on the Pick screen the row's hidden timer starts with the
+scan so the time spent in the prompt counts. *Profile → Scanner → Ask quantity after each scan* switches back
+to the classic "every scan adds one unit" behaviour for pickers who prefer scan-to-count.
 
 ### Zebra DataWedge profile (optional)
 

@@ -34,4 +34,9 @@ data class ScannerSettings(
     val mode: ScannerMode = ScannerMode.AUTO,
     val beepOnScan: Boolean = true,
     val vibrateOnScan: Boolean = true,
+    /**
+     * A matching scan opens a quantity prompt prefilled with everything still open on the row
+     * (one scan + confirm takes the whole quantity); off, every scan adds a single unit.
+     */
+    val askQuantityOnScan: Boolean = true,
 )

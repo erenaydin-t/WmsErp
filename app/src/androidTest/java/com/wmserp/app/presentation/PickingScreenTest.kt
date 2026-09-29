@@ -9,12 +9,14 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.wmserp.app.R
@@ -22,6 +24,7 @@ import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickListPurpose
 import com.wmserp.app.domain.model.PickingStatus
+import com.wmserp.app.presentation.common.ScanQuantityPrompt
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.picking.PickLineState
 import com.wmserp.app.presentation.picking.PickListScreen
@@ -65,6 +68,8 @@ class PickingScreenTest {
         qty: Map<String, Double> = emptyMap(),
         outcome: PickOutcome? = null,
         alert: ScanAlert? = null,
+        pending: ScanQuantityPrompt? = null,
+        hasHardwareScanner: Boolean = false,
     ) = PickListUiState(
         isLoading = false,
         pickList = list,
@@ -72,6 +77,8 @@ class PickingScreenTest {
         activeRowName = "prow1",
         outcome = outcome,
         scanAlert = alert,
+        pendingScan = pending,
+        hasHardwareScanner = hasHardwareScanner,
     )
 
     @Test
@@ -83,8 +90,39 @@ class PickingScreenTest {
         composeRule.onNodeWithTag("pick_line_prow3").assertDoesNotExist()
         composeRule.onNodeWithTag("pick_expected_batch_prow1").assertTextEquals("B-001")
         composeRule.onNodeWithTag("pick_expected_batch_prow2").assertTextEquals(context.getString(R.string.pick_no_batch))
+        composeRule.onNodeWithTag("pick_next_batch").assertTextEquals("B-001")
+        composeRule.onNodeWithTag("pick_next_open").assertTextEquals(context.getString(R.string.pick_next_open, "10", "Nos"))
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(0)
         composeRule.onNodeWithTag("pick_complete").assertIsNotEnabled()
+    }
+
+    @Test
+    fun cameraButtonIsOfferedOnlyWithoutAHardwareScanner() {
+        composeRule.setContent { WmsErpTheme { PickHost(stateFor(hasHardwareScanner = false)) } }
+        composeRule.onNodeWithTag("pick_camera_button").assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.pick_scanner_camera)).assertIsDisplayed()
+    }
+
+    @Test
+    fun pdaSeesTheTriggerHintInsteadOfTheCameraButton() {
+        composeRule.setContent { WmsErpTheme { PickHost(stateFor(hasHardwareScanner = true)) } }
+        composeRule.onNodeWithTag("pick_camera_button").assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.pick_scanner_ready)).assertIsDisplayed()
+    }
+
+    @Test
+    fun quantityPromptIsPrefilledWithTheOpenQuantityAndConfirms() {
+        val prompt = ScanQuantityPrompt("prow1", "ITEM-001", "Steel Bolt M8", "B-001", remaining = 10.0, uom = "Nos")
+        composeRule.setContent { WmsErpTheme { PickHost(stateFor(pending = prompt)) } }
+
+        composeRule.onNodeWithTag("scan_qty_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("scan_qty_input").assertTextContains("10")
+        composeRule.onNodeWithTag("scan_qty_remaining").assertTextEquals(context.getString(R.string.scan_qty_remaining, "10", "Nos"))
+        composeRule.onNodeWithTag("scan_qty_confirm").assertIsEnabled()
+        composeRule.onNodeWithText(context.getString(R.string.scan_qty_confirm, "10")).assertIsDisplayed()
+
+        composeRule.onNodeWithTag("scan_qty_confirm").performClick()
+        composeRule.onNodeWithTag("scan_qty_dialog").assertDoesNotExist()
     }
 
     @Test
@@ -142,5 +180,11 @@ private fun PickHost(initial: PickListUiState) {
         onGenerate = {},
         onDismissMessage = { state = state.copy(error = null, message = null, scanAlert = null) },
         onRetry = {},
+        onPendingQtyChange = { text -> state = state.copy(pendingScan = state.pendingScan?.withText(text)) },
+        onPendingIncrement = { state = state.copy(pendingScan = state.pendingScan?.plusOne()) },
+        onPendingDecrement = { state = state.copy(pendingScan = state.pendingScan?.minusOne()) },
+        onPendingAll = { state = state.copy(pendingScan = state.pendingScan?.all()) },
+        onConfirmPending = { state = state.copy(pendingScan = null) },
+        onCancelPending = { state = state.copy(pendingScan = null) },
     )
 }

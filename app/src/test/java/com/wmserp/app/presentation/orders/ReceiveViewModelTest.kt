@@ -48,7 +48,9 @@ class ReceiveViewModelTest {
     private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase = mockk()
     private val lookupScan: LookupScanUseCase = mockk()
     private val searchWarehouses: SearchWarehousesUseCase = mockk()
-    private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } returns flowOf(ScannerSettings()) }
+    /** Legacy "+1 per scan" mode by default; the prompt test switches [settings] before creating the view model. */
+    private var settings = ScannerSettings(askQuantityOnScan = false)
+    private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } answers { flowOf(settings) } }
     private val scanner = FakeScannerController()
 
     private fun createViewModel(): ReceiveViewModel {
@@ -131,5 +133,41 @@ class ReceiveViewModelTest {
         assertTrue(vm.uiState.value.requiredFields.isEmpty())
         assertEquals("MAT-PRE-00002", vm.uiState.value.completed?.name)
         coVerify { saveFieldDefaults(answers) }
+    }
+
+    @Test
+    fun `a scan opens the quantity prompt prefilled with the pending quantity and confirming counts it`() = runTest {
+        settings = ScannerSettings()
+        val vm = createViewModel()
+
+        vm.onScanned(ScannedCode("item-002", ScanSource.HARDWARE_KEYBOARD))
+
+        val prompt = vm.uiState.value.pendingScan
+        assertNotNull(prompt)
+        assertEquals("ITEM-002", prompt!!.itemCode)
+        assertEquals(3.0, prompt.remaining, 0.0)
+        assertEquals("3", prompt.qtyText)
+        assertEquals("0", vm.uiState.value.lines.first { it.item.itemCode == "ITEM-002" }.qtyText)
+
+        vm.onScanned(ScannedCode("item-001", ScanSource.HARDWARE_KEYBOARD)) // ignored while the prompt is open
+        assertEquals("ITEM-002", vm.uiState.value.pendingScan?.itemCode)
+
+        vm.setPendingQty("2")
+        vm.confirmPendingScan()
+
+        assertNull(vm.uiState.value.pendingScan)
+        val line = vm.uiState.value.lines.first { it.item.itemCode == "ITEM-002" }
+        assertEquals("2", line.qtyText)
+        assertTrue(line.highlighted)
+        assertEquals(UiText.Res(R.string.receive_qty_added, listOf("2", "ITEM-002")), vm.uiState.value.message)
+
+        vm.onScanned(ScannedCode("item-002", ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(1.0, vm.uiState.value.pendingScan!!.remaining, 0.0)
+        vm.confirmPendingScan()
+        assertEquals("3", vm.uiState.value.lines.first { it.item.itemCode == "ITEM-002" }.qtyText)
+
+        vm.onScanned(ScannedCode("item-002", ScanSource.HARDWARE_KEYBOARD))
+        assertNull(vm.uiState.value.pendingScan)
+        assertEquals(UiText.Res(R.string.receive_already_counted, listOf("3", "ITEM-002")), vm.uiState.value.message)
     }
 }
