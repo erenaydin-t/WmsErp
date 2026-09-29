@@ -10,11 +10,14 @@ import com.wmserp.app.domain.model.DeliveryNoteDraft
 import com.wmserp.app.domain.model.ItemTracking
 import com.wmserp.app.domain.model.SalesOrderItem
 import com.wmserp.app.domain.repository.OrderRepository
+import com.wmserp.app.domain.repository.SettingsRepository
 import com.wmserp.app.testutil.TestFixtures
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -25,7 +28,8 @@ import java.time.LocalDate
 class DispatchSalesOrderUseCaseTest {
 
     private val orders: OrderRepository = mockk()
-    private val useCase = DispatchSalesOrderUseCase(orders)
+    private val settings: SettingsRepository = mockk { every { documentFieldDefaults } returns flowOf(emptyMap()) }
+    private val useCase = DispatchSalesOrderUseCase(orders, settings)
     private val created = DeliveryNote("MAT-DN-2026-00001", "CUST-001", "Globex", "Draft", null, 0)
 
     private val batchItem = SalesOrderItem(rowName = "srow2", itemCode = "20100103", itemName = "Rodiyax C", qty = 9.0, deliveredQty = 0.0, uom = "BOX", warehouse = "Finished Goods - WM", rate = 1000.0, conversionFactor = 12.0)

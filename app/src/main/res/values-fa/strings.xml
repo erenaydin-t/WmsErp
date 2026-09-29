@@ -301,6 +301,13 @@
     <string name="error_order_row_unavailable">%1$s دیگر در %2$s باز نیست. سفارش را دوباره بارگذاری کنید.</string>
     <string name="error_serial_item_unsupported">%1$s شماره سریال نیاز دارد؛ آن را از ERPNext ارسال کنید</string>
     <string name="error_insufficient_batch_stock">%1$s: فقط %2$s در بچ‌های انبار %4$s موجود است (نیاز %3$s)</string>
+    <string name="error_missing_required_fields">ERPNext این فیلدها را لازم دارد: %1$s</string>
+    <string name="required_fields_title">ERPNext به اطلاعات بیشتری نیاز دارد</string>
+    <string name="required_fields_message">سایت ERPNext شما این فیلدها را برای %1$s الزامی کرده است. مقدارها روی این دستگاه ذخیره می‌شوند و برای سندهای بعدی هم استفاده می‌شوند.</string>
+    <string name="required_fields_confirm">ادامه</string>
+    <string name="required_fields_cancel">لغو</string>
+    <string name="doctype_purchase_receipt">رسید خرید</string>
+    <string name="doctype_delivery_note">برگ تحویل</string>
     <string name="error_empty_barcode">بارکد خالی است</string>
     <string name="error_po_not_found">سفارش خرید %1$s پیدا نشد</string>
     <string name="error_so_not_found">سفارش فروش %1$s پیدا نشد</string>

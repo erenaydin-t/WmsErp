@@ -5,10 +5,13 @@ import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.PurchaseReceiptDraft
 import com.wmserp.app.domain.repository.OrderRepository
+import com.wmserp.app.domain.repository.SettingsRepository
 import com.wmserp.app.testutil.TestFixtures
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -17,7 +20,10 @@ import org.junit.Test
 class ReceivePurchaseOrderUseCaseTest {
 
     private val orders: OrderRepository = mockk()
-    private val useCase = ReceivePurchaseOrderUseCase(orders)
+    private val settings: SettingsRepository = mockk {
+        every { documentFieldDefaults } returns flowOf(mapOf("Purchase Receipt Item.department" to "Warehouse - WM"))
+    }
+    private val useCase = ReceivePurchaseOrderUseCase(orders, settings)
 
     @Test
     fun `builds a receipt draft with warehouse fallbacks and skips zero lines`() = runTest {
@@ -35,6 +41,18 @@ class ReceivePurchaseOrderUseCaseTest {
         assertEquals(1, draft.captured.lines.size)
         assertEquals("Stores - WM", draft.captured.lines.first().warehouse)
         assertEquals("PUR-ORD-2026-00001", draft.captured.purchaseOrderName)
+        // Remembered answers to required fields travel with the draft.
+        assertEquals(mapOf("Purchase Receipt Item.department" to "Warehouse - WM"), draft.captured.fieldValues)
+    }
+
+    @Test
+    fun `answers given now override the remembered ones`() = runTest {
+        val draft = slot<PurchaseReceiptDraft>()
+        coEvery { orders.createPurchaseReceipt(capture(draft), false) } returns AppResult.Success(PurchaseReceipt("MAT-PRE-00003", "SUP-001", "Draft", null, 0))
+
+        useCase(TestFixtures.purchaseOrder, listOf(ReceiveLine("row1", 1.0, null)), null, submit = false, fieldValues = mapOf("Purchase Receipt Item.department" to "Sales - WM"))
+
+        assertEquals(mapOf("Purchase Receipt Item.department" to "Sales - WM"), draft.captured.fieldValues)
     }
 
     @Test

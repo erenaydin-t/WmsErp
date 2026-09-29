@@ -43,6 +43,9 @@ BIN_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "reserved_qty", "o
 WAREHOUSE_FIELDS = ["name", "warehouse_name", "company", "is_group", "parent_warehouse", "disabled", "warehouse_type", "city"]
 SLE_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "voucher_type", "voucher_no", "posting_date", "posting_time"]
 PICKING_METHOD = "wmserp_picking.api.pick_list."
+GET_DOCTYPE = "frappe.desk.form.load.getdoctype"
+GET_DIMENSIONS = "erpnext.accounts.doctype.accounting_dimension.accounting_dimension.get_dimensions"
+ANSWERABLE_FIELDTYPES = {"Link", "Dynamic Link", "Select", "Data", "Small Text", "Text", "Long Text", "Int", "Float", "Currency", "Percent", "Date", "Datetime", "Time"}
 MAKE_PURCHASE_RECEIPT = "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt"
 MAKE_DELIVERY_NOTE = "erpnext.selling.doctype.sales_order.sales_order.make_delivery_note"
 GET_BATCH_QTY = "erpnext.stock.doctype.batch.batch.get_batch_qty"
@@ -375,10 +378,43 @@ def check_mapper(client, report, area, name, method, source_name, link_field):
     if not rows:
         detail = "no pending rows (everything received/delivered); the app refuses to create an empty document"
     report.add(area, f"{name}: mapped rows carry {link_field}", 200, ok, detail)
-    empty = sorted({k for r in rows for k, v in r.items() if k in ("warehouse", "cost_center", "department", "project") and v in (None, "")})
-    if empty:
-        print(f"           note: mapped rows leave {empty} empty; if your site made one of them mandatory, fill it on the order first")
+    check_required_fields(client, report, area, doc)
     return doc
+
+
+def check_required_fields(client, report, area, mapped):
+    """Required fields the site added (Custom Fields / Property Setters) that the mapped draft leaves empty:
+    the app fills them from the company's default accounting dimensions or asks the user once."""
+    doctype = mapped.get("doctype")
+    if not doctype:
+        return
+    status, payload, raw = client.call(GET_DOCTYPE, {"doctype": doctype})
+    docs = payload.get("docs") if isinstance(payload, dict) else None
+    if status != 200 or not isinstance(docs, list):
+        report.add(area, f"getdoctype {doctype} (required fields)", status, False, server_message(payload, raw))
+        return
+    required = {}
+    for meta in docs:
+        for df in meta.get("fields", []):
+            if str(df.get("reqd")) in ("1", "True", "true") and df.get("fieldtype") in ANSWERABLE_FIELDTYPES and not df.get("default"):
+                required.setdefault(meta.get("name"), []).append(df)
+    missing = []
+    for dt, fields in required.items():
+        targets = [mapped] if dt == doctype else [r for r in mapped.get("items", []) if r.get("doctype") == dt]
+        for df in fields:
+            if any(t.get(df["fieldname"]) in (None, "") for t in targets):
+                missing.append(f"{dt}.{df['fieldname']} ({df.get('label')}, {df.get('fieldtype')}{' -> ' + df['options'] if df.get('fieldtype') == 'Link' else ''})")
+    status, payload, raw = client.call(GET_DIMENSIONS, {"with_cost_center_and_project": "0"})
+    defaults = {}
+    if status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), list) and len(payload["message"]) > 1:
+        defaults = (payload["message"][1] or {}).get(mapped.get("company"), {}) or {}
+    ok = not missing
+    detail = "nothing required beyond what the order provides" if ok else "empty required field(s): " + "; ".join(missing)
+    if defaults:
+        detail += f"; default accounting dimensions for {mapped.get('company')}: {defaults}"
+    report.add(area, f"required fields on {doctype} (site customisations)", 200, True, detail)
+    if missing and not all(m.split(" ")[0].split(".")[1] in defaults for m in missing):
+        print("           the app will ask for the field(s) above once and remember the answer on the device")
 
 
 def check_batches(client, report, sales_order, mapped_note):

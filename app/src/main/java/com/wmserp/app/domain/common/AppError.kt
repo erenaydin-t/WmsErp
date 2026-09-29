@@ -1,5 +1,7 @@
 package com.wmserp.app.domain.common
 
+import com.wmserp.app.domain.model.RequiredField
+
 /**
  * Stable identifiers for errors produced by the app itself (as opposed to free-text messages
  * returned by ERPNext). The presentation layer maps these to localized strings; [AppError.message]
@@ -34,6 +36,7 @@ enum class ErrorCode {
     ORDER_ROW_UNAVAILABLE,
     SERIAL_ITEM_UNSUPPORTED,
     INSUFFICIENT_BATCH_STOCK,
+    MISSING_REQUIRED_FIELDS,
     EMPTY_BARCODE,
     PURCHASE_ORDER_NOT_FOUND,
     SALES_ORDER_NOT_FOUND,
@@ -113,6 +116,14 @@ sealed class AppError(
         val httpCode: Int? = null,
         override val code: ErrorCode? = null,
         override val args: List<String> = emptyList(),
+    ) : AppError(message, code, args)
+
+    /** ERPNext requires fields the app cannot fill by itself; the UI asks the user for them once. */
+    data class MissingRequiredFields(
+        val fields: List<RequiredField>,
+        override val message: String = "ERPNext requires: " + fields.joinToString { it.label },
+        override val code: ErrorCode? = ErrorCode.MISSING_REQUIRED_FIELDS,
+        override val args: List<String> = listOf(fields.joinToString { it.label }),
     ) : AppError(message, code, args)
 
     /** Anything that could not be classified. */

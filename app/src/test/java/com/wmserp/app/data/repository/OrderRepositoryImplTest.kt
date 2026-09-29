@@ -1,6 +1,7 @@
 package com.wmserp.app.data.repository
 
 import com.wmserp.app.data.util.DateProvider
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.BatchAllocation
@@ -58,6 +59,19 @@ class OrderRepositoryImplTest {
           ]}}
     """.trimIndent()
 
+    /** `getdoctype` bundle of a plain site: nothing required beyond what the mapper fills. */
+    private val plainMeta = """{"docs":[{"name":"Purchase Receipt","fields":[{"fieldname":"items","fieldtype":"Table","options":"Purchase Receipt Item","reqd":1},
+        {"fieldname":"posting_date","fieldtype":"Date","reqd":1,"default":"Today"}]},
+        {"name":"Purchase Receipt Item","fields":[{"fieldname":"item_code","label":"Item Code","fieldtype":"Link","options":"Item","reqd":0}]}],"user_settings":"{}"}"""
+
+    /** A site that made Department mandatory on receipt rows. */
+    private val departmentMeta = """{"docs":[{"name":"Purchase Receipt","fields":[{"fieldname":"items","fieldtype":"Table","options":"Purchase Receipt Item","reqd":1}]},
+        {"name":"Purchase Receipt Item","fields":[
+           {"fieldname":"item_code","label":"Item Code","fieldtype":"Link","options":"Item","reqd":1},
+           {"fieldname":"department","label":"Department","fieldtype":"Link","options":"Department","reqd":1,"is_custom_field":1}]}],"user_settings":"{}"}"""
+
+    private val mappedReceiptWithoutDepartment = mappedReceipt.replace(""""department":"Warehouse - WM",""", "")
+
     @Before
     fun setUp() = runTest {
         harness.start()
@@ -71,6 +85,7 @@ class OrderRepositoryImplTest {
     @Test
     fun `receipt starts from the ERPNext mapper, keeps only counted rows and their inherited fields`() = runTest {
         harness.server.enqueue(MockResponse().setBody(mappedReceipt))
+        harness.server.enqueue(MockResponse().setBody(plainMeta))
         harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"MAT-PRE-2026-00007","supplier":"SUP-001","status":"Draft","posting_date":"2026-09-28","docstatus":0}}"""))
 
         val draft = PurchaseReceiptDraft(
@@ -90,6 +105,8 @@ class OrderRepositoryImplTest {
         val mapperPath = URLDecoder.decode(mapperCall.path!!, "UTF-8")
         assertTrue(mapperPath.startsWith("/api/method/erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt"))
         assertTrue(mapperPath.contains("source_name=PUR-ORD-2026-00001"))
+        val metaPath = URLDecoder.decode(harness.server.takeRequest().path!!, "UTF-8")
+        assertTrue(metaPath.startsWith("/api/method/frappe.desk.form.load.getdoctype?doctype=Purchase Receipt"))
 
         val insert = harness.server.takeRequest()
         assertEquals("POST", insert.method)
@@ -116,6 +133,7 @@ class OrderRepositoryImplTest {
     @Test
     fun `submitting a receipt posts frappe client submit after the insert`() = runTest {
         harness.server.enqueue(MockResponse().setBody(mappedReceipt))
+        harness.server.enqueue(MockResponse().setBody(plainMeta))
         harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"MAT-PRE-2026-00008","supplier":"SUP-001","status":"Draft","docstatus":0}}"""))
         harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"MAT-PRE-2026-00008","supplier":"SUP-001","status":"Draft","docstatus":0}}"""))
         harness.server.enqueue(MockResponse().setBody("""{"message":{"name":"MAT-PRE-2026-00008","supplier":"SUP-001","status":"To Bill","docstatus":1}}"""))
@@ -125,7 +143,7 @@ class OrderRepositoryImplTest {
 
         assertEquals(1, receipt.docStatus)
         assertEquals("To Bill", receipt.status)
-        repeat(3) { harness.server.takeRequest() }
+        repeat(4) { harness.server.takeRequest() }
         assertEquals("/api/method/frappe.client.submit", harness.server.takeRequest().path)
     }
 
@@ -145,6 +163,7 @@ class OrderRepositoryImplTest {
     @Test
     fun `delivery note splits batch tracked rows over their allocations using the classic batch fields`() = runTest {
         harness.server.enqueue(MockResponse().setBody(mappedDeliveryNote))
+        harness.server.enqueue(MockResponse().setBody("""{"docs":[{"name":"Delivery Note","fields":[]}],"user_settings":"{}"}"""))
         harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"MAT-DN-2026-00031","customer":"CUST-001","customer_name":"Globex","status":"Draft","docstatus":0}}"""))
 
         val draft = DeliveryNoteDraft(
@@ -163,6 +182,7 @@ class OrderRepositoryImplTest {
 
         val mapperPath = URLDecoder.decode(harness.server.takeRequest().path!!, "UTF-8")
         assertTrue(mapperPath.startsWith("/api/method/erpnext.selling.doctype.sales_order.sales_order.make_delivery_note"))
+        harness.server.takeRequest() // getdoctype
         val insert = harness.server.takeRequest()
         assertEquals("/api/resource/Delivery%20Note", insert.path)
         val body = Json.parseToJsonElement(insert.body.readUtf8()).jsonObject
@@ -182,6 +202,68 @@ class OrderRepositoryImplTest {
         assertFalse(plain.containsKey("batch_no") && plain["batch_no"]!!.jsonPrimitive.content.isNotEmpty())
         assertEquals(1.0, plain["qty"]!!.jsonPrimitive.double, 0.0)
         assertEquals(3, plain["idx"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `required fields the site added are asked for before anything is inserted`() = runTest {
+        harness.server.enqueue(MockResponse().setBody(mappedReceiptWithoutDepartment))
+        harness.server.enqueue(MockResponse().setBody(departmentMeta))
+        harness.server.enqueue(MockResponse().setBody("""{"message":[[{"fieldname":"department","label":"Department","document_type":"Department"}],{}]}"""))
+
+        val draft = PurchaseReceiptDraft("PUR-ORD-2026-00001", "SUP-001", listOf(PurchaseReceiptLine("ITEM-001", 4.0, "Stores - WM", "row1")), "WM Co")
+        val result = repository.createPurchaseReceipt(draft, submit = false)
+
+        val error = (result as AppResult.Failure).error as AppError.MissingRequiredFields
+        assertEquals(listOf("Purchase Receipt Item.department"), error.fields.map { it.key })
+        assertEquals("Department", error.fields.single().options)
+        assertEquals(ErrorCode.MISSING_REQUIRED_FIELDS, error.code)
+        assertEquals(listOf("Department"), error.args)
+        assertEquals(3, harness.server.requestCount)
+    }
+
+    @Test
+    fun `default accounting dimensions and remembered answers fill required fields`() = runTest {
+        harness.server.enqueue(MockResponse().setBody(mappedReceiptWithoutDepartment))
+        harness.server.enqueue(MockResponse().setBody(departmentMeta))
+        harness.server.enqueue(MockResponse().setBody("""{"message":[[{"fieldname":"department"}],{"WM Co":{"department":"Warehouse - WM"}}]}"""))
+        harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"MAT-PRE-2026-00009","supplier":"SUP-001","status":"Draft","docstatus":0}}"""))
+
+        val draft = PurchaseReceiptDraft("PUR-ORD-2026-00001", "SUP-001", listOf(PurchaseReceiptLine("ITEM-001", 4.0, "Stores - WM", "row1")), "WM Co")
+        assertTrue(repository.createPurchaseReceipt(draft, submit = false) is AppResult.Success)
+        repeat(3) { harness.server.takeRequest() }
+        val fromDimension = Json.parseToJsonElement(harness.server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("Warehouse - WM", fromDimension["items"]!!.jsonArray.single().jsonObject["department"]!!.jsonPrimitive.content)
+
+        // Meta is cached; an answer given by the user beats the dimension default.
+        harness.server.enqueue(MockResponse().setBody(mappedReceiptWithoutDepartment))
+        harness.server.enqueue(MockResponse().setBody("""{"message":[[],{}]}"""))
+        harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"MAT-PRE-2026-00010","supplier":"SUP-001","status":"Draft","docstatus":0}}"""))
+        val answered = draft.copy(fieldValues = mapOf("Purchase Receipt Item.department" to "Sales - WM"))
+        assertTrue(repository.createPurchaseReceipt(answered, submit = false) is AppResult.Success)
+        harness.server.takeRequest() // mapper
+        harness.server.takeRequest() // dimensions
+        val fromAnswer = Json.parseToJsonElement(harness.server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("Sales - WM", fromAnswer["items"]!!.jsonArray.single().jsonObject["department"]!!.jsonPrimitive.content)
+        assertEquals(7, harness.server.requestCount)
+    }
+
+    @Test
+    fun `link values are looked up per company first and without it as a fallback`() = runTest {
+        harness.server.enqueue(MockResponse().setBody("""{"data":[{"name":"Sales - WM"},{"name":"Warehouse - WM"}]}"""))
+        val scoped = (repository.searchLinkValues("Department", "", "WM Co") as AppResult.Success).data
+        assertEquals(listOf("Sales - WM", "Warehouse - WM"), scoped)
+        val scopedPath = URLDecoder.decode(harness.server.takeRequest().path!!, "UTF-8")
+        assertTrue(scopedPath.startsWith("/api/resource/Department?"))
+        assertTrue(scopedPath.contains(""""company","=","WM Co""""))
+
+        harness.server.enqueue(MockResponse().setResponseCode(417).setBody("""{"exc_type":"ValidationError","exception":"frappe.exceptions.ValidationError: Field not permitted in query: company"}"""))
+        harness.server.enqueue(MockResponse().setBody("""{"data":[{"name":"PRJ-0001"}]}"""))
+        val fallback = (repository.searchLinkValues("Project", "PRJ", "WM Co") as AppResult.Success).data
+        assertEquals(listOf("PRJ-0001"), fallback)
+        harness.server.takeRequest()
+        val plainPath = URLDecoder.decode(harness.server.takeRequest().path!!, "UTF-8")
+        assertTrue(plainPath.contains(""""name","like","%PRJ%""""))
+        assertFalse(plainPath.contains("company"))
     }
 
     @Test

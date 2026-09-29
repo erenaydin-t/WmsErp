@@ -2,9 +2,12 @@ package com.wmserp.app.data.remote
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
+import com.wmserp.app.data.mapper.DocTypeMeta
 import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.model.RequiredField
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -120,6 +123,25 @@ class ErpNextDataSource(
         return row?.get("total")?.let { (it as? JsonPrimitive)?.content?.toDoubleOrNull() } ?: 0.0
     }
 
+    private val requiredFieldsCache = java.util.concurrent.ConcurrentHashMap<String, List<RequiredField>>()
+
+    /**
+     * Required fields of [doctype] and its child tables, read from the desk meta bundle
+     * (`frappe.desk.form.load.getdoctype`, which includes Custom Fields and Property Setters).
+     * Cached for the life of the process.
+     */
+    suspend fun requiredFields(doctype: String): List<RequiredField> = requiredFieldsCache[doctype]
+        ?: DocTypeMeta.requiredFields(api.callMethodJson(GET_DOCTYPE, mapOf("doctype" to doctype))).also { requiredFieldsCache[doctype] = it }
+
+    /** Default accounting dimensions of [company] (`{fieldname: value}`); empty when none are configured. */
+    suspend fun dimensionDefaults(company: String?): Map<String, String> {
+        if (company.isNullOrBlank()) return emptyMap()
+        val message = api.callMethod(GET_DIMENSIONS, mapOf("with_cost_center_and_project" to "0")).message as? JsonArray ?: return emptyMap()
+        val defaults = message.getOrNull(1) as? JsonObject ?: return emptyMap()
+        val forCompany = defaults[company] as? JsonObject ?: return emptyMap()
+        return forCompany.mapNotNull { (field, value) -> value.contentOrNull()?.takeIf { it.isNotBlank() }?.let { field to it } }.toMap()
+    }
+
     /** Submits a draft document (`docstatus` 0 -> 1) via `frappe.client.submit`. */
     suspend fun submit(doctype: String, name: String): JsonObject {
         val doc = api.getDoc(doctype, name).data
@@ -169,6 +191,11 @@ class ErpNextDataSource(
     }
 
     suspend fun loggedUser(): String? = api.getLoggedUser().message?.let { (it as? JsonPrimitive)?.content }
+
+    companion object {
+        const val GET_DOCTYPE = "frappe.desk.form.load.getdoctype"
+        const val GET_DIMENSIONS = "erpnext.accounts.doctype.accounting_dimension.accounting_dimension.get_dimensions"
+    }
 
     fun JsonElement.contentOrNull(): String? = (this as? JsonPrimitive)?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.content }
 }

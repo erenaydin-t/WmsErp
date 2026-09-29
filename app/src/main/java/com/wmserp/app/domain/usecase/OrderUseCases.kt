@@ -13,6 +13,8 @@ import com.wmserp.app.domain.model.PurchaseReceiptDraft
 import com.wmserp.app.domain.model.PurchaseReceiptLine
 import com.wmserp.app.domain.model.SalesOrder
 import com.wmserp.app.domain.repository.OrderRepository
+import com.wmserp.app.domain.repository.SettingsRepository
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 class GetOpenPurchaseOrdersUseCase @Inject constructor(private val orderRepository: OrderRepository) {
@@ -30,13 +32,21 @@ class GetPurchaseOrderUseCase @Inject constructor(private val orderRepository: O
 /** Quantity the user wants to receive for a purchase order row. */
 data class ReceiveLine(val purchaseOrderRow: String, val qty: Double, val warehouse: String?)
 
-/** Creates (and optionally submits) a Purchase Receipt for the received quantities of a PO. */
-class ReceivePurchaseOrderUseCase @Inject constructor(private val orderRepository: OrderRepository) {
+/**
+ * Creates (and optionally submits) a Purchase Receipt for the received quantities of a PO.
+ * [fieldValues] answers required fields the site added (see [com.wmserp.app.domain.model.RequiredField]);
+ * answers remembered from earlier documents are merged in automatically.
+ */
+class ReceivePurchaseOrderUseCase @Inject constructor(
+    private val orderRepository: OrderRepository,
+    private val settingsRepository: SettingsRepository,
+) {
     suspend operator fun invoke(
         purchaseOrder: PurchaseOrder,
         lines: List<ReceiveLine>,
         defaultWarehouse: String?,
         submit: Boolean,
+        fieldValues: Map<String, String> = emptyMap(),
     ): AppResult<PurchaseReceipt> {
         val itemsByRow = purchaseOrder.items.associateBy { it.rowName }
         val receiptLines = mutableListOf<PurchaseReceiptLine>()
@@ -71,6 +81,7 @@ class ReceivePurchaseOrderUseCase @Inject constructor(private val orderRepositor
                 supplier = purchaseOrder.supplier,
                 lines = receiptLines,
                 company = purchaseOrder.company,
+                fieldValues = settingsRepository.documentFieldDefaults.first() + fieldValues,
             ),
             submit = submit,
         )
@@ -101,12 +112,16 @@ data class DispatchLine(val salesOrderRow: String, val qty: Double, val warehous
  * Delivery Note row of such an item without a batch); serial-numbered items are refused because their
  * serial numbers cannot be chosen here.
  */
-class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository: OrderRepository) {
+class DispatchSalesOrderUseCase @Inject constructor(
+    private val orderRepository: OrderRepository,
+    private val settingsRepository: SettingsRepository,
+) {
     suspend operator fun invoke(
         salesOrder: SalesOrder,
         lines: List<DispatchLine>,
         defaultWarehouse: String?,
         submit: Boolean,
+        fieldValues: Map<String, String> = emptyMap(),
     ): AppResult<DeliveryNote> {
         val itemsByRow = salesOrder.items.associateBy { it.rowName }
         val noteLines = mutableListOf<DeliveryNoteLine>()
@@ -146,6 +161,7 @@ class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository:
                 customer = salesOrder.customer,
                 lines = allocated,
                 company = salesOrder.company,
+                fieldValues = settingsRepository.documentFieldDefaults.first() + fieldValues,
             ),
             submit = submit,
         )
@@ -196,6 +212,18 @@ class DispatchSalesOrderUseCase @Inject constructor(private val orderRepository:
     private companion object {
         const val QTY_TOLERANCE = 0.000001
     }
+}
+
+/** Possible values of a required Link field, offered in the "more details" dialog. */
+class SearchLinkValuesUseCase @Inject constructor(private val orderRepository: OrderRepository) {
+    suspend operator fun invoke(doctype: String, query: String = "", company: String? = null): AppResult<List<String>> =
+        orderRepository.searchLinkValues(doctype, query.trim(), company)
+}
+
+/** Remembers the answers to required fields so the next documents do not ask again. */
+class SaveDocumentFieldDefaultsUseCase @Inject constructor(private val settingsRepository: SettingsRepository) {
+    suspend operator fun invoke(values: Map<String, String>) =
+        settingsRepository.setDocumentFieldDefaults(values.filterValues { it.isNotBlank() })
 }
 
 internal fun Double.trimZeros(): String =

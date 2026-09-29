@@ -9,10 +9,12 @@ import com.wmserp.app.data.remote.dto.BatchDto
 import com.wmserp.app.data.remote.dto.BatchQtyDto
 import com.wmserp.app.data.remote.dto.DeliveryNoteDto
 import com.wmserp.app.data.remote.dto.ItemTrackingDto
+import com.wmserp.app.data.remote.dto.LinkNameDto
 import com.wmserp.app.data.remote.dto.PurchaseOrderDto
 import com.wmserp.app.data.remote.dto.PurchaseReceiptDto
 import com.wmserp.app.data.remote.dto.SalesOrderDto
 import com.wmserp.app.data.util.DateProvider
+import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.BatchStock
 import com.wmserp.app.domain.model.DeliveryNote
@@ -21,12 +23,18 @@ import com.wmserp.app.domain.model.ItemTracking
 import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.PurchaseReceiptDraft
+import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.SalesOrder
 import com.wmserp.app.domain.repository.OrderRepository
 import com.wmserp.app.domain.usecase.BatchAllocator
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import retrofit2.HttpException
+import java.io.IOException
 
 class OrderRepositoryImpl(
     private val dataSource: ErpNextDataSource,
@@ -61,7 +69,8 @@ class OrderRepositoryImpl(
      */
     override suspend fun createPurchaseReceipt(draft: PurchaseReceiptDraft, submit: Boolean): AppResult<PurchaseReceipt> = apiCaller.call {
         val mapped = dataSource.mapDocument(MAKE_PURCHASE_RECEIPT, draft.purchaseOrderName)
-        val inserted = dataSource.insertDocument(PURCHASE_RECEIPT, OrderDocuments.purchaseReceipt(mapped, draft))
+        val doc = withRequiredFields(PURCHASE_RECEIPT, OrderDocuments.purchaseReceipt(mapped, draft), draft.fieldValues)
+        val inserted = dataSource.insertDocument(PURCHASE_RECEIPT, doc)
         val receipt = decode(PurchaseReceiptDto.serializer(), inserted)
         if (submit) {
             decode(PurchaseReceiptDto.serializer(), dataSource.submit(PURCHASE_RECEIPT, receipt.name)).toDomain()
@@ -93,7 +102,8 @@ class OrderRepositoryImpl(
     /** Same approach as [createPurchaseReceipt], with batch-tracked rows split over their allocated batches. */
     override suspend fun createDeliveryNote(draft: DeliveryNoteDraft, submit: Boolean): AppResult<DeliveryNote> = apiCaller.call {
         val mapped = dataSource.mapDocument(MAKE_DELIVERY_NOTE, draft.salesOrderName)
-        val inserted = dataSource.insertDocument(DELIVERY_NOTE, OrderDocuments.deliveryNote(mapped, draft))
+        val doc = withRequiredFields(DELIVERY_NOTE, OrderDocuments.deliveryNote(mapped, draft), draft.fieldValues)
+        val inserted = dataSource.insertDocument(DELIVERY_NOTE, doc)
         val note = decode(DeliveryNoteDto.serializer(), inserted)
         if (submit) {
             decode(DeliveryNoteDto.serializer(), dataSource.submit(DELIVERY_NOTE, note.name)).toDomain()
@@ -145,6 +155,43 @@ class OrderRepositoryImpl(
             BatchStock(batchNo = row.batchNo!!, qty = row.qty, expiryDate = batch?.expiryDate)
         }
         BatchAllocator.usable(candidates, dateProvider.today())
+    }
+
+    override suspend fun searchLinkValues(doctype: String, query: String, company: String?, limit: Int): AppResult<List<String>> = apiCaller.call {
+        val filters = if (query.isBlank()) emptyList() else listOf(Filter.like("name", query))
+        val scoped = if (company.isNullOrBlank()) null else optional { linkNames(doctype, filters + Filter.eq("company", company), limit) }
+        scoped ?: linkNames(doctype, filters, limit)
+    }
+
+    private suspend fun linkNames(doctype: String, filters: List<Filter>, limit: Int): List<String> =
+        dataSource.getList<LinkNameDto>(doctype = doctype, fields = listOf("name"), filters = filters, orderBy = "name asc", limit = limit).map { it.name }
+
+    /**
+     * Fills the required fields the site added, or fails with [com.wmserp.app.domain.common.AppError.MissingRequiredFields]
+     * so the UI can ask for them. Meta lookups are best effort: without them ERPNext still validates,
+     * only with its own less helpful error.
+     */
+    private suspend fun withRequiredFields(doctype: String, doc: JsonObject, answers: Map<String, String>): JsonObject {
+        val required: List<RequiredField> = optional { dataSource.requiredFields(doctype) } ?: return doc
+        if (required.isEmpty()) return doc
+        val company = (doc["company"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+        val dimensionDefaults = optional { dataSource.dimensionDefaults(company) } ?: emptyMap()
+        return OrderDocuments.completeRequired(doc, required, answers, dimensionDefaults)
+    }
+
+    /** Runs a non-essential lookup; null when the server cannot answer it (never swallows cancellation). */
+    private suspend fun <T> optional(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: AppException) {
+        null
+    } catch (e: HttpException) {
+        null
+    } catch (e: IOException) {
+        null
+    } catch (e: SerializationException) {
+        null
+    } catch (e: IllegalArgumentException) {
+        null
     }
 
     private fun <T> decode(serializer: kotlinx.serialization.KSerializer<T>, element: JsonElement): T =

@@ -5,6 +5,7 @@ import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.DeliveryNoteDraft
 import com.wmserp.app.domain.model.PurchaseReceiptDraft
+import com.wmserp.app.domain.model.RequiredField
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -70,6 +71,38 @@ object OrderDocuments {
             }
         }
         return header(mapped, items, draft.lines.map { it.warehouse })
+    }
+
+    /**
+     * Fills required fields the site added (a mandatory *Department*, *Project*...) on the header and
+     * every row: remembered or freshly given [answers] first, then the company's default accounting
+     * dimension. Fields still empty are reported through [AppError.MissingRequiredFields] so the UI
+     * can ask for them instead of ERPNext rejecting the document.
+     */
+    fun completeRequired(
+        doc: JsonObject,
+        required: List<RequiredField>,
+        answers: Map<String, String>,
+        dimensionDefaults: Map<String, String> = emptyMap(),
+    ): JsonObject {
+        if (required.isEmpty()) return doc
+        val missing = linkedMapOf<String, RequiredField>()
+        fun complete(obj: JsonObject, doctype: String): JsonObject {
+            val fields = required.filter { it.doctype == doctype }
+            if (fields.isEmpty()) return obj
+            val values = obj.toMutableMap()
+            for (field in fields) {
+                if (!obj.string(field.fieldname).isNullOrBlank()) continue
+                val value = answers[field.key]?.takeIf { it.isNotBlank() } ?: dimensionDefaults[field.fieldname]
+                if (value != null) values[field.fieldname] = JsonPrimitive(value) else missing.putIfAbsent(field.key, field)
+            }
+            return JsonObject(values)
+        }
+        val headerDoctype = doc.string("doctype") ?: return doc
+        val header = complete(doc, headerDoctype)
+        val items = header.items().map { row -> complete(row, row.string("doctype") ?: "$headerDoctype Item") }
+        if (missing.isNotEmpty()) throw AppException(AppError.MissingRequiredFields(missing.values.toList()))
+        return JsonObject(header.toMutableMap().apply { this["items"] = JsonArray(items) })
     }
 
     private fun header(mapped: JsonObject, items: List<JsonObject>, warehouses: List<String>): JsonObject {

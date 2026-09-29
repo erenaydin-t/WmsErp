@@ -62,6 +62,7 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.ORDER_ROW_UNAVAILABLE -> R.string.error_order_row_unavailable
     ErrorCode.SERIAL_ITEM_UNSUPPORTED -> R.string.error_serial_item_unsupported
     ErrorCode.INSUFFICIENT_BATCH_STOCK -> R.string.error_insufficient_batch_stock
+    ErrorCode.MISSING_REQUIRED_FIELDS -> R.string.error_missing_required_fields
     ErrorCode.EMPTY_BARCODE -> R.string.error_empty_barcode
     ErrorCode.PURCHASE_ORDER_NOT_FOUND -> R.string.error_po_not_found
     ErrorCode.SALES_ORDER_NOT_FOUND -> R.string.error_so_not_found

@@ -2,8 +2,10 @@ package com.wmserp.app.presentation.orders
 
 import androidx.lifecycle.SavedStateHandle
 import com.wmserp.app.R
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PurchaseReceipt
+import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScanTarget
@@ -13,18 +15,24 @@ import com.wmserp.app.domain.usecase.GetPurchaseOrderUseCase
 import com.wmserp.app.domain.usecase.LookupScanUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.ReceivePurchaseOrderUseCase
+import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
+import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.FakeScannerController
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
+import io.mockk.Runs
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -36,6 +44,8 @@ class ReceiveViewModelTest {
 
     private val getPurchaseOrder: GetPurchaseOrderUseCase = mockk()
     private val receive: ReceivePurchaseOrderUseCase = mockk()
+    private val searchLinkValues: SearchLinkValuesUseCase = mockk()
+    private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase = mockk()
     private val lookupScan: LookupScanUseCase = mockk()
     private val searchWarehouses: SearchWarehousesUseCase = mockk()
     private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } returns flowOf(ScannerSettings()) }
@@ -45,7 +55,7 @@ class ReceiveViewModelTest {
         coEvery { getPurchaseOrder("PUR-ORD-2026-00001") } returns AppResult.Success(TestFixtures.purchaseOrder)
         coEvery { searchWarehouses("") } returns AppResult.Success(emptyList())
         return ReceiveViewModel(
-            getPurchaseOrder, receive, lookupScan, searchWarehouses, observeSettings, scanner,
+            getPurchaseOrder, receive, searchLinkValues, saveFieldDefaults, lookupScan, searchWarehouses, observeSettings, scanner,
             SavedStateHandle(mapOf(ReceiveViewModel.ARG_PO_NAME to "PUR-ORD-2026-00001")),
         )
     }
@@ -95,5 +105,31 @@ class ReceiveViewModelTest {
 
         assertNotNull(vm.uiState.value.completed)
         assertEquals(UiText.Res(R.string.receive_submitted, listOf("MAT-PRE-00001")), vm.uiState.value.message)
+    }
+
+    @Test
+    fun `required fields the site added are asked for once, saved and resubmitted`() = runTest {
+        val department = RequiredField("Purchase Receipt Item", "department", "Department", "Link", options = "Department")
+        coEvery { receive(TestFixtures.purchaseOrder, any(), "Stores - WM", true, emptyMap()) } returns AppResult.Failure(AppError.MissingRequiredFields(listOf(department)))
+        coEvery { searchLinkValues("Department", "", "WM Co") } returns AppResult.Success(listOf("Sales - WM", "Warehouse - WM"))
+        coEvery { saveFieldDefaults(any()) } just Runs
+        val vm = createViewModel()
+        vm.receiveAll()
+
+        vm.submit(asDraft = false)
+
+        assertEquals(listOf(department), vm.uiState.value.requiredFields)
+        assertEquals(listOf("Sales - WM", "Warehouse - WM"), vm.uiState.value.linkOptions[department.key])
+        assertNull(vm.uiState.value.error)
+        assertNull(vm.uiState.value.completed)
+
+        val answers = mapOf(department.key to "Warehouse - WM")
+        coEvery { receive(TestFixtures.purchaseOrder, any(), "Stores - WM", true, answers) } returns AppResult.Success(PurchaseReceipt("MAT-PRE-00002", "SUP-001", "To Bill", "2026-09-28", 1))
+        vm.setRequiredFieldAnswer(department.key, "Warehouse - WM")
+        vm.confirmRequiredFields()
+
+        assertTrue(vm.uiState.value.requiredFields.isEmpty())
+        assertEquals("MAT-PRE-00002", vm.uiState.value.completed?.name)
+        coVerify { saveFieldDefaults(answers) }
     }
 }

@@ -111,3 +111,7 @@ data class DeliveryNoteDto(
     @SerialName("grand_total") val grandTotal: Double = 0.0,
     val currency: String? = null,
 )
+
+/** Name of any document, for filling Link fields. */
+@Serializable
+data class LinkNameDto(val name: String)

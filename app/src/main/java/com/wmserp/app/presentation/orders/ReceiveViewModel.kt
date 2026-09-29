@@ -5,10 +5,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.PurchaseOrderItem
 import com.wmserp.app.domain.model.PurchaseReceipt
+import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScanTarget
@@ -19,6 +21,8 @@ import com.wmserp.app.domain.usecase.LookupScanUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.ReceiveLine
 import com.wmserp.app.domain.usecase.ReceivePurchaseOrderUseCase
+import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
+import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
 import com.wmserp.app.domain.usecase.ScanCodeSanitizer
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
 import com.wmserp.app.presentation.common.UiText
@@ -49,6 +53,11 @@ data class ReceiveUiState(
     val error: UiText? = null,
     val message: UiText? = null,
     val completed: PurchaseReceipt? = null,
+    /** Required fields the ERPNext site added that still need a value; the dialog shows while non-empty. */
+    val requiredFields: List<RequiredField> = emptyList(),
+    val requiredFieldAnswers: Map<String, String> = emptyMap(),
+    /** Possible values of the required Link fields, keyed by [RequiredField.key]. */
+    val linkOptions: Map<String, List<String>> = emptyMap(),
     val beep: Boolean = true,
     val vibrate: Boolean = true,
 ) {
@@ -61,6 +70,8 @@ data class ReceiveUiState(
 class ReceiveViewModel @Inject constructor(
     private val getPurchaseOrder: GetPurchaseOrderUseCase,
     private val receivePurchaseOrder: ReceivePurchaseOrderUseCase,
+    private val searchLinkValues: SearchLinkValuesUseCase,
+    private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase,
     private val lookupScan: LookupScanUseCase,
     private val searchWarehouses: SearchWarehousesUseCase,
     observeScannerSettings: ObserveScannerSettingsUseCase,
@@ -151,7 +162,9 @@ class ReceiveViewModel @Inject constructor(
         }
     }
 
-    fun submit(asDraft: Boolean) {
+    fun submit(asDraft: Boolean) = submit(asDraft, fieldValues = emptyMap())
+
+    private fun submit(asDraft: Boolean, fieldValues: Map<String, String>) {
         val state = _uiState.value
         val po = state.purchaseOrder ?: return
         if (!state.canSubmit) return
@@ -162,6 +175,7 @@ class ReceiveViewModel @Inject constructor(
                 lines = state.lines.map { ReceiveLine(it.item.rowName, it.qty, state.warehouse.ifBlank { null }) },
                 defaultWarehouse = state.warehouse.ifBlank { null },
                 submit = !asDraft,
+                fieldValues = fieldValues,
             )
             when (result) {
                 is AppResult.Success -> _uiState.update {
@@ -171,8 +185,55 @@ class ReceiveViewModel @Inject constructor(
                         message = UiText.Res(if (asDraft) R.string.receive_draft_saved else R.string.receive_submitted, listOf(result.data.name)),
                     )
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isSubmitting = false, error = result.error.toUiText()) }
+                is AppResult.Failure -> {
+                    val error = result.error
+                    if (error is AppError.MissingRequiredFields) {
+                        askRequiredFields(error.fields, asDraft, po.company)
+                    } else {
+                        _uiState.update { it.copy(isSubmitting = false, error = error.toUiText()) }
+                    }
+                }
             }
+        }
+    }
+
+    private var pendingSubmitAsDraft = false
+
+    /** ERPNext needs values the order does not carry: open the dialog and load the choices of its Link fields. */
+    private fun askRequiredFields(fields: List<RequiredField>, asDraft: Boolean, company: String?) {
+        pendingSubmitAsDraft = asDraft
+        _uiState.update { state ->
+            state.copy(
+                isSubmitting = false,
+                requiredFields = fields,
+                requiredFieldAnswers = fields.associate { it.key to state.requiredFieldAnswers[it.key].orEmpty() },
+                linkOptions = emptyMap(),
+            )
+        }
+        viewModelScope.launch {
+            fields.filter { it.isLink }.forEach { field ->
+                val target = field.options ?: return@forEach
+                searchLinkValues(target, "", company).getOrNull()?.let { names ->
+                    _uiState.update { it.copy(linkOptions = it.linkOptions + (field.key to names)) }
+                }
+            }
+        }
+    }
+
+    fun setRequiredFieldAnswer(key: String, value: String) =
+        _uiState.update { it.copy(requiredFieldAnswers = it.requiredFieldAnswers + (key to value)) }
+
+    fun dismissRequiredFields() = _uiState.update { it.copy(requiredFields = emptyList()) }
+
+    /** Saves the answers for the next documents and retries the submission with them. */
+    fun confirmRequiredFields() {
+        val state = _uiState.value
+        val answers = state.requiredFields.associate { it.key to state.requiredFieldAnswers[it.key].orEmpty().trim() }
+        if (answers.isEmpty() || answers.values.any { it.isBlank() }) return
+        _uiState.update { it.copy(requiredFields = emptyList()) }
+        viewModelScope.launch {
+            saveFieldDefaults(answers)
+            submit(pendingSubmitAsDraft, answers)
         }
     }
 

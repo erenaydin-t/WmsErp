@@ -47,6 +47,7 @@ import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
 import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.QtyStepper
+import com.wmserp.app.presentation.components.RequiredFieldsDialog
 import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.WarehousePicker
@@ -69,6 +70,9 @@ fun DispatchRoute(onBack: () -> Unit, viewModel: DispatchViewModel = hiltViewMod
         onSubmit = viewModel::submit,
         onDismissMessage = viewModel::dismissMessage,
         onRetry = viewModel::load,
+        onRequiredFieldChange = viewModel::setRequiredFieldAnswer,
+        onConfirmRequiredFields = viewModel::confirmRequiredFields,
+        onDismissRequiredFields = viewModel::dismissRequiredFields,
     )
 }
 
@@ -85,8 +89,22 @@ fun DispatchScreen(
     onSubmit: (asDraft: Boolean) -> Unit,
     onDismissMessage: () -> Unit,
     onRetry: () -> Unit,
+    onRequiredFieldChange: (String, String) -> Unit = { _, _ -> },
+    onConfirmRequiredFields: () -> Unit = {},
+    onDismissRequiredFields: () -> Unit = {},
 ) {
     val so = state.salesOrder
+    if (state.requiredFields.isNotEmpty()) {
+        RequiredFieldsDialog(
+            doctype = stringResource(R.string.doctype_delivery_note),
+            fields = state.requiredFields,
+            answers = state.requiredFieldAnswers,
+            linkOptions = state.linkOptions,
+            onAnswerChange = onRequiredFieldChange,
+            onConfirm = onConfirmRequiredFields,
+            onDismiss = onDismissRequiredFields,
+        )
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { WmsTopBar(title = so?.name ?: stringResource(R.string.dispatch_title), subtitle = so?.customerName, onBack = onBack) },

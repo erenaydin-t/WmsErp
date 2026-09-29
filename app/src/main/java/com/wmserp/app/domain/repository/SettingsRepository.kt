@@ -13,4 +13,8 @@ interface SettingsRepository {
 
     val appLanguage: Flow<AppLanguage>
     suspend fun setAppLanguage(language: AppLanguage)
+
+    /** Answers given for required document fields, keyed `Doctype.fieldname` (see RequiredField.key). */
+    val documentFieldDefaults: Flow<Map<String, String>>
+    suspend fun setDocumentFieldDefaults(values: Map<String, String>)
 }

@@ -108,6 +108,8 @@ data class PurchaseReceiptDraft(
     val supplier: String,
     val lines: List<PurchaseReceiptLine>,
     val company: String? = null,
+    /** Values for required fields the site added, keyed by [RequiredField.key]. */
+    val fieldValues: Map<String, String> = emptyMap(),
 )
 
 /** Maps to the ERPNext `Delivery Note` DocType (result of a dispatch flow). */
@@ -143,4 +145,26 @@ data class DeliveryNoteDraft(
     val customer: String,
     val lines: List<DeliveryNoteLine>,
     val company: String? = null,
+    /** Values for required fields the site added, keyed by [RequiredField.key]. */
+    val fieldValues: Map<String, String> = emptyMap(),
 )
+
+/**
+ * A field ERPNext requires on a document header or child row (from the DocType meta, custom fields
+ * included) that the app cannot fill from the order, e.g. a mandatory *Department*.
+ */
+data class RequiredField(
+    val doctype: String,
+    val fieldname: String,
+    val label: String,
+    val fieldtype: String,
+    /** Link target DocType, or the newline-separated options of a Select. */
+    val options: String? = null,
+    val default: String? = null,
+) {
+    /** Key of stored answers: `Purchase Receipt Item.department`. */
+    val key: String get() = "$doctype.$fieldname"
+    val isLink: Boolean get() = fieldtype == "Link"
+    val selectOptions: List<String>
+        get() = if (fieldtype == "Select") options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
+}

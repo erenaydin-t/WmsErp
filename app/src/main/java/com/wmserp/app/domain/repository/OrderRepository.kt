@@ -28,4 +28,7 @@ interface OrderRepository {
      * positive quantity), ordered first-expiry-first-out.
      */
     suspend fun getUsableBatches(itemCode: String, warehouse: String): AppResult<List<BatchStock>>
+
+    /** Names of [doctype] documents matching [query] (for Link fields), limited to [company] when the DocType has one. */
+    suspend fun searchLinkValues(doctype: String, query: String = "", company: String? = null, limit: Int = 100): AppResult<List<String>>
 }

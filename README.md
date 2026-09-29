@@ -55,7 +55,10 @@ app/src/main/java/com/wmserp/app
    against Sales Orders (creates *Delivery Note*); scanning an item barcode increments the matching line.
    Both documents start from ERPNext's own `make_purchase_receipt` / `make_delivery_note` mapping of the
    order, so rates, taxes, accounting dimensions and custom mandatory row fields (a *Department*, a
-   *Project*…) are inherited; the app only overrides the counted quantity and the warehouse. Batch-tracked
+   *Project*…) are inherited; the app only overrides the counted quantity and the warehouse. Required fields
+   that the order does not carry (read from the DocType meta, custom fields included) are filled from the
+   company's default accounting dimensions or, failing that, asked for once in a dialog and remembered on the
+   device, instead of ERPNext rejecting the document with *Value missing for: …*. Batch-tracked
    items on a Delivery Note are split over the warehouse's batches **first-expiry-first-out** (expired and
    disabled batches are skipped; not enough batch stock is reported before anything is created); items with
    serial numbers are refused and must be delivered from ERPNext.
@@ -77,6 +80,7 @@ All calls go through `ErpNextApi` (`app/src/main/java/com/wmserp/app/data/remote
 | Sums | `fields=["sum(x) as total"]` on Frappe ≤ 15, `[{"SUM": "x", "as": "total"}]` on Frappe 16 (detected at runtime) |
 | Receive / Dispatch drafts | `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt`, `erpnext.selling.doctype.sales_order.sales_order.make_delivery_note` (`source_name`), then `POST /api/resource/...` |
 | Batch stock | `erpnext.stock.doctype.batch.batch.get_batch_qty` (`item_code`, `warehouse`) + `Batch.expiry_date` |
+| Required fields | `frappe.desk.form.load.getdoctype` (meta incl. custom fields) + `…accounting_dimension.get_dimensions` (company defaults) |
 | Submit | `frappe.client.submit` |
 | Reports | `frappe.desk.query_report.run` (Stock Ageing) |
 | Password | `frappe.core.doctype.user.user.update_password` |
