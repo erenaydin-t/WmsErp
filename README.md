@@ -22,22 +22,37 @@ all three accept; the Delivery Note mapper is called with the signature of the i
 
 The Android project and this Frappe app live in one repository, but bench needs a Frappe app at the
 root of what it clones. CI therefore publishes this folder as its own branch, **`wmserp_picking`**
-(a `git subtree split` of `erpnext/wmserp_picking`, refreshed on every push to `main`):
+(a `git subtree split` of `erpnext/wmserp_picking`, refreshed on every push to `main`). Every
+published version is also tagged **`wmserp_picking-v<version>`** (the version is `__version__` in
+`wmserp_picking/__init__.py`, shown by `bench version` and returned by `get_settings` as `app_version`).
 
 ```bash
 cd frappe-bench
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.2.0     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
 
-To pick up a newer version of the branch on an existing bench:
+To update an existing bench to the latest published version (or to a tag):
 
 ```bash
-cd frappe-bench/apps/wmserp_picking && git pull origin wmserp_picking && cd ../..
+cd frappe-bench/apps/wmserp_picking
+git fetch origin --tags
+git checkout wmserp_picking && git pull origin wmserp_picking     # latest
+# git checkout wmserp_picking-v0.2.0                              # or pin a version
+cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format
-bench restart                    # or `bench build` is not needed: the app has no client assets
+bench restart                    # no `bench build` needed: the app has no client assets
+bench version                    # should list wmserp_picking 0.2.0
 ```
+
+### Versions
+
+| Version | Tag | Notes |
+| --- | --- | --- |
+| 0.2.0 | `wmserp_picking-v0.2.0` | Row-level multi-picker workflow, WMS Settings, strict JSON QR labels, batch QR print format, timers and picker KPIs; Frappe v14–v16. Migrating from 0.1.0 removes the card-level fields (see below). |
+| 0.1.0 | – | First card-level workflow (`start_picking` / `save_progress` / `complete_picking`), superseded. |
 
 > `bench get-app https://github.com/erenaydin-t/WmsErp` **without** `--branch` fails with
 > `No such file or directory: .../apps/WmsErp/setup.py` because the repository root is the Android
