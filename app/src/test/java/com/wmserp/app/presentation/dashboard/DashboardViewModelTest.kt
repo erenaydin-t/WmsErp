@@ -75,7 +75,7 @@ class DashboardViewModelTest {
         assertEquals(120, state.data?.kpis?.totalItems)
         assertNull(state.error)
         // The updater is asked for the latest GitHub release as soon as the dashboard exists.
-        assertEquals(UpdateState.UpToDate("1.1.0-dev"), vm.updateState.value)
+        assertEquals(UpdateState.NoRelease, vm.updateState.value)
     }
 
     @Test

@@ -74,6 +74,7 @@ fun UpdateState.statusText(): String = when (this) {
     UpdateState.Idle -> stringResource(R.string.update_idle)
     UpdateState.Checking -> stringResource(R.string.update_checking)
     is UpdateState.UpToDate -> stringResource(R.string.update_up_to_date)
+    UpdateState.NoRelease -> stringResource(R.string.update_no_release)
     is UpdateState.Available -> stringResource(R.string.update_available_title, release.version)
     is UpdateState.Downloading -> stringResource(R.string.update_downloading, (fraction * 100).toInt().toString())
     is UpdateState.ReadyToInstall -> stringResource(R.string.update_ready)

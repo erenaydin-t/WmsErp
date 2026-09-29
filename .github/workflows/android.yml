@@ -14,6 +14,14 @@ on:
         description: "Run Compose UI tests on an emulator"
         type: boolean
         default: false
+      publish_release:
+        description: "Publish this build as a GitHub Release (feeds the in-app updater) even though it is not main"
+        type: boolean
+        default: false
+      publish_backend:
+        description: "Publish erpnext/wmserp_picking to the wmserp_picking branch and tag its version even though it is not main"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -128,8 +136,9 @@ jobs:
   release:
     name: Publish GitHub release (feeds the in-app updater)
     # Every build of main becomes a release "v<version>" with the release APK attached. The app reads
-    # /repos/<owner>/<repo>/releases/latest, so only main builds are offered as updates.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # /repos/<owner>/<repo>/releases/latest, so main builds are offered as updates; a manual run with
+    # "publish_release" does the same for the dispatched branch (testing before a merge).
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -165,7 +174,8 @@ jobs:
     name: Publish ERPNext app branch (wmserp_picking)
     # bench needs a Frappe app at the root of what it clones, so the backend folder is published
     # as its own branch: `bench get-app https://github.com/<owner>/WmsErp --branch wmserp_picking`.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Runs on every push to main, or on a manual run with "publish_backend" for the dispatched branch.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_backend)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

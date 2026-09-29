@@ -68,6 +68,9 @@ sealed interface UpdateState {
     data object Idle : UpdateState
     data object Checking : UpdateState
     data class UpToDate(val version: String) : UpdateState
+
+    /** GitHub has no release with an APK yet (nothing was published from `main` so far). */
+    data object NoRelease : UpdateState
     data class Available(val release: AppRelease, val dismissed: Boolean = false) : UpdateState
     data class Downloading(val release: AppRelease, val fraction: Float, val downloadedBytes: Long) : UpdateState
     data class ReadyToInstall(val release: AppRelease, val apkPath: String) : UpdateState

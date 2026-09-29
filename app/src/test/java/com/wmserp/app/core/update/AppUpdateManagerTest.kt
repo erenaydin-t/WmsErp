@@ -61,14 +61,18 @@ class AppUpdateManagerTest {
     }
 
     @Test
-    fun `the same, an older or no release means up to date`() = runTest {
+    fun `the same or an older release means up to date, no release at all is reported as such`() = runTest {
         val manager = manager()
-        for (candidate in listOf(release.copy(version = "1.1.40"), release.copy(version = "1.0.99"), null)) {
+        for (candidate in listOf(release.copy(version = "1.1.40"), release.copy(version = "1.0.99"))) {
             coEvery { repository.getLatestRelease() } returns AppResult.Success(candidate)
             manager.checkForUpdate(force = true)
             advanceUntilIdle()
             assertEquals(UpdateState.UpToDate("1.1.40"), manager.state.value)
         }
+        coEvery { repository.getLatestRelease() } returns AppResult.Success(null)
+        manager.checkForUpdate(force = true)
+        advanceUntilIdle()
+        assertEquals(UpdateState.NoRelease, manager.state.value)
     }
 
     @Test

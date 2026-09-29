@@ -65,7 +65,8 @@ class AppUpdateManager(
     }
 
     private fun evaluate(release: AppRelease?, previous: UpdateState): UpdateState {
-        if (release == null || release.versionNumber <= VersionNumber.parse(installedVersion.versionName)) {
+        if (release == null) return UpdateState.NoRelease
+        if (release.versionNumber <= VersionNumber.parse(installedVersion.versionName)) {
             return UpdateState.UpToDate(installedVersion.versionName)
         }
         val dismissed = previous is UpdateState.Available && previous.dismissed && previous.release.version == release.version

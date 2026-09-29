@@ -258,6 +258,7 @@
     <string name="update_check">Check for updates</string>
     <string name="update_checking">Checking for updates…</string>
     <string name="update_up_to_date">You have the latest version</string>
+    <string name="update_no_release">No release has been published on GitHub yet</string>
     <string name="update_available_title">Version %1$s is available</string>
     <string name="update_available_message">Download the new build (%1$s) from GitHub and install it over this app.</string>
     <string name="update_download">Update now</string>

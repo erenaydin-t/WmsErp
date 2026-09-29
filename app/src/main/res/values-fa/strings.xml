@@ -258,6 +258,7 @@
     <string name="update_check">بررسی به‌روزرسانی</string>
     <string name="update_checking">در حال بررسی به‌روزرسانی…</string>
     <string name="update_up_to_date">آخرین نسخه را دارید</string>
+    <string name="update_no_release">هنوز نسخه‌ای در GitHub منتشر نشده است</string>
     <string name="update_available_title">نسخه %1$s در دسترس است</string>
     <string name="update_available_message">نسخه جدید (%1$s) را از GitHub دانلود کنید و روی همین برنامه نصب کنید.</string>
     <string name="update_download">به‌روزرسانی کن</string>

@@ -212,7 +212,9 @@ For Play-ready signed builds add the repository secrets `KEYSTORE_BASE64` (base6
 `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 
 A second job runs the Compose UI tests on an emulator when the workflow is dispatched manually with
-*Run Compose UI tests on an emulator* enabled.
+*Run Compose UI tests on an emulator* enabled. The manual run also offers *publish_release* and
+*publish_backend* to publish the dispatched branch (a GitHub Release for the updater, the
+`wmserp_picking` branch and its version tag) before it is merged, for testing.
 
 ## In-app updates
 
