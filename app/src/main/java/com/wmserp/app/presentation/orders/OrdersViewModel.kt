@@ -7,9 +7,12 @@ import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PurchaseOrder
 import com.wmserp.app.domain.model.SalesOrder
+import com.wmserp.app.domain.model.StocktakingSession
 import com.wmserp.app.domain.usecase.GetMyPickListsUseCase
+import com.wmserp.app.domain.usecase.GetMyStocktakingSessionsUseCase
 import com.wmserp.app.domain.usecase.GetOpenPurchaseOrdersUseCase
 import com.wmserp.app.domain.usecase.GetOpenSalesOrdersUseCase
+import com.wmserp.app.domain.usecase.PendingCountQueue
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,7 +26,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class OrdersTab { RECEIVE, DISPATCH, PICK }
+enum class OrdersTab { RECEIVE, DISPATCH, PICK, COUNT }
 
 data class OrdersUiState(
     val tab: OrdersTab = OrdersTab.RECEIVE,
@@ -36,7 +39,15 @@ data class OrdersUiState(
     val error: UiText? = null,
     /** Kept apart so a server without the wmserp_picking app only affects the Pick tab. */
     val pickListError: UiText? = null,
+    /** Stocktaking sessions the user can count in (Orders → Count). */
+    val sessions: List<StocktakingSession> = emptyList(),
+    val sessionError: UiText? = null,
+    /** Counts still queued on this device per session, for the "waiting to sync" line of the cards. */
+    val pendingCounts: Map<String, Int> = emptyMap(),
 ) {
+    val filteredSessions: List<StocktakingSession>
+        get() = if (query.isBlank()) sessions else sessions.filter { it.name.contains(query, ignoreCase = true) || it.warehouseName.contains(query, ignoreCase = true) || it.warehouse.contains(query, ignoreCase = true) }
+
     /** The backend already returns only the user's own lists; the search box filters them on the device. */
     val filteredPickLists: List<PickList>
         get() = if (query.isBlank()) {
@@ -57,6 +68,8 @@ class OrdersViewModel @Inject constructor(
     private val getOpenPurchaseOrders: GetOpenPurchaseOrdersUseCase,
     private val getOpenSalesOrders: GetOpenSalesOrdersUseCase,
     private val getMyPickLists: GetMyPickListsUseCase,
+    private val getMySessions: GetMyStocktakingSessionsUseCase,
+    private val pendingQueue: PendingCountQueue,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -105,9 +118,12 @@ class OrdersViewModel @Inject constructor(
             val po = async { getOpenPurchaseOrders(query) }
             val so = async { getOpenSalesOrders(query) }
             val pl = if (reloadPickLists) async { getMyPickLists() } else null
+            val st = if (reloadPickLists) async { getMySessions() } else null
             val poResult = po.await()
             val soResult = so.await()
             val plResult = pl?.await()
+            val stResult = st?.await()
+            val pending = (stResult as? AppResult.Success)?.data?.associate { it.name to pendingQueue.pending(it.name).size }
             loadedOnce = true
             val error = listOfNotNull(poResult.errorOrNull(), soResult.errorOrNull()).firstOrNull()?.toUiText()
             _uiState.update {
@@ -119,6 +135,9 @@ class OrdersViewModel @Inject constructor(
                     pickLists = (plResult as? AppResult.Success)?.data ?: it.pickLists,
                     error = error,
                     pickListError = if (plResult == null) it.pickListError else plResult.errorOrNull()?.toUiText(),
+                    sessions = (stResult as? AppResult.Success)?.data ?: it.sessions,
+                    sessionError = if (stResult == null) it.sessionError else stResult.errorOrNull()?.toUiText(),
+                    pendingCounts = pending ?: it.pendingCounts,
                 )
             }
         }

@@ -1,7 +1,9 @@
 package com.wmserp.app.di
 
+import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import com.wmserp.app.data.local.FileStocktakingLocalStore
 import com.wmserp.app.data.local.SessionStore
 import com.wmserp.app.data.remote.ApiCaller
 import com.wmserp.app.data.remote.ErpNextApi
@@ -15,6 +17,7 @@ import com.wmserp.app.data.repository.InventoryRepositoryImpl
 import com.wmserp.app.data.repository.OrderRepositoryImpl
 import com.wmserp.app.data.repository.PickListRepositoryImpl
 import com.wmserp.app.data.repository.ProfileRepositoryImpl
+import com.wmserp.app.data.repository.StocktakingRepositoryImpl
 import com.wmserp.app.data.util.DateProvider
 import com.wmserp.app.data.util.SystemDateProvider
 import com.wmserp.app.domain.repository.AnalyticsRepository
@@ -24,10 +27,15 @@ import com.wmserp.app.domain.repository.OrderRepository
 import com.wmserp.app.domain.repository.PickListRepository
 import com.wmserp.app.domain.repository.ProfileRepository
 import com.wmserp.app.domain.repository.SettingsRepository
+import com.wmserp.app.domain.repository.StocktakingLocalStore
+import com.wmserp.app.domain.repository.StocktakingRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.serialization.json.Json
+import java.io.File
 import javax.inject.Singleton
 
 @Module
@@ -78,4 +86,15 @@ object RepositoryModule {
     @Singleton
     fun provideSettingsRepository(@SettingsDataStore dataStore: DataStore<Preferences>): SettingsRepository =
         AndroidSettingsRepository(dataStore)
+
+    @Provides
+    @Singleton
+    fun provideStocktakingRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): StocktakingRepository =
+        StocktakingRepositoryImpl(dataSource, apiCaller)
+
+    /** Rows and the offline count queue of each session, as private JSON files of the app. */
+    @Provides
+    @Singleton
+    fun provideStocktakingLocalStore(@ApplicationContext context: Context, json: Json): StocktakingLocalStore =
+        FileStocktakingLocalStore(File(context.filesDir, "stocktaking"), json)
 }

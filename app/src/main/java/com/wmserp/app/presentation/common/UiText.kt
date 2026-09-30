@@ -6,12 +6,17 @@ import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.AnalyticsSection
 import com.wmserp.app.domain.model.AppLanguage
+import com.wmserp.app.domain.model.CountItemStatus
+import com.wmserp.app.domain.model.CountType
+import com.wmserp.app.domain.model.CountingMode
 import com.wmserp.app.domain.model.PickListPurpose
 import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickTargetDocument
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannerMode
+import com.wmserp.app.domain.model.StocktakingStatus
+import com.wmserp.app.domain.usecase.CountRefusal
 import com.wmserp.app.domain.usecase.QrError
 import com.wmserp.app.presentation.inventory.AnalyticsTab
 import com.wmserp.app.presentation.orders.OrdersTab
@@ -86,7 +91,59 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.ROW_NOT_ASSIGNED -> R.string.error_row_not_assigned
     ErrorCode.PICK_LIST_NOT_FOUND -> R.string.error_pick_list_not_found
     ErrorCode.UNSUPPORTED_PICK_PURPOSE -> R.string.error_unsupported_pick_purpose
+    ErrorCode.COUNT_QTY_INVALID -> R.string.error_count_qty_invalid
+    ErrorCode.STOCKTAKING_SESSION_NOT_FOUND -> R.string.error_stocktaking_session_not_found
+    ErrorCode.STOCKTAKING_ITEM_NOT_IN_SESSION -> R.string.error_stocktaking_item_not_in_session
+    ErrorCode.STOCKTAKING_OFFLINE_UNKNOWN_ITEM -> R.string.error_stocktaking_offline_unknown_item
     ErrorCode.UNKNOWN -> R.string.error_unknown
+}
+
+@StringRes
+fun StocktakingStatus.labelRes(): Int = when (this) {
+    StocktakingStatus.DRAFT -> R.string.st_status_draft
+    StocktakingStatus.COUNTING -> R.string.st_status_counting
+    StocktakingStatus.MANAGER_REVIEW -> R.string.st_status_manager_review
+    StocktakingStatus.RECOUNT -> R.string.st_status_recount
+    StocktakingStatus.FINAL_APPROVAL -> R.string.st_status_final_approval
+    StocktakingStatus.RECONCILED -> R.string.st_status_reconciled
+    StocktakingStatus.COMPLETED -> R.string.st_status_completed
+    StocktakingStatus.CANCELLED -> R.string.st_status_cancelled
+    StocktakingStatus.UNKNOWN -> R.string.st_status_unknown
+}
+
+@StringRes
+fun CountingMode.labelRes(): Int = when (this) {
+    CountingMode.ASSIGNED -> R.string.st_mode_assigned
+    CountingMode.OPEN -> R.string.st_mode_open
+}
+
+@StringRes
+fun CountItemStatus.labelRes(): Int = when (this) {
+    CountItemStatus.NOT_COUNTED -> R.string.st_row_not_counted
+    CountItemStatus.ASSIGNED -> R.string.st_row_assigned
+    CountItemStatus.COUNTING -> R.string.st_row_counting
+    CountItemStatus.COUNTED -> R.string.st_row_counted
+    CountItemStatus.RECOUNT_REQUIRED -> R.string.st_row_recount_required
+    CountItemStatus.RECOUNTED -> R.string.st_row_recounted
+    CountItemStatus.MANAGER_REVIEW -> R.string.st_row_manager_review
+    CountItemStatus.APPROVED -> R.string.st_row_approved
+    CountItemStatus.FINALIZED -> R.string.st_row_finalized
+}
+
+@StringRes
+fun CountType.labelRes(): Int = when (this) {
+    CountType.COUNT_1 -> R.string.st_count_type_1
+    CountType.COUNT_2 -> R.string.st_count_type_2
+    CountType.RECOUNT -> R.string.st_count_type_recount
+}
+
+/** Why a scanned row cannot be counted right now (the name of the other counter is added by the caller). */
+@StringRes
+fun CountRefusal.messageRes(withName: Boolean): Int = when (this) {
+    CountRefusal.ALREADY_COUNTED -> if (withName) R.string.st_already_counted else R.string.st_already_counted_unknown
+    CountRefusal.NOT_ASSIGNED -> if (withName) R.string.st_assigned_to_other else R.string.st_not_assigned
+    CountRefusal.SESSION_CLOSED -> R.string.st_session_closed
+    CountRefusal.FINALIZED -> R.string.st_item_finalized
 }
 
 @StringRes
@@ -168,6 +225,7 @@ fun OrdersTab.titleRes(): Int = when (this) {
     OrdersTab.RECEIVE -> R.string.tab_receive
     OrdersTab.DISPATCH -> R.string.tab_dispatch
     OrdersTab.PICK -> R.string.tab_pick
+    OrdersTab.COUNT -> R.string.tab_count
 }
 
 @StringRes

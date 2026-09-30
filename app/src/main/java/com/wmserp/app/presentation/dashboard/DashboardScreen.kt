@@ -63,6 +63,7 @@ import com.wmserp.app.presentation.components.KpiCard
 import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.QuickActionButton
 import com.wmserp.app.presentation.components.SectionHeader
+import com.wmserp.app.presentation.stocktaking.StocktakingSessionCard
 import com.wmserp.app.presentation.theme.WmsTheme
 import com.wmserp.app.presentation.update.UpdateBanner
 import com.wmserp.app.presentation.update.showsBanner
@@ -73,6 +74,7 @@ fun DashboardRoute(
     onReceive: () -> Unit,
     onDispatch: () -> Unit,
     onReport: () -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -85,6 +87,7 @@ fun DashboardRoute(
         onReceive = onReceive,
         onDispatch = onDispatch,
         onReport = onReport,
+        onOpenStocktaking = onOpenStocktaking,
         updateState = updateState,
         onDownloadUpdate = viewModel::downloadUpdate,
         onDismissUpdate = viewModel::dismissUpdate,
@@ -100,6 +103,7 @@ fun DashboardScreen(
     onReceive: () -> Unit,
     onDispatch: () -> Unit,
     onReport: () -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
     updateState: UpdateState = UpdateState.Idle,
     onDownloadUpdate: () -> Unit = {},
     onDismissUpdate: () -> Unit = {},
@@ -214,6 +218,11 @@ fun DashboardScreen(
                         }
                     }
                 }
+            }
+
+            if (state.stocktaking.isNotEmpty()) {
+                item { SectionHeader(stringResource(R.string.dashboard_stocktaking_title)) }
+                items(state.stocktaking, key = { "st_" + it.name }) { session -> StocktakingSessionCard(session) { onOpenStocktaking(session.name) } }
             }
 
             state.pickerKpis?.let { kpis ->

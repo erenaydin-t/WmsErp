@@ -5,10 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.wmserp.app.core.update.AppUpdateManager
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PickerKpis
+import com.wmserp.app.domain.model.StocktakingSession
 import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.DashboardData
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
+import com.wmserp.app.domain.usecase.GetMyStocktakingSessionsUseCase
 import com.wmserp.app.domain.usecase.GetPickerKpisUseCase
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
@@ -30,12 +32,15 @@ data class DashboardUiState(
     val greetingName: String = "",
     /** Today's picking statistics; null when the wmserp_picking app is not installed or unreachable. */
     val pickerKpis: PickerKpis? = null,
+    /** Stocktaking sessions the user can count in right now. */
+    val stocktaking: List<StocktakingSession> = emptyList(),
 )
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val getDashboard: GetDashboardUseCase,
     private val getPickerKpis: GetPickerKpisUseCase,
+    private val getMyStocktaking: GetMyStocktakingSessionsUseCase,
     authRepository: AuthRepository,
     private val updateManager: AppUpdateManager,
 ) : ViewModel() {
@@ -64,13 +69,15 @@ class DashboardViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             val dashboard = async { getDashboard() }
             val kpis = async { getPickerKpis() }
+            val stocktaking = async { getMyStocktaking() }
             val kpiResult = kpis.await()
+            val sessions = stocktaking.await().getOrNull()
             when (val result = dashboard.await()) {
                 is AppResult.Success -> _uiState.update {
-                    it.copy(isLoading = false, isRefreshing = false, data = result.data, error = null, pickerKpis = kpiResult.getOrNull() ?: it.pickerKpis)
+                    it.copy(isLoading = false, isRefreshing = false, data = result.data, error = null, pickerKpis = kpiResult.getOrNull() ?: it.pickerKpis, stocktaking = sessions ?: it.stocktaking)
                 }
                 is AppResult.Failure -> _uiState.update {
-                    it.copy(isLoading = false, isRefreshing = false, error = result.error.toUiText(), pickerKpis = kpiResult.getOrNull() ?: it.pickerKpis)
+                    it.copy(isLoading = false, isRefreshing = false, error = result.error.toUiText(), pickerKpis = kpiResult.getOrNull() ?: it.pickerKpis, stocktaking = sessions ?: it.stocktaking)
                 }
             }
         }

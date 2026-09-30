@@ -50,6 +50,7 @@ import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SearchField
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.charts.ProgressRow
+import com.wmserp.app.presentation.stocktaking.StocktakingSessionCard
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
@@ -57,6 +58,7 @@ fun OrdersRoute(
     onOpenPurchaseOrder: (String) -> Unit,
     onOpenSalesOrder: (String) -> Unit,
     onOpenPickList: (String) -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
     viewModel: OrdersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -71,10 +73,12 @@ fun OrdersRoute(
         val po = state.purchaseOrders.firstOrNull { it.name.equals(value, ignoreCase = true) }
         val so = state.salesOrders.firstOrNull { it.name.equals(value, ignoreCase = true) }
         val pl = state.pickLists.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        val st = state.sessions.firstOrNull { it.name.equals(value, ignoreCase = true) }
         when {
             po != null -> onOpenPurchaseOrder(po.name)
             so != null -> onOpenSalesOrder(so.name)
             pl != null -> onOpenPickList(pl.name)
+            st != null -> onOpenStocktaking(st.name)
             else -> viewModel.onQueryChange(value)
         }
     }
@@ -86,6 +90,7 @@ fun OrdersRoute(
         onOpenPurchaseOrder = onOpenPurchaseOrder,
         onOpenSalesOrder = onOpenSalesOrder,
         onOpenPickList = onOpenPickList,
+        onOpenStocktaking = onOpenStocktaking,
     )
 }
 
@@ -98,6 +103,7 @@ fun OrdersScreen(
     onOpenPurchaseOrder: (String) -> Unit,
     onOpenSalesOrder: (String) -> Unit,
     onOpenPickList: (String) -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -113,6 +119,7 @@ fun OrdersScreen(
                         OrdersTab.RECEIVE -> R.string.orders_subtitle_receive
                         OrdersTab.DISPATCH -> R.string.orders_subtitle_dispatch
                         OrdersTab.PICK -> R.string.orders_subtitle_pick
+                        OrdersTab.COUNT -> R.string.orders_subtitle_count
                     }
                 ),
                 style = MaterialTheme.typography.bodyMedium,
@@ -137,6 +144,7 @@ fun OrdersScreen(
                     OrdersTab.RECEIVE -> R.string.orders_search_po
                     OrdersTab.DISPATCH -> R.string.orders_search_so
                     OrdersTab.PICK -> R.string.orders_search_pick
+                    OrdersTab.COUNT -> R.string.orders_search_count
                 }
             ),
             leadingIcon = Icons.Outlined.Search,
@@ -152,6 +160,8 @@ fun OrdersScreen(
             ) {
                 if (state.tab == OrdersTab.PICK) {
                     state.pickListError?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                } else if (state.tab == OrdersTab.COUNT) {
+                    state.sessionError?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
                 } else {
                     state.error?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
                 }
@@ -177,6 +187,15 @@ fun OrdersScreen(
                                 item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_pick_title), stringResource(R.string.orders_empty_pick_message)) }
                             }
                             items(pickLists, key = { it.name }) { pl -> PickListCard(pl) { onOpenPickList(pl.name) } }
+                        }
+                        OrdersTab.COUNT -> {
+                            val sessions = state.filteredSessions
+                            if (sessions.isEmpty()) {
+                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_count_title), stringResource(R.string.orders_empty_count_message)) }
+                            }
+                            items(sessions, key = { it.name }) { session ->
+                                StocktakingSessionCard(session, pendingCounts = state.pendingCounts[session.name] ?: 0) { onOpenStocktaking(session.name) }
+                            }
                         }
                     }
                 }

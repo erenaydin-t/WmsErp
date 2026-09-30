@@ -43,6 +43,7 @@ BIN_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "reserved_qty", "o
 WAREHOUSE_FIELDS = ["name", "warehouse_name", "company", "is_group", "parent_warehouse", "disabled", "warehouse_type", "city"]
 SLE_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "voucher_type", "voucher_no", "posting_date", "posting_time"]
 PICKING_METHOD = "wmserp_picking.api.pick_list."
+STOCKTAKING_METHOD = "wmserp_picking.api.stocktaking."
 GET_DOCTYPE = "frappe.desk.form.load.getdoctype"
 GET_DIMENSIONS = "erpnext.accounts.doctype.accounting_dimension.accounting_dimension.get_dimensions"
 ANSWERABLE_FIELDTYPES = {"Link", "Dynamic Link", "Select", "Data", "Small Text", "Text", "Long Text", "Int", "Float", "Currency", "Percent", "Date", "Datetime", "Time"}
@@ -353,6 +354,33 @@ def main() -> int:
                     run_picking_flow(client, report, target, doc, settings or {})
         else:
             report.add("picking", "picking workflow", 0, True, "skipped: no open pick list has rows assigned to this user (pass --pick-list NAME to test one)")
+
+        # ---- Stocktaking (custom app 0.3+), read-only checks ----------------------------------
+        sessions = check_method(client, report, "stocktaking", "get_my_sessions (Orders > Count)", STOCKTAKING_METHOD + "get_my_sessions", expect=list)
+        if sessions is None:
+            print("           (stocktaking API missing: update wmserp_picking to 0.3.0 or later and run bench migrate)")
+        elif not sessions:
+            report.add("stocktaking", "counting sessions", 200, True, "no session in Counting/Recount for this user (start one in ERPNext to test the app)")
+        else:
+            session = sessions[0]
+            totals = session.get("totals") or {}
+            print(f"           {len(sessions)} session(s); {session['name']}: {session.get('counting_mode')} / {session.get('status')} "
+                  f"counted={totals.get('counted_items')}/{totals.get('total_items')} can_count={session.get('can_count')}")
+            header = check_method(client, report, "stocktaking", f"get_session {session['name']}", STOCKTAKING_METHOD + "get_session", params={"name": session["name"]})
+            page = check_method(client, report, "stocktaking", "get_items (first page, mine)", STOCKTAKING_METHOD + "get_items",
+                                params={"name": session["name"], "start": 0, "limit": 50, "mine": 1 if (header or {}).get("counting_mode") == "Assigned" else 0})
+            if page:
+                rows = page.get("items") or []
+                print(f"           {page.get('total')} row(s) for this user; barcodes for {len(page.get('barcodes') or {})} item(s)")
+                if rows:
+                    row = rows[0]
+                    label = {(header or {}).get("qr_item_key") or "item_code": row["item_code"]}
+                    if row.get("batch_no"):
+                        label[(header or {}).get("qr_batch_key") or "batch_no"] = row["batch_no"]
+                    found = check_method(client, report, "stocktaking", "lookup (JSON label of the first row)", STOCKTAKING_METHOD + "lookup",
+                                         params={"name": session["name"], "code": json.dumps(label)})
+                    if found is not None and not found.get("in_session"):
+                        report.add("stocktaking", "lookup finds the row", 200, False, f"{label} was not matched to a row of the session")
 
     failures = report.failures
     print("\n" + "=" * 100)
