@@ -40,9 +40,11 @@ import com.wmserp.app.presentation.orders.DispatchRoute
 import com.wmserp.app.presentation.orders.OrdersRoute
 import com.wmserp.app.presentation.orders.OrdersTab
 import com.wmserp.app.presentation.orders.ReceiveRoute
+import com.wmserp.app.presentation.picking.PickListRoute
 import com.wmserp.app.presentation.profile.ProfileRoute
 import com.wmserp.app.presentation.scan.ScanRoute
 import com.wmserp.app.presentation.splash.SplashScreen
+import com.wmserp.app.presentation.stocktaking.CountingRoute
 
 private val bottomNavItems = listOf(
     BottomNavItem(Routes.DASHBOARD, R.string.nav_home, Icons.Outlined.Home, Icons.Filled.Home),
@@ -140,6 +142,7 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
                 onReceive = { navController.navigateToTab(Routes.orders(OrdersTab.RECEIVE)) },
                 onDispatch = { navController.navigateToTab(Routes.orders(OrdersTab.DISPATCH)) },
                 onReport = { navController.navigateToTab(Routes.INVENTORY) },
+                onOpenStocktaking = { navController.navigate(Routes.stocktaking(it)) },
             )
         }
 
@@ -159,6 +162,25 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
             OrdersRoute(
                 onOpenPurchaseOrder = { navController.navigate(Routes.receive(it)) },
                 onOpenSalesOrder = { navController.navigate(Routes.dispatch(it)) },
+                onOpenPickList = { navController.navigate(Routes.pickList(it)) },
+                onOpenStocktaking = { navController.navigate(Routes.stocktaking(it)) },
+            )
+        }
+
+        composable(
+            route = Routes.STOCKTAKING_PATTERN,
+            arguments = listOf(navArgument(Routes.ARG_SESSION_NAME) { type = NavType.StringType }),
+        ) {
+            CountingRoute(onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Routes.PICK_LIST_PATTERN,
+            arguments = listOf(navArgument(Routes.ARG_PICK_LIST_NAME) { type = NavType.StringType }),
+        ) {
+            PickListRoute(
+                onBack = { navController.popBackStack() },
+                onDone = { navController.navigateToTab(Routes.DASHBOARD) },
             )
         }
 

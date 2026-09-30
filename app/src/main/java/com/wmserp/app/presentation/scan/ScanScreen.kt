@@ -1,12 +1,5 @@
 package com.wmserp.app.presentation.scan
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,9 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -81,6 +72,7 @@ import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
+import com.wmserp.app.presentation.components.ScanFrameOverlay
 import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SectionHeader
 import com.wmserp.app.presentation.components.StatusChip
@@ -297,36 +289,6 @@ private fun Viewfinder(state: ScanUiState, onCameraBarcode: (String, String?) ->
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ScanFrameOverlay(accent: Color, animate: Boolean) {
-    val transition = rememberInfiniteTransition(label = "scanline")
-    val progress by transition.animateFloat(
-        initialValue = 0.12f,
-        targetValue = 0.88f,
-        animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Reverse),
-        label = "scanline_progress",
-    )
-    Canvas(modifier = Modifier.fillMaxSize().padding(28.dp)) {
-        val w = size.width
-        val h = size.height
-        val len = minOf(w, h) * 0.14f
-        val stroke = 5.dp.toPx()
-        val corners = listOf(
-            Offset(0f, 0f) to listOf(Offset(len, 0f), Offset(0f, len)),
-            Offset(w, 0f) to listOf(Offset(w - len, 0f), Offset(w, len)),
-            Offset(0f, h) to listOf(Offset(len, h), Offset(0f, h - len)),
-            Offset(w, h) to listOf(Offset(w - len, h), Offset(w, h - len)),
-        )
-        corners.forEach { (origin, ends) ->
-            ends.forEach { end -> drawLine(Color.White, origin, end, strokeWidth = stroke, cap = StrokeCap.Round) }
-        }
-        if (animate) {
-            val y = h * progress
-            drawLine(accent.copy(alpha = 0.9f), Offset(len * 0.6f, y), Offset(w - len * 0.6f, y), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
         }
     }
 }

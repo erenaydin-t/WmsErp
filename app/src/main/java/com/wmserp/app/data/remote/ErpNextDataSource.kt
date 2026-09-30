@@ -2,9 +2,14 @@ package com.wmserp.app.data.remote
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
+import com.wmserp.app.data.mapper.DocTypeMeta
+import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.model.RequiredField
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -82,6 +87,61 @@ class ErpNextDataSource(
     suspend inline fun <reified Req, reified Res> update(doctype: String, name: String, body: Req): Res =
         update(doctype, name, body, serializer<Req>(), serializer<Res>())
 
+    /** Inserts a fully formed document (with child tables) and returns it as ERPNext saved it. */
+    suspend fun insertDocument(doctype: String, doc: JsonObject): JsonObject = api.insertDoc(doctype, doc).data
+
+    /** Runs an ERPNext document mapper such as `make_purchase_receipt` and returns the unsaved mapped document. */
+    suspend fun mapDocument(method: String, sourceName: String): JsonObject {
+        val message = api.callMethod(method, mapOf("source_name" to sourceName)).message
+        return message as? JsonObject
+            ?: throw AppException(AppError.Server("Empty response from $method", code = ErrorCode.INVALID_RESPONSE))
+    }
+
+    /**
+     * SUM of [field] over the rows matching [filters]. Frappe up to v15 takes SQL functions as strings
+     * (`sum(x) as total`); v16 rejects those and expects `{"SUM": "x", "as": "total"}`. The first rejection
+     * switches this instance to the dict syntax for the rest of the session.
+     */
+    suspend fun sumField(doctype: String, field: String, filters: List<Filter> = emptyList()): Double {
+        if (!dictAggregates) {
+            try {
+                return aggregate(doctype, FrappeQuery.fields("sum($field) as total"), filters)
+            } catch (e: HttpException) {
+                val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+                if (!ErpNextErrorParser.rejectsSqlFunctionStrings(body)) throw AppException(ErpNextErrorParser.parse(e.code(), body))
+                dictAggregates = true
+            }
+        }
+        return aggregate(doctype, FrappeQuery.functionField("SUM", field, alias = "total"), filters)
+    }
+
+    @Volatile
+    private var dictAggregates = false
+
+    private suspend fun aggregate(doctype: String, fields: String, filters: List<Filter>): Double {
+        val row = api.getList(doctype = doctype, fields = fields, filters = FrappeQuery.filters(filters), limit = 1).data.firstOrNull()
+        return row?.get("total")?.let { (it as? JsonPrimitive)?.content?.toDoubleOrNull() } ?: 0.0
+    }
+
+    private val requiredFieldsCache = java.util.concurrent.ConcurrentHashMap<String, List<RequiredField>>()
+
+    /**
+     * Required fields of [doctype] and its child tables, read from the desk meta bundle
+     * (`frappe.desk.form.load.getdoctype`, which includes Custom Fields and Property Setters).
+     * Cached for the life of the process.
+     */
+    suspend fun requiredFields(doctype: String): List<RequiredField> = requiredFieldsCache[doctype]
+        ?: DocTypeMeta.requiredFields(api.callMethodJson(GET_DOCTYPE, mapOf("doctype" to doctype))).also { requiredFieldsCache[doctype] = it }
+
+    /** Default accounting dimensions of [company] (`{fieldname: value}`); empty when none are configured. */
+    suspend fun dimensionDefaults(company: String?): Map<String, String> {
+        if (company.isNullOrBlank()) return emptyMap()
+        val message = api.callMethod(GET_DIMENSIONS, mapOf("with_cost_center_and_project" to "0")).message as? JsonArray ?: return emptyMap()
+        val defaults = message.getOrNull(1) as? JsonObject ?: return emptyMap()
+        val forCompany = defaults[company] as? JsonObject ?: return emptyMap()
+        return forCompany.mapNotNull { (field, value) -> value.contentOrNull()?.takeIf { it.isNotBlank() }?.let { field to it } }.toMap()
+    }
+
     /** Submits a draft document (`docstatus` 0 -> 1) via `frappe.client.submit`. */
     suspend fun submit(doctype: String, name: String): JsonObject {
         val doc = api.getDoc(doctype, name).data
@@ -109,7 +169,33 @@ class ErpNextDataSource(
         return api.callMethod("frappe.desk.query_report.run", params).message
     }
 
+    /** Calls a whitelisted method with GET and decodes its `message`. */
+    suspend fun <T> getMethod(method: String, params: Map<String, String>, serializer: KSerializer<T>): T =
+        decodeMessage(method, api.callMethod(method, params).message, serializer)
+
+    suspend inline fun <reified T> getMethod(method: String, params: Map<String, String> = emptyMap()): T =
+        getMethod(method, params, serializer<T>())
+
+    /** Calls a whitelisted method with a JSON POST body and decodes its `message`. */
+    suspend fun <T> postMethod(method: String, body: JsonObject, serializer: KSerializer<T>): T =
+        decodeMessage(method, api.postMethod(method, body).message, serializer)
+
+    suspend inline fun <reified T> postMethod(method: String, body: JsonObject): T =
+        postMethod(method, body, serializer<T>())
+
+    private fun <T> decodeMessage(method: String, message: JsonElement?, serializer: KSerializer<T>): T {
+        if (message == null || message is JsonNull) {
+            throw AppException(AppError.Server("Empty response from $method", code = ErrorCode.INVALID_RESPONSE))
+        }
+        return json.decodeFromJsonElement(serializer, message)
+    }
+
     suspend fun loggedUser(): String? = api.getLoggedUser().message?.let { (it as? JsonPrimitive)?.content }
+
+    companion object {
+        const val GET_DOCTYPE = "frappe.desk.form.load.getdoctype"
+        const val GET_DIMENSIONS = "erpnext.accounts.doctype.accounting_dimension.accounting_dimension.get_dimensions"
+    }
 
     fun JsonElement.contentOrNull(): String? = (this as? JsonPrimitive)?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.content }
 }

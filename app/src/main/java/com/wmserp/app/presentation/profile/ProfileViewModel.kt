@@ -4,11 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
+import com.wmserp.app.core.update.AppUpdateManager
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.ProfileUpdate
 import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.ScannerSettings
+import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.domain.model.UserProfile
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.ChangePasswordUseCase
@@ -74,10 +76,25 @@ class ProfileViewModel @Inject constructor(
     private val setAppLanguage: SetAppLanguageUseCase,
     authRepository: AuthRepository,
     scanner: ScannerController,
+    private val updateManager: AppUpdateManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProfileUiState(hasHardwareScanner = scanner.hasHardwareScanner))
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
+
+    /** In-app updater state shared with the dashboard banner. */
+    val updateState: StateFlow<UpdateState> = updateManager.state
+    val currentVersion: String get() = updateManager.currentVersion
+
+    fun checkForUpdate() {
+        updateManager.checkForUpdate(force = true)
+    }
+
+    fun downloadUpdate() {
+        updateManager.download()
+    }
+
+    fun cancelUpdate() = updateManager.cancelDownload()
 
     init {
         viewModelScope.launch { observeScannerSettings().collect { s -> _uiState.update { it.copy(scannerSettings = s) } } }
@@ -160,6 +177,7 @@ class ProfileViewModel @Inject constructor(
     fun setScannerMode(mode: ScannerMode) = viewModelScope.launch { updateScannerSettings.setMode(mode) }
     fun setBeep(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setBeep(enabled) }
     fun setVibrate(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setVibrate(enabled) }
+    fun setAskQuantity(enabled: Boolean) = viewModelScope.launch { updateScannerSettings.setAskQuantity(enabled) }
     fun setLanguage(language: AppLanguage) = viewModelScope.launch { setAppLanguage(language) }
 
     fun signOut() {

@@ -14,9 +14,18 @@ plugins {
  * Release signing is resolved from (in order):
  *   1. keystore.properties in the project root (never committed, see .gitignore)
  *   2. Environment variables (used by GitHub Actions secrets)
- * When neither is present the release build is signed with the debug keystore so that
- * CI always produces an installable APK. Play Store uploads must use a real keystore.
+ *   3. app/keystore/internal-testing.jks, a key committed for internal distribution.
+ * The in-app updater installs each CI build over the previous one, which Android only allows when
+ * both APKs carry the same signature, so the fallback must be a *stable* key rather than the
+ * per-machine debug keystore. Anyone with the repository can sign with that key: use 1. or 2. before
+ * distributing outside your own warehouse (Play Store uploads must use a real keystore anyway).
+ *
+ * Versioning: CI passes WMSERP_VERSION_CODE (the workflow run number) and WMSERP_VERSION_NAME
+ * (<base>.<run number>); local builds get versionCode 1 and "<base>.0-dev".
  */
+val baseVersion = "1.1"
+val ciVersionCode = System.getenv("WMSERP_VERSION_CODE")?.trim()?.toIntOrNull()
+val ciVersionName = System.getenv("WMSERP_VERSION_NAME")?.trim()?.takeIf { it.isNotBlank() }
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
@@ -34,8 +43,11 @@ android {
         applicationId = "com.wmserp.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = ciVersionCode ?: 1
+        versionName = ciVersionName ?: "$baseVersion.0-dev"
+
+        // GitHub repository whose Releases feed the in-app updater (owner/repo).
+        buildConfigField("String", "UPDATE_GITHUB_REPO", "\"erenaydin-t/WmsErp\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -44,6 +56,13 @@ android {
     }
 
     signingConfigs {
+        // Stable key for internal distribution (see the note above).
+        create("internal") {
+            storeFile = file("keystore/internal-testing.jks")
+            storePassword = "wmserp-internal"
+            keyAlias = "wmserp"
+            keyPassword = "wmserp-internal"
+        }
         create("release") {
             val storePath = signingValue("storeFile", "WMSERP_KEYSTORE_PATH")
             if (storePath != null && file(storePath).exists()) {
@@ -52,7 +71,7 @@ android {
                 keyAlias = signingValue("keyAlias", "WMSERP_KEY_ALIAS")
                 keyPassword = signingValue("keyPassword", "WMSERP_KEY_PASSWORD")
             } else {
-                initWith(getByName("debug"))
+                initWith(getByName("internal"))
             }
         }
     }
@@ -69,6 +88,8 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            // Same key as the release fallback, so a debug build can be updated to a release build in place.
+            signingConfig = signingConfigs.getByName("internal")
         }
     }
 

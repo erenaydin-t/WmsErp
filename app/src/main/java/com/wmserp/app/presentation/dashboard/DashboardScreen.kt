@@ -21,7 +21,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.AttachMoney
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.PendingActions
+import androidx.compose.material.icons.outlined.TaskAlt
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.LocalShipping
 import androidx.compose.material.icons.outlined.MoveToInbox
@@ -50,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.ActivityEntry
+import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.toUiText
 import com.wmserp.app.presentation.components.EmptyState
@@ -58,7 +63,10 @@ import com.wmserp.app.presentation.components.KpiCard
 import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.QuickActionButton
 import com.wmserp.app.presentation.components.SectionHeader
+import com.wmserp.app.presentation.stocktaking.StocktakingSessionCard
 import com.wmserp.app.presentation.theme.WmsTheme
+import com.wmserp.app.presentation.update.UpdateBanner
+import com.wmserp.app.presentation.update.showsBanner
 
 @Composable
 fun DashboardRoute(
@@ -66,9 +74,11 @@ fun DashboardRoute(
     onReceive: () -> Unit,
     onDispatch: () -> Unit,
     onReport: () -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     DashboardScreen(
         state = state,
         onRefresh = viewModel::refresh,
@@ -77,6 +87,10 @@ fun DashboardRoute(
         onReceive = onReceive,
         onDispatch = onDispatch,
         onReport = onReport,
+        onOpenStocktaking = onOpenStocktaking,
+        updateState = updateState,
+        onDownloadUpdate = viewModel::downloadUpdate,
+        onDismissUpdate = viewModel::dismissUpdate,
     )
 }
 
@@ -89,6 +103,10 @@ fun DashboardScreen(
     onReceive: () -> Unit,
     onDispatch: () -> Unit,
     onReport: () -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
+    updateState: UpdateState = UpdateState.Idle,
+    onDownloadUpdate: () -> Unit = {},
+    onDismissUpdate: () -> Unit = {},
 ) {
     val colors = WmsTheme.colors
     PullToRefreshBox(
@@ -136,6 +154,10 @@ fun DashboardScreen(
                         )
                     }
                 }
+            }
+
+            if (updateState.showsBanner) {
+                item { UpdateBanner(updateState, onDownload = onDownloadUpdate, onDismiss = onDismissUpdate) }
             }
 
             state.error?.let { error ->
@@ -192,6 +214,57 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .testTag("kpi_dispatched"),
                                 subtitle = stringResource(R.string.kpi_dispatched_sub, kpis.periodLabel),
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (state.stocktaking.isNotEmpty()) {
+                item { SectionHeader(stringResource(R.string.dashboard_stocktaking_title)) }
+                items(state.stocktaking, key = { "st_" + it.name }) { session -> StocktakingSessionCard(session) { onOpenStocktaking(session.name) } }
+            }
+
+            state.pickerKpis?.let { kpis ->
+                item {
+                    SectionHeader(stringResource(R.string.kpi_picking_title))
+                    Spacer(Modifier.height(10.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("picker_kpis")) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            KpiCard(
+                                title = stringResource(R.string.kpi_rows_picked),
+                                value = Formatters.int(kpis.rowsPicked),
+                                icon = Icons.Outlined.TaskAlt,
+                                accent = colors.kpiTeal,
+                                modifier = Modifier.weight(1f).testTag("kpi_rows_picked"),
+                                subtitle = stringResource(R.string.kpi_rows_picked_sub, Formatters.qty(kpis.qtyPicked)),
+                            )
+                            KpiCard(
+                                title = stringResource(R.string.kpi_avg_row_time),
+                                value = kpis.avgSecondsPerRow?.let { Formatters.duration(it) } ?: "-",
+                                icon = Icons.Outlined.Timer,
+                                accent = colors.kpiPurple,
+                                modifier = Modifier.weight(1f).testTag("kpi_avg_row_time"),
+                                subtitle = kpis.rowsPerHour?.let { stringResource(R.string.kpi_rows_per_hour, Formatters.qty(Math.round(it * 10) / 10.0)) }
+                                    ?: stringResource(R.string.kpi_avg_row_time_sub),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            KpiCard(
+                                title = stringResource(R.string.kpi_open_rows),
+                                value = Formatters.int(kpis.openRows),
+                                icon = Icons.Outlined.PendingActions,
+                                accent = colors.kpiAmber,
+                                modifier = Modifier.weight(1f).testTag("kpi_open_rows"),
+                                subtitle = stringResource(R.string.kpi_open_rows_sub, kpis.openPickLists),
+                            )
+                            KpiCard(
+                                title = stringResource(R.string.kpi_cards_completed),
+                                value = Formatters.int(kpis.pickListsCompleted),
+                                icon = Icons.Outlined.Checklist,
+                                accent = colors.kpiBlue,
+                                modifier = Modifier.weight(1f).testTag("kpi_cards_completed"),
+                                subtitle = stringResource(R.string.kpi_cards_completed_sub, kpis.pickListsTouched),
                             )
                         }
                     }

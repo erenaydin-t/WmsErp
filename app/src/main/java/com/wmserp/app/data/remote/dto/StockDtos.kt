@@ -88,7 +88,3 @@ data class StockLedgerEntryDto(
     @SerialName("posting_date") val postingDate: String? = null,
     @SerialName("posting_time") val postingTime: String? = null,
 )
-
-/** Result row of an aggregate query such as `sum(grand_total) as total`. */
-@Serializable
-data class AggregateDto(val total: Double? = null, val count: Int? = null)

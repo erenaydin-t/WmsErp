@@ -97,4 +97,38 @@ class AnalyticsRepositoryImplTest {
         assertEquals("USD", kpis.currency)
         assertEquals(0, kpis.dispatched)
     }
+
+    @Test
+    fun `revenue falls back to the Frappe v16 dict syntax when function strings are rejected`() = runTest {
+        val fieldParams = mutableListOf<String>()
+        harness.server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val path = java.net.URLDecoder.decode(request.path ?: "", "UTF-8")
+                return when {
+                    path.contains("get_count") -> MockResponse().setBody("""{"message":1}""")
+                    path.contains("get_single_value") -> MockResponse().setBody("""{"message":"IRR"}""")
+                    path.contains("Sales Invoice") -> {
+                        val fields = request.requestUrl!!.queryParameter("fields").orEmpty()
+                        fieldParams += fields
+                        if (fields.contains("sum(")) {
+                            MockResponse().setResponseCode(417).setBody(
+                                """{"exc_type":"ValidationError","_server_messages":"[\"{\\\"message\\\": \\\"SQL functions are not allowed as strings in SELECT: sum(grand_total) as total. Use dict syntax like {'COUNT': '*'} instead.\\\"}\"]"}"""
+                            )
+                        } else {
+                            MockResponse().setBody("""{"data":[{"total":562200000}]}""")
+                        }
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        val first = (repository.getDashboardKpis() as AppResult.Success).data
+        val second = (repository.getDashboardKpis() as AppResult.Success).data
+
+        assertEquals(562200000.0, first.revenue, 0.0)
+        assertEquals(562200000.0, second.revenue, 0.0)
+        // string syntax, rejected -> dict syntax; the second dashboard load goes straight to the dict syntax
+        assertEquals(listOf("""["sum(grand_total) as total"]""", """[{"SUM":"grand_total","as":"total"}]""", """[{"SUM":"grand_total","as":"total"}]"""), fieldParams)
+    }
 }

@@ -54,17 +54,20 @@ import com.wmserp.app.BuildConfig
 import com.wmserp.app.R
 import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.domain.model.ScannerMode
+import com.wmserp.app.domain.model.UpdateState
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.StatusChip
+import com.wmserp.app.presentation.update.UpdateCard
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
 fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     ProfileScreen(
         state = state,
         onFirstNameChange = viewModel::onFirstNameChange,
@@ -81,10 +84,16 @@ fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
         onScannerModeChange = viewModel::setScannerMode,
         onBeepChange = viewModel::setBeep,
         onVibrateChange = viewModel::setVibrate,
+        onAskQuantityChange = viewModel::setAskQuantity,
         onLanguageChange = viewModel::setLanguage,
         onSignOut = viewModel::signOut,
         onRetry = { viewModel.load(forceRefresh = true) },
         onDismissMessages = viewModel::dismissMessages,
+        updateState = updateState,
+        currentVersion = viewModel.currentVersion,
+        onCheckUpdate = viewModel::checkForUpdate,
+        onDownloadUpdate = viewModel::downloadUpdate,
+        onCancelUpdate = viewModel::cancelUpdate,
     )
 }
 
@@ -106,9 +115,15 @@ fun ProfileScreen(
     onBeepChange: (Boolean) -> Unit,
     onVibrateChange: (Boolean) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
+    onAskQuantityChange: (Boolean) -> Unit = {},
     onSignOut: () -> Unit,
     onRetry: () -> Unit,
     onDismissMessages: () -> Unit,
+    updateState: UpdateState = UpdateState.Idle,
+    currentVersion: String = BuildConfig.VERSION_NAME,
+    onCheckUpdate: () -> Unit = {},
+    onDownloadUpdate: () -> Unit = {},
+    onCancelUpdate: () -> Unit = {},
 ) {
     val colors = WmsTheme.colors
     Column(
@@ -217,7 +232,21 @@ fun ProfileScreen(
             }
             SettingSwitch(stringResource(R.string.profile_beep), state.scannerSettings.beepOnScan, onBeepChange)
             SettingSwitch(stringResource(R.string.profile_vibrate), state.scannerSettings.vibrateOnScan, onVibrateChange)
+            SettingSwitch(stringResource(R.string.profile_ask_quantity), state.scannerSettings.askQuantityOnScan, onAskQuantityChange, tag = "scanner_ask_quantity")
+            Text(
+                stringResource(R.string.profile_ask_quantity_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+
+        UpdateCard(
+            state = updateState,
+            currentVersion = currentVersion,
+            onCheck = onCheckUpdate,
+            onDownload = onDownloadUpdate,
+            onCancel = onCancelUpdate,
+        )
 
         OutlinedButton(
             onClick = onSignOut,
@@ -252,9 +281,9 @@ private fun SettingsCard(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit, tag: String? = null) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onChange)
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange, modifier = if (tag != null) Modifier.testTag(tag) else Modifier)
     }
 }

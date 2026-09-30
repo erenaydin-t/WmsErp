@@ -5,22 +5,28 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.DeliveryNote
+import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.SalesOrder
 import com.wmserp.app.domain.model.SalesOrderItem
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannedCode
+import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.Warehouse
 import com.wmserp.app.domain.usecase.DispatchLine
 import com.wmserp.app.domain.usecase.DispatchSalesOrderUseCase
 import com.wmserp.app.domain.usecase.GetSalesOrderUseCase
 import com.wmserp.app.domain.usecase.LookupScanUseCase
+import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
+import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.ScanCodeSanitizer
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
+import com.wmserp.app.presentation.common.ScanQuantityPrompt
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -49,9 +55,24 @@ data class DispatchUiState(
     val error: UiText? = null,
     val message: UiText? = null,
     val completed: DeliveryNote? = null,
+    /** Required fields the ERPNext site added that still need a value; the dialog shows while non-empty. */
+    val requiredFields: List<RequiredField> = emptyList(),
+    val requiredFieldAnswers: Map<String, String> = emptyMap(),
+    /** Possible values of the required Link fields, keyed by [RequiredField.key]. */
+    val linkOptions: Map<String, List<String>> = emptyMap(),
     val beep: Boolean = true,
     val vibrate: Boolean = true,
+    val cameraActive: Boolean = false,
+    val hasHardwareScanner: Boolean = false,
+    val scannerMode: ScannerMode = ScannerMode.AUTO,
+    /** A matching scan opens the quantity prompt (settings); off, every scan adds one unit. */
+    val askQuantity: Boolean = true,
+    /** The matching scan waiting for its quantity; scans are ignored while it is open. */
+    val pendingScan: ScanQuantityPrompt? = null,
 ) {
+    /** The trigger of the built-in scanner is the primary input; the camera is only offered where it is needed. */
+    val hardwareScannerReady: Boolean get() = hasHardwareScanner && scannerMode != ScannerMode.CAMERA
+    val showCameraButton: Boolean get() = !hardwareScannerReady
     val totalQty: Double get() = lines.sumOf { it.qty }
     val canSubmit: Boolean get() = !isSubmitting && salesOrder != null && totalQty > 0 && completed == null
 }
@@ -61,6 +82,8 @@ data class DispatchUiState(
 class DispatchViewModel @Inject constructor(
     private val getSalesOrder: GetSalesOrderUseCase,
     private val dispatchSalesOrder: DispatchSalesOrderUseCase,
+    private val searchLinkValues: SearchLinkValuesUseCase,
+    private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase,
     private val lookupScan: LookupScanUseCase,
     private val searchWarehouses: SearchWarehousesUseCase,
     observeScannerSettings: ObserveScannerSettingsUseCase,
@@ -70,15 +93,32 @@ class DispatchViewModel @Inject constructor(
 
     private val soName: String = savedStateHandle.get<String>(ARG_SO_NAME).orEmpty()
 
-    private val _uiState = MutableStateFlow(DispatchUiState())
+    private val _uiState = MutableStateFlow(DispatchUiState(hasHardwareScanner = scanner.hasHardwareScanner))
     val uiState: StateFlow<DispatchUiState> = _uiState.asStateFlow()
+
+    /** Set after the first settings emission: later ones must not override a manual camera toggle. */
+    private var settingsApplied = false
 
     init {
         viewModelScope.launch {
-            observeScannerSettings().collect { s -> _uiState.update { it.copy(beep = s.beepOnScan, vibrate = s.vibrateOnScan) } }
+            observeScannerSettings().collect { s ->
+                _uiState.update {
+                    it.copy(
+                        beep = s.beepOnScan,
+                        vibrate = s.vibrateOnScan,
+                        askQuantity = s.askQuantityOnScan,
+                        scannerMode = s.mode,
+                        // The camera opens by itself only when the user chose it explicitly; a manual toggle wins afterwards.
+                        cameraActive = if (settingsApplied) it.cameraActive else s.mode == ScannerMode.CAMERA,
+                    )
+                }
+                settingsApplied = true
+            }
         }
         load()
     }
+
+    fun toggleCamera() = _uiState.update { it.copy(cameraActive = !it.cameraActive) }
 
     fun load() {
         _uiState.update { it.copy(isLoading = true, error = null) }
@@ -121,13 +161,13 @@ class DispatchViewModel @Inject constructor(
 
     fun onScanned(code: ScannedCode) {
         val state = _uiState.value
-        if (state.salesOrder == null || state.completed != null) return
+        if (state.salesOrder == null || state.completed != null || state.pendingScan != null) return
         if (code.source != ScanSource.MANUAL) scanner.feedback(state.beep, state.vibrate)
         val value = ScanCodeSanitizer.sanitize(code.value)
         if (value.isEmpty()) return
         val direct = state.lines.indexOfFirst { it.item.itemCode.equals(value, ignoreCase = true) }
         if (direct >= 0) {
-            addOne(direct)
+            countScan(direct)
             return
         }
         viewModelScope.launch {
@@ -137,7 +177,7 @@ class DispatchViewModel @Inject constructor(
                     if (lookup is ScanLookup.ItemFound) {
                         val idx = _uiState.value.lines.indexOfFirst { it.item.itemCode.equals(lookup.item.code, ignoreCase = true) }
                         if (idx >= 0) {
-                            addOne(idx)
+                            countScan(idx)
                         } else {
                             _uiState.update { it.copy(error = UiText.Res(R.string.receive_not_on_order, listOf(lookup.item.code, state.salesOrder.name))) }
                         }
@@ -150,7 +190,9 @@ class DispatchViewModel @Inject constructor(
         }
     }
 
-    fun submit(asDraft: Boolean) {
+    fun submit(asDraft: Boolean) = submit(asDraft, fieldValues = emptyMap())
+
+    private fun submit(asDraft: Boolean, fieldValues: Map<String, String>) {
         val state = _uiState.value
         val so = state.salesOrder ?: return
         if (!state.canSubmit) return
@@ -161,6 +203,7 @@ class DispatchViewModel @Inject constructor(
                 lines = state.lines.map { DispatchLine(it.item.rowName, it.qty, state.warehouse.ifBlank { null }) },
                 defaultWarehouse = state.warehouse.ifBlank { null },
                 submit = !asDraft,
+                fieldValues = fieldValues,
             )
             when (result) {
                 is AppResult.Success -> _uiState.update {
@@ -170,27 +213,122 @@ class DispatchViewModel @Inject constructor(
                         message = UiText.Res(if (asDraft) R.string.dispatch_draft_saved else R.string.dispatch_submitted, listOf(result.data.name)),
                     )
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isSubmitting = false, error = result.error.toUiText()) }
+                is AppResult.Failure -> {
+                    val error = result.error
+                    if (error is AppError.MissingRequiredFields) {
+                        askRequiredFields(error.fields, asDraft, so.company)
+                    } else {
+                        _uiState.update { it.copy(isSubmitting = false, error = error.toUiText()) }
+                    }
+                }
             }
+        }
+    }
+
+    private var pendingSubmitAsDraft = false
+
+    /** ERPNext needs values the order does not carry: open the dialog and load the choices of its Link fields. */
+    private fun askRequiredFields(fields: List<RequiredField>, asDraft: Boolean, company: String?) {
+        pendingSubmitAsDraft = asDraft
+        _uiState.update { state ->
+            state.copy(
+                isSubmitting = false,
+                requiredFields = fields,
+                requiredFieldAnswers = fields.associate { it.key to state.requiredFieldAnswers[it.key].orEmpty() },
+                linkOptions = emptyMap(),
+            )
+        }
+        viewModelScope.launch {
+            fields.filter { it.isLink }.forEach { field ->
+                val target = field.options ?: return@forEach
+                searchLinkValues(target, "", company).getOrNull()?.let { names ->
+                    _uiState.update { it.copy(linkOptions = it.linkOptions + (field.key to names)) }
+                }
+            }
+        }
+    }
+
+    fun setRequiredFieldAnswer(key: String, value: String) =
+        _uiState.update { it.copy(requiredFieldAnswers = it.requiredFieldAnswers + (key to value)) }
+
+    fun dismissRequiredFields() = _uiState.update { it.copy(requiredFields = emptyList()) }
+
+    /** Saves the answers for the next documents and retries the submission with them. */
+    fun confirmRequiredFields() {
+        val state = _uiState.value
+        val answers = state.requiredFields.associate { it.key to state.requiredFieldAnswers[it.key].orEmpty().trim() }
+        if (answers.isEmpty() || answers.values.any { it.isBlank() }) return
+        _uiState.update { it.copy(requiredFields = emptyList()) }
+        viewModelScope.launch {
+            saveFieldDefaults(answers)
+            submit(pendingSubmitAsDraft, answers)
+        }
+    }
+
+    /** A matching scan: open the quantity prompt (prefilled with what is still open) or add one unit. */
+    private fun countScan(index: Int) {
+        val state = _uiState.value
+        val line = state.lines.getOrNull(index) ?: return
+        val remaining = (line.item.pendingQty - line.qty).coerceAtLeast(0.0)
+        if (remaining <= 1e-9) {
+            _uiState.update { s ->
+                s.copy(
+                    message = UiText.Res(R.string.dispatch_already_picked, listOf(line.item.pendingQty.format(), line.item.itemCode)),
+                    lines = s.lines.mapIndexed { i, l -> l.copy(highlighted = i == index) },
+                )
+            }
+            return
+        }
+        if (!state.askQuantity) {
+            addOne(index)
+            return
+        }
+        _uiState.update { s ->
+            s.copy(
+                error = null,
+                message = null,
+                pendingScan = ScanQuantityPrompt(
+                    rowName = line.item.rowName,
+                    itemCode = line.item.itemCode,
+                    itemName = line.item.itemName,
+                    remaining = remaining,
+                    uom = line.item.uom,
+                ),
+                lines = s.lines.mapIndexed { i, l -> l.copy(highlighted = i == index) },
+            )
+        }
+    }
+
+    fun setPendingQty(text: String) = _uiState.update { it.copy(pendingScan = it.pendingScan?.withText(text)) }
+    fun incrementPendingQty() = _uiState.update { it.copy(pendingScan = it.pendingScan?.plusOne()) }
+    fun decrementPendingQty() = _uiState.update { it.copy(pendingScan = it.pendingScan?.minusOne()) }
+    fun setPendingAll() = _uiState.update { it.copy(pendingScan = it.pendingScan?.all()) }
+    fun cancelPendingScan() = _uiState.update { it.copy(pendingScan = null) }
+
+    /** Adds the confirmed quantity to the scanned line (never beyond what is still open). */
+    fun confirmPendingScan() {
+        val prompt = _uiState.value.pendingScan ?: return
+        if (!prompt.isValid) return
+        _uiState.update { state ->
+            state.copy(
+                pendingScan = null,
+                error = null,
+                message = UiText.Res(R.string.dispatch_qty_added, listOf(prompt.qty.format(), prompt.itemCode)),
+                lines = state.lines.map { l ->
+                    if (l.item.rowName == prompt.rowName) l.copy(qtyText = (l.qty + prompt.qty).coerceAtMost(l.item.pendingQty).format(), highlighted = true) else l.copy(highlighted = false)
+                },
+            )
         }
     }
 
     private fun addOne(index: Int) {
         _uiState.update { state ->
             val line = state.lines[index]
-            val pending = line.item.pendingQty
-            if (line.qty + 1 > pending + 1e-9) {
-                state.copy(
-                    message = UiText.Res(R.string.dispatch_already_picked, listOf(pending.format(), line.item.itemCode)),
-                    lines = state.lines.mapIndexed { i, l -> l.copy(highlighted = i == index) },
-                )
-            } else {
-                state.copy(
-                    message = UiText.Res(R.string.dispatch_picked_one, listOf(line.item.itemCode)),
-                    error = null,
-                    lines = state.lines.mapIndexed { i, l -> if (i == index) l.copy(qtyText = (l.qty + 1).format(), highlighted = true) else l.copy(highlighted = false) },
-                )
-            }
+            state.copy(
+                message = UiText.Res(R.string.dispatch_qty_added, listOf("1", line.item.itemCode)),
+                error = null,
+                lines = state.lines.mapIndexed { i, l -> if (i == index) l.copy(qtyText = (l.qty + 1).coerceAtMost(l.item.pendingQty).format(), highlighted = true) else l.copy(highlighted = false) },
+            )
         }
     }
 

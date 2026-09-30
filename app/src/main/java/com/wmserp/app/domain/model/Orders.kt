@@ -58,9 +58,32 @@ data class SalesOrderItem(
     val uom: String? = null,
     val warehouse: String? = null,
     val rate: Double = 0.0,
+    /** Stock units per [uom] (ERPNext `conversion_factor`); batches are allocated in stock units. */
+    val conversionFactor: Double = 1.0,
 ) {
     val pendingQty: Double get() = (qty - deliveredQty).coerceAtLeast(0.0)
 }
+
+/** Tracking flags of an ERPNext `Item` (`has_batch_no` / `has_serial_no`). */
+data class ItemTracking(
+    val itemCode: String,
+    val hasBatchNo: Boolean,
+    val hasSerialNo: Boolean,
+)
+
+/** Stock of one batch in one warehouse, in the item's stock UOM. */
+data class BatchStock(
+    val batchNo: String,
+    val qty: Double,
+    /** ISO date (`yyyy-MM-dd`) or null when the batch does not expire. */
+    val expiryDate: String? = null,
+)
+
+/** The part of a delivery line taken from one batch, in stock UOM. */
+data class BatchAllocation(
+    val batchNo: String,
+    val qty: Double,
+)
 
 /** Maps to the ERPNext `Purchase Receipt` DocType (result of a receive flow). */
 data class PurchaseReceipt(
@@ -85,6 +108,8 @@ data class PurchaseReceiptDraft(
     val supplier: String,
     val lines: List<PurchaseReceiptLine>,
     val company: String? = null,
+    /** Values for required fields the site added, keyed by [RequiredField.key]. */
+    val fieldValues: Map<String, String> = emptyMap(),
 )
 
 /** Maps to the ERPNext `Delivery Note` DocType (result of a dispatch flow). */
@@ -101,16 +126,45 @@ data class DeliveryNote(
 
 data class DeliveryNoteLine(
     val itemCode: String,
+    /** Quantity in the sales order row's UOM. */
     val qty: Double,
     val warehouse: String,
     val salesOrderRow: String,
     val uom: String? = null,
     val rate: Double? = null,
-)
+    val conversionFactor: Double = 1.0,
+    /** Batch split of [qty] (stock UOM) for batch-tracked items; empty for plain items. */
+    val batches: List<BatchAllocation> = emptyList(),
+) {
+    /** [qty] expressed in stock units. */
+    val stockQty: Double get() = qty * conversionFactor
+}
 
 data class DeliveryNoteDraft(
     val salesOrderName: String,
     val customer: String,
     val lines: List<DeliveryNoteLine>,
     val company: String? = null,
+    /** Values for required fields the site added, keyed by [RequiredField.key]. */
+    val fieldValues: Map<String, String> = emptyMap(),
 )
+
+/**
+ * A field ERPNext requires on a document header or child row (from the DocType meta, custom fields
+ * included) that the app cannot fill from the order, e.g. a mandatory *Department*.
+ */
+data class RequiredField(
+    val doctype: String,
+    val fieldname: String,
+    val label: String,
+    val fieldtype: String,
+    /** Link target DocType, or the newline-separated options of a Select. */
+    val options: String? = null,
+    val default: String? = null,
+) {
+    /** Key of stored answers: `Purchase Receipt Item.department`. */
+    val key: String get() = "$doctype.$fieldname"
+    val isLink: Boolean get() = fieldtype == "Link"
+    val selectOptions: List<String>
+        get() = if (fieldtype == "Select") options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
+}

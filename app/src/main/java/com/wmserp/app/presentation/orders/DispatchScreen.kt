@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -40,13 +42,18 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
+import com.wmserp.app.domain.model.ScanSource
+import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.components.CameraScannerSheet
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
 import com.wmserp.app.presentation.components.LoadingState
 import com.wmserp.app.presentation.components.QtyStepper
+import com.wmserp.app.presentation.components.RequiredFieldsDialog
+import com.wmserp.app.presentation.components.ScanQuantityDialog
 import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.WarehousePicker
@@ -69,6 +76,17 @@ fun DispatchRoute(onBack: () -> Unit, viewModel: DispatchViewModel = hiltViewMod
         onSubmit = viewModel::submit,
         onDismissMessage = viewModel::dismissMessage,
         onRetry = viewModel::load,
+        onRequiredFieldChange = viewModel::setRequiredFieldAnswer,
+        onConfirmRequiredFields = viewModel::confirmRequiredFields,
+        onDismissRequiredFields = viewModel::dismissRequiredFields,
+        onToggleCamera = viewModel::toggleCamera,
+        onCameraBarcode = { value, symbology -> viewModel.onScanned(ScannedCode(value, ScanSource.CAMERA, symbology)) },
+        onPendingQtyChange = viewModel::setPendingQty,
+        onPendingIncrement = viewModel::incrementPendingQty,
+        onPendingDecrement = viewModel::decrementPendingQty,
+        onPendingAll = viewModel::setPendingAll,
+        onConfirmPending = viewModel::confirmPendingScan,
+        onCancelPending = viewModel::cancelPendingScan,
     )
 }
 
@@ -85,11 +103,63 @@ fun DispatchScreen(
     onSubmit: (asDraft: Boolean) -> Unit,
     onDismissMessage: () -> Unit,
     onRetry: () -> Unit,
+    onRequiredFieldChange: (String, String) -> Unit = { _, _ -> },
+    onConfirmRequiredFields: () -> Unit = {},
+    onDismissRequiredFields: () -> Unit = {},
+    onToggleCamera: () -> Unit = {},
+    onCameraBarcode: (String, String?) -> Unit = { _, _ -> },
+    onPendingQtyChange: (String) -> Unit = {},
+    onPendingIncrement: () -> Unit = {},
+    onPendingDecrement: () -> Unit = {},
+    onPendingAll: () -> Unit = {},
+    onConfirmPending: () -> Unit = {},
+    onCancelPending: () -> Unit = {},
 ) {
     val so = state.salesOrder
+    if (so != null && state.cameraActive && state.completed == null) {
+        CameraScannerSheet(
+            title = stringResource(R.string.camera_sheet_title),
+            onDismiss = onToggleCamera,
+            onBarcode = onCameraBarcode,
+            scanning = state.pendingScan == null,
+        )
+    }
+    state.pendingScan?.let { prompt ->
+        ScanQuantityDialog(
+            prompt = prompt,
+            title = stringResource(R.string.scan_qty_title_pick),
+            onQtyChange = onPendingQtyChange,
+            onIncrement = onPendingIncrement,
+            onDecrement = onPendingDecrement,
+            onAll = onPendingAll,
+            onConfirm = onConfirmPending,
+            onDismiss = onCancelPending,
+        )
+    }
+    if (state.requiredFields.isNotEmpty()) {
+        RequiredFieldsDialog(
+            doctype = stringResource(R.string.doctype_delivery_note),
+            fields = state.requiredFields,
+            answers = state.requiredFieldAnswers,
+            linkOptions = state.linkOptions,
+            onAnswerChange = onRequiredFieldChange,
+            onConfirm = onConfirmRequiredFields,
+            onDismiss = onDismissRequiredFields,
+        )
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { WmsTopBar(title = so?.name ?: stringResource(R.string.dispatch_title), subtitle = so?.customerName, onBack = onBack) },
+        topBar = { WmsTopBar(title = so?.name ?: stringResource(R.string.dispatch_title), subtitle = so?.customerName, onBack = onBack, actions = {
+            if (so != null && state.completed == null) {
+                IconButton(onClick = onToggleCamera, modifier = Modifier.testTag("dispatch_camera_toggle")) {
+                    Icon(
+                        Icons.Outlined.CameraAlt,
+                        contentDescription = stringResource(R.string.camera_sheet_title),
+                        tint = if (state.cameraActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }) },
         bottomBar = {
             if (so != null && state.completed == null) {
                 Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
