@@ -112,6 +112,19 @@ def get_custom_fields():
                 no_copy=1,
             ),
         ],
+        "Stock Reconciliation": [
+            dict(
+                fieldname="custom_stocktaking_session",
+                fieldtype="Link",
+                options="Stocktaking Session",
+                label="Stocktaking Session",
+                insert_after="purpose",
+                read_only=1,
+                no_copy=1,
+                in_standard_filter=1,
+                description="Set when the reconciliation was created from a WMS stocktaking session; submitting it completes that session and unfreezes the warehouse.",
+            ),
+        ],
         "Pick List Item": [
             dict(
                 fieldname="custom_picker",
@@ -184,6 +197,7 @@ def setup_customizations():
     ensure_print_format()
     frappe.clear_cache(doctype="Pick List")
     frappe.clear_cache(doctype="Pick List Item")
+    frappe.clear_cache(doctype="Stock Reconciliation")
 
 
 def remove_obsolete_fields():

@@ -1,0 +1,409 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-09-30 08:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "company",
+  "warehouse",
+  "posting_date",
+  "column_break_main",
+  "counting_mode",
+  "status",
+  "frozen",
+  "options_section",
+  "freeze_warehouse",
+  "require_second_count",
+  "duplicate_count_policy",
+  "blind_count",
+  "qty_tolerance",
+  "column_break_options",
+  "item_group",
+  "brand",
+  "include_zero_stock",
+  "counters_section",
+  "counters",
+  "progress_section",
+  "total_items",
+  "counted_items",
+  "uncounted_items",
+  "matched_items",
+  "column_break_progress",
+  "variance_items",
+  "recount_required",
+  "pending_review",
+  "approved_items",
+  "column_break_variance",
+  "qty_variance",
+  "value_variance",
+  "timeline_section",
+  "started_at",
+  "started_by",
+  "counting_completed_at",
+  "approved_at",
+  "approved_by",
+  "column_break_timeline",
+  "stock_reconciliation",
+  "reconciled_at",
+  "completed_at",
+  "completed_by",
+  "cancelled_at",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "default": "ST-.YYYY.-",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "ST-.YYYY.-",
+   "reqd": 1
+  },
+  {
+   "default": ":Company",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "description": "The warehouse (or warehouse group) to count. It is frozen for stock transactions while the session is active.",
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Assigned",
+   "description": "Assigned: every item is given to a counter beforehand (Assign Items). Open: counters scan whatever they find; the system records who counted what and lists what is left.",
+   "fieldname": "counting_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Counting Mode",
+   "options": "Assigned\nOpen",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nCounting\nManager Review\nRecount\nFinal Approval\nReconciled\nCompleted\nCancelled",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "frozen",
+   "fieldtype": "Check",
+   "label": "Warehouse Frozen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "options_section",
+   "fieldtype": "Section Break",
+   "label": "Options"
+  },
+  {
+   "default": "1",
+   "description": "Block every stock transaction in the warehouse from Start until the session is completed or cancelled (the session's own Stock Reconciliation is allowed).",
+   "fieldname": "freeze_warehouse",
+   "fieldtype": "Check",
+   "label": "Freeze Warehouse"
+  },
+  {
+   "default": "1",
+   "description": "A first count that differs from the ERP quantity must be counted again by the counter before it reaches the manager.",
+   "fieldname": "require_second_count",
+   "fieldtype": "Check",
+   "label": "Require Second Count on Mismatch"
+  },
+  {
+   "default": "Lock after count",
+   "description": "What happens when a counted item is scanned again: refuse (Lock) or record another count that goes to manager review when it differs.",
+   "fieldname": "duplicate_count_policy",
+   "fieldtype": "Select",
+   "label": "Duplicate Count Policy",
+   "options": "Lock after count\nAllow additional counts"
+  },
+  {
+   "default": "0",
+   "description": "Hide the ERP quantity from counters in the app (blind count).",
+   "fieldname": "blind_count",
+   "fieldtype": "Check",
+   "label": "Blind Count"
+  },
+  {
+   "default": "0",
+   "description": "Absolute difference (stock UOM) still treated as a match.",
+   "fieldname": "qty_tolerance",
+   "fieldtype": "Float",
+   "label": "Quantity Tolerance"
+  },
+  {
+   "fieldname": "column_break_options",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Optional: only snapshot items of this group (and its sub-groups).",
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "Item Group",
+   "options": "Item Group"
+  },
+  {
+   "description": "Optional: only snapshot items of this brand.",
+   "fieldname": "brand",
+   "fieldtype": "Link",
+   "label": "Brand",
+   "options": "Brand"
+  },
+  {
+   "default": "0",
+   "description": "Also list items whose ERP quantity is zero (they are always addable during counting).",
+   "fieldname": "include_zero_stock",
+   "fieldtype": "Check",
+   "label": "Include Zero Stock"
+  },
+  {
+   "fieldname": "counters_section",
+   "fieldtype": "Section Break",
+   "label": "Counters"
+  },
+  {
+   "description": "Users who count with the app. In Open mode anyone listed here may count any item; counters who scan in Open mode are added automatically.",
+   "fieldname": "counters",
+   "fieldtype": "Table",
+   "label": "Counters",
+   "options": "Stocktaking Counter"
+  },
+  {
+   "fieldname": "progress_section",
+   "fieldtype": "Section Break",
+   "label": "Progress"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_items",
+   "fieldtype": "Int",
+   "label": "Total Items",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "counted_items",
+   "fieldtype": "Int",
+   "label": "Counted",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "uncounted_items",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Not Counted",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "matched_items",
+   "fieldtype": "Int",
+   "label": "Matched",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_progress",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "variance_items",
+   "fieldtype": "Int",
+   "label": "Variance",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "recount_required",
+   "fieldtype": "Int",
+   "label": "Recount Required",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "pending_review",
+   "fieldtype": "Int",
+   "label": "Pending Manager Review",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "approved_items",
+   "fieldtype": "Int",
+   "label": "Approved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_variance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "qty_variance",
+   "fieldtype": "Float",
+   "label": "Quantity Variance",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "value_variance",
+   "fieldtype": "Currency",
+   "label": "Value Variance",
+   "options": "Company:company:default_currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "timeline_section",
+   "fieldtype": "Section Break",
+   "label": "Timeline"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_by",
+   "fieldtype": "Link",
+   "label": "Started By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "counting_completed_at",
+   "fieldtype": "Datetime",
+   "label": "Counting Completed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_at",
+   "fieldtype": "Datetime",
+   "label": "Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_timeline",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "stock_reconciliation",
+   "fieldtype": "Link",
+   "label": "Stock Reconciliation",
+   "options": "Stock Reconciliation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reconciled_at",
+   "fieldtype": "Datetime",
+   "label": "Reconciliation Created At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_by",
+   "fieldtype": "Link",
+   "label": "Completed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancelled_at",
+   "fieldtype": "Datetime",
+   "label": "Cancelled At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-30 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WMS ERP Picking",
+ "name": "Stocktaking Session",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Stock User"
+  }
+ ],
+ "search_fields": "warehouse,status,posting_date",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "warehouse",
+ "track_changes": 1
+}

@@ -1,4 +1,4 @@
-# wmserp_picking — row-level picking, JSON QR labels and picker KPIs for ERPNext
+# wmserp_picking — row-level picking, JSON QR labels, picker KPIs and stocktaking for ERPNext
 
 A small Frappe app that turns the standard ERPNext *Pick List* into a multi-picker workflow driven
 by the WMS ERP Android app:
@@ -11,9 +11,15 @@ by the WMS ERP Android app:
   *Wrong batch. Expected …, scanned …* when the batch differs. A Batch print format prints the labels.
 * **Time tracking & KPIs.** Every row records started/completed timestamps and its duration; the card
   records its first start and last completion; `get_picker_kpis` aggregates today's stats per picker.
+* **Stocktaking (physical inventory count), 0.3.0.** A *Stocktaking Session* freezes a warehouse,
+  snapshots every item / batch with its ERP quantity, lets counters count from the app (first count,
+  forced second count on a mismatch, manager review, recounts, duplicate-count policies, offline
+  queues), keeps every count in an append-only log and posts the approved result as a standard
+  *Stock Reconciliation* (see [Stocktaking](#stocktaking)).
 * **No core modifications, no direct stock writes.** Everything is Custom Fields, one Property Setter,
-  a Single DocType, a Print Format and `doc_events`. Stock and GL entries are produced by ERPNext only
-  when the generated *draft* Delivery Note / Stock Entry is submitted by a user.
+  a Single DocType, the stocktaking DocTypes and reports, a Print Format and `doc_events`. Stock and GL
+  entries are produced by ERPNext only when the generated *draft* Delivery Note / Stock Entry / Stock
+  Reconciliation is submitted by a user.
 
 ## Installation
 
@@ -29,7 +35,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.2.1     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.3.0     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -40,17 +46,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.2.1                              # or pin a version
+# git checkout wmserp_picking-v0.3.0                              # or pin a version
 cd ../..
-bench --site <site> migrate      # re-applies the custom fields / print format
-bench restart                    # no `bench build` needed: the app has no client assets
-bench version                    # should list wmserp_picking 0.2.1
+bench --site <site> migrate      # re-applies the custom fields / print format, creates the stocktaking DocTypes
+bench restart                    # no `bench build` needed: the form / list / report scripts are served from the app folder
+bench version                    # should list wmserp_picking 0.3.0
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.3.0 | `wmserp_picking-v0.3.0` | Stocktaking sessions: warehouse freeze through `Stock Ledger Entry.before_insert`, snapshot of item / batch quantities and valuation rates, scan-to-count API with forced second counts, duplicate-count policies, blind counts and tolerances, bulk assignment by filters or *Open* mode, manager review and recounts, append-only count log, offline `sync_counts`, Stock Reconciliation posting with `custom_stocktaking_session`, the *Stocktaking Variance* and *Stocktaking Uncounted Items* reports. Picking unchanged. |
 | 0.2.1 | `wmserp_picking-v0.2.1` | Fixes the *WMS Batch QR Label* print format: `wms_qr_svg` handed pyqrcode a text buffer although `QRCode.svg()` writes UTF-8 bytes, so every label failed with `string argument expected, got 'bytes'`. The QR helpers no longer import frappe at module level and are covered by `test_qr.py`. Payload format unchanged. |
 | 0.2.0 | `wmserp_picking-v0.2.0` | Row-level multi-picker workflow, WMS Settings, strict JSON QR labels, batch QR print format, timers and picker KPIs; Frappe v14–v16. Migrating from 0.1.0 removes the card-level fields (see below). |
 | 0.1.0 | – | First card-level workflow (`start_picking` / `save_progress` / `complete_picking`), superseded. |
@@ -60,7 +67,7 @@ bench version                    # should list wmserp_picking 0.2.1
 > project, not a Frappe app.
 
 `after_install` and `after_migrate` run `wmserp_picking.setup.custom_fields.setup_customizations`
-(custom fields, the purpose option, the print format). To re-apply by hand:
+(custom fields, the purpose option, the print format, the *Stock Reconciliation* link field). To re-apply by hand:
 
 ```bash
 bench --site <site> execute wmserp_picking.setup.custom_fields.setup_customizations
@@ -106,12 +113,17 @@ content is `{"<qr_item_key>": <item>, "<qr_batch_key>": <batch>}`. The QR is ren
 helpers `wms_batch_qr_svg(doc)` / `wms_qr_svg(text)` (pyqrcode, shipped with Frappe), which you can
 reuse in your own label formats.
 
+**Stocktaking** (0.3.0): the DocTypes *Stocktaking Session*, *Stocktaking Item*, *Stocktaking Count* and
+*Stocktaking Counter*, the read-only link `custom_stocktaking_session` on *Stock Reconciliation* and the
+reports *Stocktaking Variance* / *Stocktaking Uncounted Items* — described in [Stocktaking](#stocktaking).
+
 ## API
 
-All methods live in `wmserp_picking.api.pick_list` and are called as
+The picking methods live in `wmserp_picking.api.pick_list` and are called as
 `POST /api/method/wmserp_picking.api.pick_list.<method>` with a JSON body (session cookie or
 `Authorization: token key:secret`). Row operations require the caller to be the row's picker; users
-with *Stock Manager* or *System Manager* may act on any row.
+with *Stock Manager* or *System Manager* may act on any row. The stocktaking methods
+(`wmserp_picking.api.stocktaking`) are listed in [Stocktaking API](#stocktaking-api).
 
 | Method | Parameters | Effect |
 | --- | --- | --- |
@@ -149,6 +161,70 @@ and `complete_row` all return:
 Errors are raised with `frappe.throw` (HTTP 417 / 403 with `_server_messages`), which the Android
 app shows verbatim.
 
+## Stocktaking
+
+Physical inventory counts (0.3.0). Four DocTypes in the module *WMS ERP Picking*:
+
+| DocType | Purpose |
+| --- | --- |
+| **Stocktaking Session** (`ST-.YYYY.-`) | One count of one warehouse (a warehouse group includes its leaf warehouses). Options: *counting mode* (Assigned / Open), *freeze warehouse*, *require second count*, *duplicate count policy* (Lock after count / Allow additional counts), *blind count*, *qty tolerance*, item group / brand filter, *include zero stock*; a *counters* table (user + area); live totals (total, counted, uncounted, matched, variance, recount required, pending review, approved, qty and value variance); timeline stamps and the link to the generated Stock Reconciliation. |
+| **Stocktaking Item** | One row per item + warehouse + batch of the snapshot (thousands of rows, hence not a child table): ERP quantity and valuation rate at start, status, counter, `count_1` / `count_2` / `recount_*` with user and time, `final_qty`, quantity and value difference, recount / review notes. Rows added during the count carry `added_during_count`. |
+| **Stocktaking Count** | Append-only log of every count: session, row, count type, qty, ERP qty, difference, outcome, user, server time, device time, source and a unique `client_ref`. Never edited or overwritten. |
+| **Stocktaking Counter** | Child table of the session: user, full name, optional area. |
+
+Plus the read-only link `custom_stocktaking_session` on *Stock Reconciliation* and the script reports
+**Stocktaking Variance** (rows with a difference, sorted by absolute value difference, with quantity and value
+totals) and **Stocktaking Uncounted Items**.
+
+**Session flow.** Draft → *Start counting* → **Counting** → **Manager Review** (every row counted, differences
+left to review) or **Recount** (recounts requested) → **Final Approval** → *Create Stock Reconciliation* →
+**Reconciled** → the reconciliation is submitted → **Completed**. **Cancelled** is possible until a reconciliation
+is submitted. Row statuses: Not Counted → Assigned → Counting → Counted / Recount Required → Recounted →
+Manager Review → Approved → Finalized.
+
+* **Start** checks that no other session freezes the warehouse, snapshots the *Bin* rows (item group / brand
+  filter and the zero-stock option applied) and, for batch items, one row per batch with stock in the warehouse
+  (batch balances come from the Stock Ledger on v14 and from *Serial and Batch Entry* on v15 / v16) plus a
+  remainder row without batch, inserted with `frappe.db.bulk_insert`. In *Assigned* mode rows stay
+  *Not Counted* until assigned; in *Open* mode every row is countable by anyone with the app and counters are
+  registered on their first count.
+* **Freeze.** While the session is Counting … Reconciled, `Stock Ledger Entry.before_insert` refuses every entry
+  for the warehouse (or any warehouse below the frozen group) with *Warehouse X is frozen for stocktaking ST-…*,
+  except the session's own Stock Reconciliation. `freeze_warehouse` can be switched off per session.
+* **Counting rules** (`stocktaking/rules.py`, pure Python, mirrored in the app): a count within `qty_tolerance` of
+  the ERP quantity is *Counted*; otherwise, with *require second count*, the same counter must count again
+  (`next_count_type = Second Count`); a second count that matches is accepted, one that still differs goes to
+  *Manager Review* with `final_qty` = the second count. A manager-requested recount that matches ERP closes the
+  row, otherwise the row becomes *Recounted* for review. *Lock after count* refuses another user's count with
+  `already_counted` (and the counter's name); *Allow additional counts* records it as a further count. Rows not
+  assigned to the caller are refused with `not_assigned` (supervisors and *Open* mode excepted). Rejections come
+  back as `{"outcome": "rejected", "reason": ...}` with HTTP 200 so the app can show them and keep its offline
+  queue in order.
+* **Assignment** (`assign_items`): bulk, by explicit rows or by filters (item group including children, brand,
+  batch, location, status); `count_assignable` previews the number of matching rows; `unassign=1` clears them.
+* **Review.** `request_recount` (row → *Recount Required*, session → *Recount*), `accept_item` / `accept_items` /
+  `accept_all` (rows → *Approved*), `approve_session` (→ *Final Approval*; requires every row counted and every
+  difference reviewed), `create_reconciliation` (a Stock Reconciliation with one line per row whose final quantity
+  differs from ERP, batch rows through `use_serial_batch_fields`; when nothing differs the session completes
+  directly), `complete_session`, `cancel_session`. Submitting the Stock Reconciliation marks the session
+  *Completed* and unfreezes the warehouse; cancelling it returns the session to *Final Approval*.
+
+### Stocktaking API
+
+`POST /api/method/wmserp_picking.api.stocktaking.<method>`:
+
+| Method | Parameters | Effect |
+| --- | --- | --- |
+| `get_my_sessions` | – | Sessions in *Counting* / *Recount* the caller may count in (assigned counter, *Open* mode or supervisor), with totals and the caller's own stats. |
+| `get_session` | `name` | Session header: options, totals, `my` stats, `can_count`, `is_supervisor`, counters, QR keys and warehouses. |
+| `get_items` | `name`, `start?=0`, `limit?=1000`, `mine?`, `status?`, `query?` | Paged rows (`items`, `total`, `start`, `limit`) plus a `barcodes` map (Item Barcode → item code) for offline scanning. ERP quantities are omitted for counters of a blind session. |
+| `lookup` | `name`, `code`, `warehouse?` | Resolves a JSON label or barcode against the session (`found`, `kind`, `item_code`, `batch_no`, `expiry_date`, `rows`, `can_add`, `in_session`). |
+| `start_item` | `item` | Row → *Counting*. |
+| `submit_count` | `name`, `qty`, `item?` or `item_code` + `batch_no?` + `warehouse?`, `client_ref?`, `device_time?`, `note?`, `source?` | Records one count and applies the rules. Returns `{"outcome": accepted / second_count_required / manager_review / duplicate / rejected, "reason"?, "item", "count", "totals", "session_status"}`. A repeated `client_ref` returns the original result as `duplicate`. |
+| `sync_counts` | `name`, `counts` (list of `submit_count` bodies) | Replays an offline queue in order, one savepoint per entry; a failing entry yields `{"client_ref", "outcome": "error", "reason": "validation" / "permission", "message"}` and the others continue. |
+| `get_item_history` | `item` | Every count of a row, oldest first. |
+| `start_session`, `assign_items`, `count_assignable`, `complete_counting`, `request_recount`, `request_recounts`, `accept_item`, `accept_items`, `accept_all`, `approve_session`, `create_reconciliation`, `complete_session`, `cancel_session`, `get_progress` | see the session form | Manager actions (write permission on the session); the form and list buttons call these. |
+
 ## Permissions
 
 * Pickers need *read* on Pick List (Stock User is enough). Progress is stored with `db_set`, so no
@@ -157,11 +233,16 @@ app shows verbatim.
   supervisor) needs *create* permission on the target DocType.
 * Row assignment (`custom_picker`) is done in the desk on the submitted Pick List (the fields allow
   editing after submit) or through `assign_rows`.
+* Stocktaking: counters need *Stock User* (read on the stocktaking DocTypes; counts are written by the
+  whitelisted methods). Managers need *Stock Manager* (write on Stocktaking Session / Item), *create* on
+  Stock Reconciliation for `create_reconciliation` and *submit* on it to complete the session.
 
 ## Tests
 
 The pure rules (row/card completion, quantity validation, JSON QR parsing and matching, purpose
-mapping, permissions, KPI aggregation) and the QR label helpers (`test_qr.py`: payload format, the
+mapping, permissions, KPI aggregation), the stocktaking rules (`test_stocktaking_rules.py`: count
+evaluation, second counts, recounts, duplicate policies, assignment, session status transitions, progress
+totals, reconciliation rows, scan resolution) and the QR label helpers (`test_qr.py`: payload format, the
 bytes-vs-text SVG regression, a well-formed SVG for a batch such as `DPL-20100067-00443`) are covered
 without a bench:
 
