@@ -36,13 +36,14 @@ import com.wmserp.app.presentation.dashboard.DashboardRoute
 import com.wmserp.app.presentation.inventory.InventoryRoute
 import com.wmserp.app.presentation.login.LoginRoute
 import com.wmserp.app.presentation.navigation.Routes
-import com.wmserp.app.presentation.orders.DispatchRoute
 import com.wmserp.app.presentation.orders.OrdersRoute
 import com.wmserp.app.presentation.orders.OrdersTab
 import com.wmserp.app.presentation.orders.ReceiveRoute
+import com.wmserp.app.presentation.picking.PickListRoute
 import com.wmserp.app.presentation.profile.ProfileRoute
 import com.wmserp.app.presentation.scan.ScanRoute
 import com.wmserp.app.presentation.splash.SplashScreen
+import com.wmserp.app.presentation.stocktaking.CountingRoute
 
 private val bottomNavItems = listOf(
     BottomNavItem(Routes.DASHBOARD, R.string.nav_home, Icons.Outlined.Home, Icons.Filled.Home),
@@ -138,8 +139,9 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
             DashboardRoute(
                 onScan = { navController.navigateToTab(Routes.SCAN) },
                 onReceive = { navController.navigateToTab(Routes.orders(OrdersTab.RECEIVE)) },
-                onDispatch = { navController.navigateToTab(Routes.orders(OrdersTab.DISPATCH)) },
+                onPick = { navController.navigateToTab(Routes.orders(OrdersTab.PICK)) },
                 onReport = { navController.navigateToTab(Routes.INVENTORY) },
+                onOpenStocktaking = { navController.navigate(Routes.stocktaking(it)) },
             )
         }
 
@@ -149,7 +151,7 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
             route = Routes.SCAN_PATTERN,
             arguments = listOf(navArgument(Routes.ARG_TARGET) { type = NavType.StringType; nullable = true; defaultValue = null }),
         ) {
-            ScanRoute(onReceivePurchaseOrder = { navController.navigate(Routes.receive(it)) })
+            ScanRoute(onReceivePurchaseReceipt = { navController.navigate(Routes.receive(it)) })
         }
 
         composable(
@@ -157,8 +159,26 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
             arguments = listOf(navArgument(Routes.ARG_TAB) { type = NavType.StringType; nullable = true; defaultValue = null }),
         ) {
             OrdersRoute(
-                onOpenPurchaseOrder = { navController.navigate(Routes.receive(it)) },
-                onOpenSalesOrder = { navController.navigate(Routes.dispatch(it)) },
+                onOpenPurchaseReceipt = { navController.navigate(Routes.receive(it)) },
+                onOpenPickList = { navController.navigate(Routes.pickList(it)) },
+                onOpenStocktaking = { navController.navigate(Routes.stocktaking(it)) },
+            )
+        }
+
+        composable(
+            route = Routes.STOCKTAKING_PATTERN,
+            arguments = listOf(navArgument(Routes.ARG_SESSION_NAME) { type = NavType.StringType }),
+        ) {
+            CountingRoute(onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Routes.PICK_LIST_PATTERN,
+            arguments = listOf(navArgument(Routes.ARG_PICK_LIST_NAME) { type = NavType.StringType }),
+        ) {
+            PickListRoute(
+                onBack = { navController.popBackStack() },
+                onDone = { navController.navigateToTab(Routes.DASHBOARD) },
             )
         }
 
@@ -166,16 +186,9 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
 
         composable(
             route = Routes.RECEIVE_PATTERN,
-            arguments = listOf(navArgument(Routes.ARG_PO_NAME) { type = NavType.StringType }),
+            arguments = listOf(navArgument(Routes.ARG_RECEIPT_NAME) { type = NavType.StringType }),
         ) {
             ReceiveRoute(onBack = { navController.popBackStack() })
-        }
-
-        composable(
-            route = Routes.DISPATCH_PATTERN,
-            arguments = listOf(navArgument(Routes.ARG_SO_NAME) { type = NavType.StringType }),
-        ) {
-            DispatchRoute(onBack = { navController.popBackStack() })
         }
     }
 }

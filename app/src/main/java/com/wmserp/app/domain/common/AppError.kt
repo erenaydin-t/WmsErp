@@ -1,5 +1,7 @@
 package com.wmserp.app.domain.common
 
+import com.wmserp.app.domain.model.RequiredField
+
 /**
  * Stable identifiers for errors produced by the app itself (as opposed to free-text messages
  * returned by ERPNext). The presentation layer maps these to localized strings; [AppError.message]
@@ -18,7 +20,6 @@ enum class ErrorCode {
     PASSWORDS_DO_NOT_MATCH,
     PASSWORD_UNCHANGED,
     CURRENT_PASSWORD_INCORRECT,
-    FIRST_NAME_REQUIRED,
     ITEM_REQUIRED,
     QTY_MUST_BE_POSITIVE,
     WAREHOUSES_REQUIRED,
@@ -26,14 +27,13 @@ enum class ErrorCode {
     TARGET_WAREHOUSE_REQUIRED,
     SOURCE_WAREHOUSE_REQUIRED,
     UNKNOWN_ORDER_ROW,
-    OVER_RECEIVE,
-    OVER_DISPATCH,
     SELECT_WAREHOUSE_FOR_ITEM,
     NOTHING_TO_RECEIVE,
-    NOTHING_TO_DISPATCH,
+    BATCH_REQUIRED_FOR_ITEM,
+    PURCHASE_RECEIPT_NOT_FOUND,
+    RECEIPT_NOT_RECEIVABLE,
+    MISSING_REQUIRED_FIELDS,
     EMPTY_BARCODE,
-    PURCHASE_ORDER_NOT_FOUND,
-    SALES_ORDER_NOT_FOUND,
     NO_COMPANY_CONFIGURED,
     NETWORK_UNREACHABLE,
     NETWORK_DNS,
@@ -47,6 +47,17 @@ enum class ErrorCode {
     SERVER_ERROR,
     SERVER_UNAVAILABLE,
     INVALID_RESPONSE,
+    OVER_PICK,
+    PICKING_NOT_COMPLETED,
+    ROW_INCOMPLETE,
+    ROW_ALREADY_PICKED,
+    ROW_NOT_ASSIGNED,
+    PICK_LIST_NOT_FOUND,
+    UNSUPPORTED_PICK_PURPOSE,
+    COUNT_QTY_INVALID,
+    STOCKTAKING_SESSION_NOT_FOUND,
+    STOCKTAKING_ITEM_NOT_IN_SESSION,
+    STOCKTAKING_OFFLINE_UNKNOWN_ITEM,
     UNKNOWN,
 }
 
@@ -103,6 +114,14 @@ sealed class AppError(
         val httpCode: Int? = null,
         override val code: ErrorCode? = null,
         override val args: List<String> = emptyList(),
+    ) : AppError(message, code, args)
+
+    /** ERPNext requires fields the app cannot fill by itself; the UI asks the user for them once. */
+    data class MissingRequiredFields(
+        val fields: List<RequiredField>,
+        override val message: String = "ERPNext requires: " + fields.joinToString { it.label },
+        override val code: ErrorCode? = ErrorCode.MISSING_REQUIRED_FIELDS,
+        override val args: List<String> = listOf(fields.joinToString { it.label }),
     ) : AppError(message, code, args)
 
     /** Anything that could not be classified. */

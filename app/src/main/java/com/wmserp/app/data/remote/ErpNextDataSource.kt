@@ -2,13 +2,14 @@ package com.wmserp.app.data.remote
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
+import com.wmserp.app.domain.common.ErrorCode
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
 import retrofit2.HttpException
 
@@ -82,6 +83,9 @@ class ErpNextDataSource(
     suspend inline fun <reified Req, reified Res> update(doctype: String, name: String, body: Req): Res =
         update(doctype, name, body, serializer<Req>(), serializer<Res>())
 
+    /** Inserts a fully formed document (with child tables) and returns it as ERPNext saved it. */
+    suspend fun insertDocument(doctype: String, doc: JsonObject): JsonObject = api.insertDoc(doctype, doc).data
+
     /** Submits a draft document (`docstatus` 0 -> 1) via `frappe.client.submit`. */
     suspend fun submit(doctype: String, name: String): JsonObject {
         val doc = api.getDoc(doctype, name).data
@@ -100,7 +104,7 @@ class ErpNextDataSource(
 
     suspend fun getSingleValue(doctype: String, field: String): String? {
         val message = api.callMethod("frappe.client.get_single_value", mapOf("doctype" to doctype, "field" to field)).message
-        return (message as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content?.takeIf { it.isNotBlank() }
+        return (message as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.takeIf { it.isNotBlank() }
     }
 
     /** Runs a script/query report through `frappe.desk.query_report.run`. */
@@ -109,7 +113,35 @@ class ErpNextDataSource(
         return api.callMethod("frappe.desk.query_report.run", params).message
     }
 
-    suspend fun loggedUser(): String? = api.getLoggedUser().message?.let { (it as? JsonPrimitive)?.content }
+    /** Calls a whitelisted method with GET and decodes its `message`. */
+    suspend fun <T> getMethod(method: String, params: Map<String, String>, serializer: KSerializer<T>): T =
+        decode(serializer, api.callMethod(method, params).message, method)
 
-    fun JsonElement.contentOrNull(): String? = (this as? JsonPrimitive)?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.content }
+    suspend inline fun <reified T> getMethod(method: String, params: Map<String, String> = emptyMap()): T =
+        getMethod(method, params, serializer<T>())
+
+    /** Calls a whitelisted method with a JSON POST body and decodes its `message`. */
+    suspend fun <T> postMethod(method: String, body: JsonObject, serializer: KSerializer<T>): T =
+        decode(serializer, api.postMethod(method, body).message, method)
+
+    suspend inline fun <reified T> postMethod(method: String, body: JsonObject): T =
+        postMethod(method, body, serializer<T>())
+
+    /** Calls a whitelisted method with a JSON POST body and returns its raw `message` (callers inspect it first). */
+    suspend fun postRaw(method: String, body: JsonObject): JsonElement {
+        val message = api.postMethod(method, body).message
+        if (message == null || message is JsonNull) {
+            throw AppException(AppError.Server("Empty response from $method", code = ErrorCode.INVALID_RESPONSE))
+        }
+        return message
+    }
+
+    fun <T> decode(serializer: KSerializer<T>, message: JsonElement?, method: String): T {
+        if (message == null || message is JsonNull) {
+            throw AppException(AppError.Server("Empty response from $method", code = ErrorCode.INVALID_RESPONSE))
+        }
+        return json.decodeFromJsonElement(serializer, message)
+    }
+
+    suspend fun loggedUser(): String? = api.getLoggedUser().message?.let { (it as? JsonPrimitive)?.content }
 }

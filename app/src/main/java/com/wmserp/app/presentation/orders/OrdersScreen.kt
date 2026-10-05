@@ -32,12 +32,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
-import com.wmserp.app.domain.model.PurchaseOrder
-import com.wmserp.app.domain.model.SalesOrder
+import com.wmserp.app.domain.model.PickList
+import com.wmserp.app.domain.model.PickingStatus
+import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.presentation.common.asString
+import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.common.titleRes
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
@@ -46,23 +49,32 @@ import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SearchField
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.charts.ProgressRow
+import com.wmserp.app.presentation.stocktaking.StocktakingSessionCard
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
 fun OrdersRoute(
-    onOpenPurchaseOrder: (String) -> Unit,
-    onOpenSalesOrder: (String) -> Unit,
+    onOpenPurchaseReceipt: (String) -> Unit,
+    onOpenPickList: (String) -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
     viewModel: OrdersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    // Scanning an order barcode on the list filters it (and opens it when it matches exactly).
+    // Receipts and pick lists change state on their detail screens, so refresh silently when coming back.
+    LifecycleResumeEffect(Unit) {
+        viewModel.onResumed()
+        onPauseOrDispose { }
+    }
+    // Scanning a document barcode on the list filters it (and opens it when it matches exactly).
     ScannerListener { code ->
         val value = code.value.trim()
-        val po = state.purchaseOrders.firstOrNull { it.name.equals(value, ignoreCase = true) }
-        val so = state.salesOrders.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        val pr = state.receipts.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        val pl = state.pickLists.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        val st = state.sessions.firstOrNull { it.name.equals(value, ignoreCase = true) }
         when {
-            po != null -> onOpenPurchaseOrder(po.name)
-            so != null -> onOpenSalesOrder(so.name)
+            pr != null -> onOpenPurchaseReceipt(pr.name)
+            pl != null -> onOpenPickList(pl.name)
+            st != null -> onOpenStocktaking(st.name)
             else -> viewModel.onQueryChange(value)
         }
     }
@@ -71,8 +83,9 @@ fun OrdersRoute(
         onSelectTab = viewModel::selectTab,
         onQueryChange = viewModel::onQueryChange,
         onRefresh = viewModel::refresh,
-        onOpenPurchaseOrder = onOpenPurchaseOrder,
-        onOpenSalesOrder = onOpenSalesOrder,
+        onOpenPurchaseReceipt = onOpenPurchaseReceipt,
+        onOpenPickList = onOpenPickList,
+        onOpenStocktaking = onOpenStocktaking,
     )
 }
 
@@ -82,8 +95,9 @@ fun OrdersScreen(
     onSelectTab: (OrdersTab) -> Unit,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
-    onOpenPurchaseOrder: (String) -> Unit,
-    onOpenSalesOrder: (String) -> Unit,
+    onOpenPurchaseReceipt: (String) -> Unit,
+    onOpenPickList: (String) -> Unit,
+    onOpenStocktaking: (String) -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -94,7 +108,13 @@ fun OrdersScreen(
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
             Text(stringResource(R.string.orders_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
-                stringResource(if (state.tab == OrdersTab.RECEIVE) R.string.orders_subtitle_receive else R.string.orders_subtitle_dispatch),
+                stringResource(
+                    when (state.tab) {
+                        OrdersTab.RECEIVE -> R.string.orders_subtitle_receive
+                        OrdersTab.PICK -> R.string.orders_subtitle_pick
+                        OrdersTab.COUNT -> R.string.orders_subtitle_count
+                    }
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -104,7 +124,7 @@ fun OrdersScreen(
                 Tab(
                     selected = state.tab == tab,
                     onClick = { onSelectTab(tab) },
-                    text = { Text(stringResource(tab.titleRes())) },
+                    text = { Text(stringResource(tab.titleRes()), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.testTag("orders_tab_${tab.name}"),
                 )
             }
@@ -112,7 +132,13 @@ fun OrdersScreen(
         SearchField(
             value = state.query,
             onValueChange = onQueryChange,
-            placeholder = stringResource(if (state.tab == OrdersTab.RECEIVE) R.string.orders_search_po else R.string.orders_search_so),
+            placeholder = stringResource(
+                when (state.tab) {
+                    OrdersTab.RECEIVE -> R.string.orders_search_receipt
+                    OrdersTab.PICK -> R.string.orders_search_pick
+                    OrdersTab.COUNT -> R.string.orders_search_count
+                }
+            ),
             leadingIcon = Icons.Outlined.Search,
             modifier = Modifier
                 .padding(horizontal = 20.dp, vertical = 10.dp)
@@ -124,22 +150,36 @@ fun OrdersScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                state.error?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                when (state.tab) {
+                    OrdersTab.RECEIVE -> state.error?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                    OrdersTab.PICK -> state.pickListError?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                    OrdersTab.COUNT -> state.sessionError?.let { error -> item { ErrorBanner(error.asString(), onRetry = onRefresh) } }
+                }
                 if (state.isLoading) {
                     item { LoadingState(modifier = Modifier.height(220.dp)) }
                 } else {
                     when (state.tab) {
                         OrdersTab.RECEIVE -> {
-                            if (state.purchaseOrders.isEmpty()) {
+                            if (state.receipts.isEmpty()) {
                                 item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_receive_title), stringResource(R.string.orders_empty_receive_message)) }
                             }
-                            items(state.purchaseOrders, key = { it.name }) { po -> PurchaseOrderCard(po) { onOpenPurchaseOrder(po.name) } }
+                            items(state.receipts, key = { it.name }) { receipt -> PurchaseReceiptCard(receipt) { onOpenPurchaseReceipt(receipt.name) } }
                         }
-                        OrdersTab.DISPATCH -> {
-                            if (state.salesOrders.isEmpty()) {
-                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_dispatch_title), stringResource(R.string.orders_empty_dispatch_message)) }
+                        OrdersTab.PICK -> {
+                            val pickLists = state.filteredPickLists
+                            if (pickLists.isEmpty()) {
+                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_pick_title), stringResource(R.string.orders_empty_pick_message)) }
                             }
-                            items(state.salesOrders, key = { it.name }) { so -> SalesOrderCard(so) { onOpenSalesOrder(so.name) } }
+                            items(pickLists, key = { it.name }) { pl -> PickListCard(pl) { onOpenPickList(pl.name) } }
+                        }
+                        OrdersTab.COUNT -> {
+                            val sessions = state.filteredSessions
+                            if (sessions.isEmpty()) {
+                                item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_count_title), stringResource(R.string.orders_empty_count_message)) }
+                            }
+                            items(sessions, key = { it.name }) { session ->
+                                StocktakingSessionCard(session, pendingCounts = state.pendingCounts[session.name] ?: 0) { onOpenStocktaking(session.name) }
+                            }
                         }
                     }
                 }
@@ -148,63 +188,81 @@ fun OrdersScreen(
     }
 }
 
+/** A draft Purchase Receipt waiting for the warehouse: supplier, stage, rows and units; never an amount. */
 @Composable
-private fun PurchaseOrderCard(po: PurchaseOrder, onClick: () -> Unit) {
+private fun PurchaseReceiptCard(receipt: PurchaseReceipt, onClick: () -> Unit) {
+    val stage = receipt.workflowState?.takeIf { it.isNotBlank() } ?: receipt.status ?: stringResource(R.string.receive_stage_draft)
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.large,
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.fillMaxWidth().testTag("po_${po.name}"),
+        modifier = Modifier.fillMaxWidth().testTag("pr_${receipt.name}"),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(po.name, style = MaterialTheme.typography.titleSmall)
-                    Text(po.supplierName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(receipt.name, style = MaterialTheme.typography.titleSmall)
+                    Text(receipt.supplierName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                StatusChip(po.status, WmsTheme.colors.warning)
+                StatusChip(stage, if (receipt.canReceive) WmsTheme.colors.warning else WmsTheme.colors.info)
             }
-            ProgressRow(
-                label = stringResource(R.string.orders_received_pct, Formatters.percent(po.perReceived)),
-                fraction = (po.perReceived / 100.0).toFloat(),
-                valueText = Formatters.money(po.grandTotal, po.currency),
-                color = WmsTheme.colors.kpiTeal,
+            Text(
+                stringResource(R.string.orders_receipt_rows, receipt.itemCount, Formatters.qty(receipt.totalQty)),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
             )
             Text(
-                stringResource(R.string.orders_expected_ordered, Formatters.date(po.scheduleDate), Formatters.date(po.transactionDate)),
+                listOfNotNull(
+                    stringResource(R.string.orders_receipt_date, Formatters.date(receipt.postingDate)),
+                    receipt.setWarehouse,
+                    receipt.supplierDeliveryNote?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.receive_supplier_note, it) },
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 }
 
 @Composable
-private fun SalesOrderCard(so: SalesOrder, onClick: () -> Unit) {
+private fun PickListCard(pickList: PickList, onClick: () -> Unit) {
+    val statusColor = when (pickList.pickingStatus) {
+        PickingStatus.READY_TO_PICK -> WmsTheme.colors.info
+        PickingStatus.PICKING -> WmsTheme.colors.warning
+        PickingStatus.PICKED -> WmsTheme.colors.success
+    }
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.large,
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.fillMaxWidth().testTag("so_${so.name}"),
+        modifier = Modifier.fillMaxWidth().testTag("pick_${pickList.name}"),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(so.name, style = MaterialTheme.typography.titleSmall)
-                    Text(so.customerName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(pickList.name, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        pickList.customerName ?: stringResource(pickList.purpose.labelRes()),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                StatusChip(so.status, WmsTheme.colors.info)
+                StatusChip(stringResource(pickList.pickingStatus.labelRes()), statusColor)
             }
             ProgressRow(
-                label = stringResource(R.string.orders_delivered_pct, Formatters.percent(so.perDelivered)),
-                fraction = (so.perDelivered / 100.0).toFloat(),
-                valueText = Formatters.money(so.grandTotal, so.currency),
-                color = WmsTheme.colors.kpiBlue,
+                label = stringResource(R.string.pick_card_my_rows, pickList.myPickedRows, pickList.myRowCount),
+                fraction = pickList.myProgress,
+                valueText = stringResource(R.string.pick_card_progress, Formatters.qty(pickList.pickedQty), Formatters.qty(pickList.requiredQty)),
+                color = statusColor,
             )
             Text(
-                stringResource(R.string.orders_deliver_by_ordered, Formatters.date(so.deliveryDate), Formatters.date(so.transactionDate)),
+                listOfNotNull(stringResource(pickList.purpose.labelRes()), pickList.parentWarehouse, stringResource(R.string.pick_card_items, pickList.itemCount)).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

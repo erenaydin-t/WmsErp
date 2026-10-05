@@ -1,0 +1,97 @@
+{
+ "actions": [],
+ "creation": "2026-09-28 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "qr_section",
+  "qr_item_key",
+  "qr_batch_key",
+  "qr_help",
+  "receiving_section",
+  "receipt_workflow_states",
+  "receiving_help"
+ ],
+ "fields": [
+  {
+   "fieldname": "qr_section",
+   "fieldtype": "Section Break",
+   "label": "QR Label Keys"
+  },
+  {
+   "default": "item_code",
+   "description": "JSON key that carries the Item Code in printed QR labels.",
+   "fieldname": "qr_item_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "QR Item Key",
+   "reqd": 1
+  },
+  {
+   "default": "batch_no",
+   "description": "JSON key that carries the Batch No in printed QR labels.",
+   "fieldname": "qr_batch_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "QR Batch Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "qr_help",
+   "fieldtype": "HTML",
+   "label": "Help",
+   "options": "<p>The WMS app only accepts QR labels whose content is a JSON object using these keys, for example <code>{\"item_code\": \"ITEM-001\", \"batch_no\": \"B-2026-01\"}</code> (batch label) or <code>{\"item_code\": \"ITEM-001\"}</code> (item label). Print them with the <b>WMS Batch QR Label</b> / <b>WMS Item QR Label</b> print formats, or many per A4 page with <b>Batch</b> / <b>Item</b> list &gt; Actions &gt; <b>Print QR Label Sheet</b> (layout in the <b>WMS Batch QR Label Sheet</b> / <b>WMS Item QR Label Sheet</b> print formats).</p>"
+  },
+  {
+   "fieldname": "receiving_section",
+   "fieldtype": "Section Break",
+   "label": "Receiving (Purchase Receipts)"
+  },
+  {
+   "fieldname": "receipt_workflow_states",
+   "fieldtype": "Small Text",
+   "label": "Receipt Workflow States",
+   "description": "Optional. Workflow states (one per line) of draft Purchase Receipts that the warehouse may receive in the app. Leave empty to list the draft states in which one of the user's roles may edit (or every draft when Purchase Receipt has no workflow)."
+  },
+  {
+   "fieldname": "receiving_help",
+   "fieldtype": "HTML",
+   "label": "Help",
+   "options": "<p>The app's <b>Orders &gt; Receive</b> lists <i>draft</i> Purchase Receipts at the warehouse stage. The warehouse counts the goods against the rows; confirming writes the counted quantities, drops rows that were not received (the Purchase Order stays open for them) and submits the receipt through the workflow action that submits it (or directly without a workflow).</p>"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-05 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WMS ERP Picking",
+ "name": "WMS Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Stock User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -2,6 +2,8 @@ package com.wmserp.app.domain.repository
 
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ActivityEntry
+import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.BatchWarehouseStock
 import com.wmserp.app.domain.model.Item
 import com.wmserp.app.domain.model.StockEntry
 import com.wmserp.app.domain.model.StockLevel
@@ -13,6 +15,12 @@ interface InventoryRepository {
     suspend fun getItem(itemCode: String): AppResult<Item>
     suspend fun searchItems(query: String, limit: Int = 20): AppResult<List<Item>>
     suspend fun getStockLevels(itemCode: String): AppResult<List<StockLevel>>
+
+    /** A batch by its name (`Batch.name`) or its printed id (`Batch.batch_id`); null when unknown. */
+    suspend fun getBatch(code: String): AppResult<Batch?>
+
+    /** Stock of a batch per warehouse (ERPNext `get_batch_qty`), warehouses with stock only. */
+    suspend fun getBatchStock(batchNo: String): AppResult<List<BatchWarehouseStock>>
 
     suspend fun getWarehouse(name: String): AppResult<Warehouse?>
     suspend fun searchWarehouses(query: String, limit: Int = 30): AppResult<List<Warehouse>>

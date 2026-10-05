@@ -5,8 +5,6 @@ on:
     branches:
       - main
       - 'claude/**'
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
@@ -14,6 +12,14 @@ on:
     inputs:
       run_instrumented_tests:
         description: "Run Compose UI tests on an emulator"
+        type: boolean
+        default: false
+      publish_release:
+        description: "Publish this build as a GitHub Release (feeds the in-app updater) even though it is not main"
+        type: boolean
+        default: false
+      publish_backend:
+        description: "Publish erpnext/wmserp_picking to the wmserp_picking branch and tag its version even though it is not main"
         type: boolean
         default: false
 
@@ -26,6 +32,8 @@ permissions:
 
 env:
   JAVA_VERSION: "17"
+  # Version of every build is <BASE_VERSION>.<workflow run number>; the run number is the versionCode.
+  BASE_VERSION: "1.1"
 
 jobs:
   build:
@@ -35,9 +43,20 @@ jobs:
     env:
       # The secrets context cannot be used in step conditions, so expose a flag here.
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Compute version (base version + workflow run number)
+        id: version
+        run: |
+          version_name="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          echo "WMSERP_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "WMSERP_VERSION_NAME=${version_name}" >> "$GITHUB_ENV"
+          echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
+          echo "Building WMS ERP ${version_name} (versionCode ${GITHUB_RUN_NUMBER})"
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -69,6 +88,22 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "WMSERP_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Set up Python (ERPNext app tests)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pyqrcode (the QR label tests render with the real library, as a bench does)
+        # pyqrcode 1.2.1 only ships an sdist with a legacy setup.py: it needs a current setuptools
+        # and wheel (Ubuntu's patched system setuptools cannot build it, hence setup-python above).
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "pyqrcode==1.2.1"
+          python -c "import pyqrcode; print('pyqrcode', pyqrcode.__file__)"
+
+      - name: ERPNext picking app rules and QR label tests (pure Python, no bench needed)
+        run: python -m unittest discover -s erpnext/wmserp_picking -p "test_*.py" -v
 
       - name: Lint and unit tests
         run: ./gradlew --no-daemon lintDebug testDebugUnitTest --stacktrace
@@ -111,15 +146,83 @@ jobs:
             app/build/test-results/**
           if-no-files-found: ignore
 
-      - name: Attach APKs to GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release:
+    name: Publish GitHub release (feeds the in-app updater)
+    # Every build of main becomes a release "v<version>" with the release APK attached. The app reads
+    # /repos/<owner>/<repo>/releases/latest, so main builds are offered as updates; a manual run with
+    # "publish_release", or a push whose commit message contains "[publish]" (both jobs) or
+    # "[publish-release]" (this job only), does the same for another branch (testing before a merge).
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]') || contains(github.event.head_commit.message, '[publish-release]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the release APK built by this run
+        uses: actions/download-artifact@v4
         with:
-          files: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/bundle/release/*.aab
-          generate_release_notes: true
+          name: wmserp-release-apk
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          apk="$(ls dist/*.apk | head -n 1)"
+          asset="wmserp-${VERSION}.apk"
+          cp "$apk" "$asset"
+          notes="$(git log -1 --pretty=%B)"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" "$asset#WMS ERP ${VERSION} (APK)" --clobber
+          else
+            gh release create "$tag" "$asset#WMS ERP ${VERSION} (APK)" --title "WMS ERP ${VERSION}" --notes "$notes" --latest
+          fi
+          echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
+
+  publish-backend:
+    name: Publish ERPNext app branch (wmserp_picking)
+    # bench needs a Frappe app at the root of what it clones, so the backend folder is published
+    # as its own branch: `bench get-app https://github.com/<owner>/WmsErp --branch wmserp_picking`.
+    # Runs on every push to main, on a manual run with "publish_backend" for the dispatched branch, or
+    # on a push whose commit message contains "[publish]" (both jobs) or "[publish-backend]" (this job
+    # only: a backend fix that must reach benches without shipping a new APK).
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[publish]') || contains(github.event.head_commit.message, '[publish-backend]'))) || (github.event_name == 'workflow_dispatch' && inputs.publish_backend)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history for the subtree split)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Split erpnext/wmserp_picking and push it to the wmserp_picking branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          split=$(git subtree split --prefix=erpnext/wmserp_picking)
+          echo "Split commit: $split"
+          git push --force origin "$split:refs/heads/wmserp_picking"
+
+      - name: Tag the published app version (wmserp_picking-v<__version__>)
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import re,pathlib; print(re.search(r'__version__\s*=\s*[\"\']([^\"\']+)', pathlib.Path('erpnext/wmserp_picking/wmserp_picking/__init__.py').read_text()).group(1))")
+          tag="wmserp_picking-v${version}"
+          split=$(git subtree split --prefix=erpnext/wmserp_picking)
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            echo "Tag ${tag} already exists; bump __version__ in wmserp_picking/__init__.py to publish a new one."
+          else
+            git tag -a "${tag}" "${split}" -m "wmserp_picking ${version}"
+            git push origin "refs/tags/${tag}"
+            echo "Tagged ${split} as ${tag}"
+          fi
 
   instrumented-tests:
     name: Compose UI tests (emulator)

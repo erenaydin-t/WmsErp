@@ -6,6 +6,8 @@ import com.wmserp.app.data.mapper.toDto
 import com.wmserp.app.data.remote.ApiCaller
 import com.wmserp.app.data.remote.ErpNextDataSource
 import com.wmserp.app.data.remote.Filter
+import com.wmserp.app.data.remote.dto.BatchDto
+import com.wmserp.app.data.remote.dto.BatchWarehouseQtyDto
 import com.wmserp.app.data.remote.dto.BinDto
 import com.wmserp.app.data.remote.dto.ItemDto
 import com.wmserp.app.data.remote.dto.StockEntryDto
@@ -13,11 +15,15 @@ import com.wmserp.app.data.remote.dto.StockLedgerEntryDto
 import com.wmserp.app.data.remote.dto.WarehouseDto
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ActivityEntry
+import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.BatchWarehouseStock
 import com.wmserp.app.domain.model.Item
 import com.wmserp.app.domain.model.StockEntry
 import com.wmserp.app.domain.model.StockLevel
 import com.wmserp.app.domain.model.Warehouse
 import com.wmserp.app.domain.repository.InventoryRepository
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 
 class InventoryRepositoryImpl(
     private val dataSource: ErpNextDataSource,
@@ -67,6 +73,26 @@ class InventoryRepositoryImpl(
             orderBy = "actual_qty desc",
             limit = 100,
         ).map { it.toDomain() }
+    }
+
+    /** `Batch.name` first (what the labels carry), then the printed `batch_id` of older sites. */
+    override suspend fun getBatch(code: String): AppResult<Batch?> = apiCaller.call {
+        dataSource.getDocOrNull<BatchDto>(BATCH, code)?.toDomain()
+            ?: dataSource.getList<BatchDto>(
+                doctype = BATCH,
+                fields = BATCH_FIELDS,
+                filters = listOf(Filter.eq("batch_id", code)),
+                limit = 1,
+            ).firstOrNull()?.toDomain()
+    }
+
+    override suspend fun getBatchStock(batchNo: String): AppResult<List<BatchWarehouseStock>> = apiCaller.call {
+        val message = dataSource.getMethod<JsonElement>(GET_BATCH_QTY, mapOf("batch_no" to batchNo))
+        (message as? JsonArray).orEmpty()
+            .map { dataSource.json.decodeFromJsonElement(BatchWarehouseQtyDto.serializer(), it) }
+            .mapNotNull { it.toDomain() }
+            .filter { it.qty > 0.0 }
+            .sortedByDescending { it.qty }
     }
 
     override suspend fun getWarehouse(name: String): AppResult<Warehouse?> = apiCaller.call {
@@ -149,16 +175,19 @@ class InventoryRepositoryImpl(
     companion object {
         const val ITEM = "Item"
         const val ITEM_BARCODE = "Item Barcode"
+        const val BATCH = "Batch"
         const val BIN = "Bin"
         const val WAREHOUSE = "Warehouse"
         const val STOCK_ENTRY = "Stock Entry"
         const val STOCK_LEDGER_ENTRY = "Stock Ledger Entry"
+        const val GET_BATCH_QTY = "erpnext.stock.doctype.batch.batch.get_batch_qty"
         private const val MAX_NAME_LOOKUP = 100
 
         val ITEM_LIST_FIELDS = listOf(
             "name", "item_code", "item_name", "item_group", "stock_uom", "description", "image",
-            "disabled", "is_stock_item", "valuation_rate", "standard_rate", "brand",
+            "disabled", "is_stock_item", "has_batch_no", "has_serial_no", "brand",
         )
+        val BATCH_FIELDS = listOf("name", "batch_id", "item", "item_name", "expiry_date", "manufacturing_date", "disabled", "stock_uom", "supplier", "description")
         val BIN_FIELDS = listOf("name", "item_code", "warehouse", "actual_qty", "reserved_qty", "ordered_qty", "projected_qty", "stock_uom")
         val WAREHOUSE_FIELDS = listOf("name", "warehouse_name", "company", "is_group", "parent_warehouse", "disabled", "warehouse_type", "city")
         val SLE_FIELDS = listOf("name", "item_code", "warehouse", "actual_qty", "voucher_type", "voucher_no", "posting_date", "posting_time")

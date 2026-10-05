@@ -44,7 +44,7 @@ class DashboardNavigationTest {
         isLoading = false,
         greetingName = "Eren",
         data = DashboardData(
-            kpis = DashboardKpis(totalItems = 1250, pendingOrders = 18, revenue = 152000.0, currency = "USD", dispatched = 42, periodLabel = "Sep 2026"),
+            kpis = DashboardKpis(totalItems = 1250, pendingOrders = 18, receipts = 9, dispatched = 42, periodLabel = "Sep 2026"),
             recentActivity = emptyList(),
         ),
     )
@@ -72,7 +72,7 @@ class DashboardNavigationTest {
                     onRetry = {},
                     onScan = { clicks += "scan" },
                     onReceive = { clicks += "receive" },
-                    onDispatch = { clicks += "dispatch" },
+                    onPick = { clicks += "pick" },
                     onReport = { clicks += "report" },
                 )
             }
@@ -80,10 +80,10 @@ class DashboardNavigationTest {
 
         composeRule.onNodeWithTag("action_scan").performClick()
         composeRule.onNodeWithTag("action_receive").performClick()
-        composeRule.onNodeWithTag("action_dispatch").performClick()
+        composeRule.onNodeWithTag("action_pick").performClick()
         composeRule.onNodeWithTag("action_report").performClick()
 
-        assertEquals(listOf("scan", "receive", "dispatch", "report"), clicks)
+        assertEquals(listOf("scan", "receive", "pick", "report"), clicks)
     }
 
     @Test

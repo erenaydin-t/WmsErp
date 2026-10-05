@@ -1,34 +1,18 @@
 package com.wmserp.app.data.mapper
 
+import com.wmserp.app.data.remote.dto.BatchDto
+import com.wmserp.app.data.remote.dto.BatchWarehouseQtyDto
 import com.wmserp.app.data.remote.dto.BinDto
-import com.wmserp.app.data.remote.dto.DeliveryNoteDto
-import com.wmserp.app.data.remote.dto.DeliveryNoteItemRequest
-import com.wmserp.app.data.remote.dto.DeliveryNoteRequest
 import com.wmserp.app.data.remote.dto.ItemDto
-import com.wmserp.app.data.remote.dto.PurchaseOrderDto
-import com.wmserp.app.data.remote.dto.PurchaseOrderItemDto
-import com.wmserp.app.data.remote.dto.PurchaseReceiptDto
-import com.wmserp.app.data.remote.dto.PurchaseReceiptItemRequest
-import com.wmserp.app.data.remote.dto.PurchaseReceiptRequest
-import com.wmserp.app.data.remote.dto.SalesOrderDto
-import com.wmserp.app.data.remote.dto.SalesOrderItemDto
 import com.wmserp.app.data.remote.dto.StockEntryDto
 import com.wmserp.app.data.remote.dto.StockEntryItemDto
 import com.wmserp.app.data.remote.dto.StockLedgerEntryDto
 import com.wmserp.app.data.remote.dto.UserDto
-import com.wmserp.app.data.remote.dto.UserUpdateRequest
 import com.wmserp.app.data.remote.dto.WarehouseDto
 import com.wmserp.app.domain.model.ActivityEntry
-import com.wmserp.app.domain.model.DeliveryNote
-import com.wmserp.app.domain.model.DeliveryNoteDraft
+import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.BatchWarehouseStock
 import com.wmserp.app.domain.model.Item
-import com.wmserp.app.domain.model.ProfileUpdate
-import com.wmserp.app.domain.model.PurchaseOrder
-import com.wmserp.app.domain.model.PurchaseOrderItem
-import com.wmserp.app.domain.model.PurchaseReceipt
-import com.wmserp.app.domain.model.PurchaseReceiptDraft
-import com.wmserp.app.domain.model.SalesOrder
-import com.wmserp.app.domain.model.SalesOrderItem
 import com.wmserp.app.domain.model.StockEntry
 import com.wmserp.app.domain.model.StockEntryItem
 import com.wmserp.app.domain.model.StockEntryType
@@ -64,14 +48,6 @@ fun UserDto.toDomain(baseUrl: String?): UserProfile {
     )
 }
 
-fun ProfileUpdate.toRequest(): UserUpdateRequest = UserUpdateRequest(
-    firstName = firstName,
-    lastName = lastName,
-    phone = phone,
-    mobileNo = mobileNo,
-    location = location,
-)
-
 fun ItemDto.toDomain(baseUrl: String?): Item = Item(
     code = itemCode ?: name,
     name = itemName ?: itemCode ?: name,
@@ -82,10 +58,24 @@ fun ItemDto.toDomain(baseUrl: String?): Item = Item(
     imageUrl = image.toAbsoluteUrl(baseUrl),
     disabled = disabled == 1,
     isStockItem = isStockItem == 1,
-    valuationRate = valuationRate,
-    standardRate = standardRate,
     brand = brand,
+    hasBatchNo = hasBatchNo == 1,
+    hasSerialNo = hasSerialNo == 1,
 )
+
+fun BatchDto.toDomain(): Batch = Batch(
+    name = name,
+    itemCode = item.orEmpty(),
+    itemName = itemName,
+    expiryDate = expiryDate,
+    manufacturingDate = manufacturingDate,
+    disabled = disabled == 1,
+    stockUom = stockUom,
+    supplier = supplier,
+    description = description?.let { stripHtml(it) },
+)
+
+fun BatchWarehouseQtyDto.toDomain(): BatchWarehouseStock? = warehouse?.takeIf { it.isNotBlank() }?.let { BatchWarehouseStock(it, qty) }
 
 fun BinDto.toDomain(itemName: String? = null, uom: String? = null): StockLevel = StockLevel(
     itemCode = itemCode,
@@ -107,111 +97,6 @@ fun WarehouseDto.toDomain(): Warehouse = Warehouse(
     disabled = disabled == 1,
     warehouseType = warehouseType,
     city = city,
-)
-
-fun PurchaseOrderDto.toDomain(): PurchaseOrder = PurchaseOrder(
-    name = name,
-    supplier = supplier.orEmpty(),
-    supplierName = supplierName ?: supplier.orEmpty(),
-    status = status.orEmpty(),
-    transactionDate = transactionDate.orEmpty(),
-    scheduleDate = scheduleDate,
-    grandTotal = grandTotal,
-    currency = currency,
-    perReceived = perReceived,
-    setWarehouse = setWarehouse,
-    company = company,
-    items = items.map { it.toDomain() },
-)
-
-fun PurchaseOrderItemDto.toDomain(): PurchaseOrderItem = PurchaseOrderItem(
-    rowName = name,
-    itemCode = itemCode,
-    itemName = itemName ?: itemCode,
-    qty = qty,
-    receivedQty = receivedQty,
-    uom = uom,
-    warehouse = warehouse,
-    rate = rate,
-    amount = amount,
-    scheduleDate = scheduleDate,
-)
-
-fun SalesOrderDto.toDomain(): SalesOrder = SalesOrder(
-    name = name,
-    customer = customer.orEmpty(),
-    customerName = customerName ?: customer.orEmpty(),
-    status = status.orEmpty(),
-    transactionDate = transactionDate.orEmpty(),
-    deliveryDate = deliveryDate,
-    grandTotal = grandTotal,
-    currency = currency,
-    perDelivered = perDelivered,
-    setWarehouse = setWarehouse,
-    company = company,
-    items = items.map { it.toDomain() },
-)
-
-fun SalesOrderItemDto.toDomain(): SalesOrderItem = SalesOrderItem(
-    rowName = name,
-    itemCode = itemCode,
-    itemName = itemName ?: itemCode,
-    qty = qty,
-    deliveredQty = deliveredQty,
-    uom = uom,
-    warehouse = warehouse,
-    rate = rate,
-)
-
-fun PurchaseReceiptDto.toDomain(): PurchaseReceipt = PurchaseReceipt(
-    name = name,
-    supplier = supplier.orEmpty(),
-    status = status ?: if (docstatus == 1) "Submitted" else "Draft",
-    postingDate = postingDate,
-    docStatus = docstatus,
-)
-
-fun PurchaseReceiptDraft.toRequest(): PurchaseReceiptRequest = PurchaseReceiptRequest(
-    supplier = supplier,
-    company = company,
-    items = lines.map {
-        PurchaseReceiptItemRequest(
-            itemCode = it.itemCode,
-            qty = it.qty,
-            warehouse = it.warehouse,
-            purchaseOrder = purchaseOrderName,
-            purchaseOrderItem = it.purchaseOrderRow,
-            uom = it.uom,
-            rate = it.rate,
-        )
-    },
-)
-
-fun DeliveryNoteDto.toDomain(): DeliveryNote = DeliveryNote(
-    name = name,
-    customer = customer.orEmpty(),
-    customerName = customerName ?: customer.orEmpty(),
-    status = status ?: if (docstatus == 1) "Submitted" else "Draft",
-    postingDate = postingDate,
-    docStatus = docstatus,
-    grandTotal = grandTotal,
-    currency = currency,
-)
-
-fun DeliveryNoteDraft.toRequest(): DeliveryNoteRequest = DeliveryNoteRequest(
-    customer = customer,
-    company = company,
-    items = lines.map {
-        DeliveryNoteItemRequest(
-            itemCode = it.itemCode,
-            qty = it.qty,
-            warehouse = it.warehouse,
-            againstSalesOrder = salesOrderName,
-            soDetail = it.salesOrderRow,
-            uom = it.uom,
-            rate = it.rate,
-        )
-    },
 )
 
 fun StockEntry.toDto(): StockEntryDto = StockEntryDto(

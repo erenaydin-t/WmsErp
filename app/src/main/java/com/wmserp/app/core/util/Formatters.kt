@@ -6,13 +6,11 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.util.Currency
 import java.util.Locale
 import kotlin.math.abs
 
 object Formatters {
     private val qtyFormat = DecimalFormat("#,##0.###", DecimalFormatSymbols(Locale.US))
-    private val moneyFormat = DecimalFormat("#,##0.00", DecimalFormatSymbols(Locale.US))
     private val intFormat = DecimalFormat("#,##0", DecimalFormatSymbols(Locale.US))
     // Month names follow the app language (see LocaleDefaults); digits stay ASCII so they match ERPNext.
     private val dateOut get() = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
@@ -22,12 +20,11 @@ object Formatters {
 
     fun int(value: Int): String = intFormat.format(value)
 
-    fun money(value: Double, currency: String?): String {
-        val symbol = currency?.takeIf { it.isNotBlank() }?.let { code ->
-            runCatching { Currency.getInstance(code).getSymbol(Locale.getDefault()) }.getOrDefault(code)
-        }
-        val number = moneyFormat.format(value)
-        return if (symbol == null) number else "$symbol $number"
+    /** 13_400_000 -> "12.8 MB", 512 -> "512 B". */
+    fun fileSize(bytes: Long): String = when {
+        bytes >= 1L shl 20 -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+        bytes >= 1L shl 10 -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
+        else -> "$bytes B"
     }
 
     /** 1234 -> "1.2K", 1_234_567 -> "1.23M". */
@@ -40,13 +37,6 @@ object Formatters {
             magnitude == Math.floor(magnitude) -> intFormat.format(value)
             else -> qtyFormat.format(value)
         }
-    }
-
-    fun compactMoney(value: Double, currency: String?): String {
-        val symbol = currency?.takeIf { it.isNotBlank() }?.let { code ->
-            runCatching { Currency.getInstance(code).getSymbol(Locale.getDefault()) }.getOrDefault(code)
-        }
-        return if (symbol == null) compact(value) else "$symbol${compact(value)}"
     }
 
     fun date(iso: String?): String {
@@ -64,6 +54,19 @@ object Formatters {
     }
 
     fun percent(value: Double): String = "${value.coerceIn(0.0, 100.0).toInt()}%"
+
+    /** 42 -> "42s", 125 -> "2m 05s", 3725 -> "1h 02m". */
+    fun duration(seconds: Double): String {
+        val total = seconds.coerceAtLeast(0.0).toLong()
+        val hours = total / 3600
+        val minutes = (total % 3600) / 60
+        val secs = total % 60
+        return when {
+            hours > 0 -> String.format(Locale.US, "%dh %02dm", hours, minutes)
+            minutes > 0 -> String.format(Locale.US, "%dm %02ds", minutes, secs)
+            else -> "${secs}s"
+        }
+    }
 
     private fun trimmed(v: Double): String {
         val s = String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')
