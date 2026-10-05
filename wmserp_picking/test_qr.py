@@ -82,7 +82,7 @@ class QrSvgTests(unittest.TestCase):
         self.assertIn(BATCH_PAYLOAD, svg)
         self.assertIn("é", svg)  # decoded back from UTF-8, not left as bytes
         self.assertEqual(calls[0], {"create": BATCH_PAYLOAD, "create_kwargs": {"error": "M", "encoding": "utf-8"}})
-        self.assertEqual(calls[1]["svg_kwargs"], {"scale": 3, "xmldecl": False, "svgns": True, "quiet_zone": 2})
+        self.assertEqual(calls[1]["svg_kwargs"], {"scale": 3, "xmldecl": False, "svgns": True, "quiet_zone": 2, "omithw": False})
 
     def test_a_text_buffer_would_still_fail(self):
         """Documents the failure mode the fix guards against (pyqrcode's contract, not ours)."""
@@ -101,6 +101,23 @@ class QrSvgTests(unittest.TestCase):
         self.assertEqual(calls[0]["create"], BATCH_PAYLOAD)
         self.assertEqual(calls[1]["svg_kwargs"]["scale"], 4)
         self.assertIn(BATCH_PAYLOAD, svg)
+
+    def test_item_payload_and_svg_carry_only_the_item_key(self):
+        calls = []
+        with mock.patch.object(qr, "wms_qr_keys", return_value=DEFAULT_KEYS), mock.patch.dict(sys.modules, {"pyqrcode": fake_pyqrcode(calls)}):
+            payload = qr.wms_item_qr_payload({"name": "ITEM-7", "item_code": "ITEM-7", "item_name": "Seven"})
+            svg = qr.wms_item_qr_svg({"name": "ITEM-7"}, 2)
+        self.assertEqual('{"item_code":"ITEM-7"}', payload)
+        self.assertEqual(json.loads(payload), {"item_code": "ITEM-7"})
+        self.assertEqual('{"item_code":"ITEM-7"}', calls[1]["data"])
+        self.assertEqual(2, calls[1]["svg_kwargs"]["scale"])
+        self.assertIn("<svg", svg)
+
+    def test_omit_size_asks_pyqrcode_for_a_viewbox(self):
+        calls = []
+        with mock.patch.dict(sys.modules, {"pyqrcode": fake_pyqrcode(calls)}):
+            qr.wms_qr_svg("x", 1, omit_size=True)
+        self.assertTrue(calls[1]["svg_kwargs"]["omithw"])
 
     def test_missing_pyqrcode_degrades_to_a_notice(self):
         with mock.patch.dict(sys.modules, {"pyqrcode": None}):  # makes `import pyqrcode` raise ImportError
