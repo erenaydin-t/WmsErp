@@ -5,12 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
+import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScannedCode
@@ -23,7 +25,9 @@ import com.wmserp.app.domain.usecase.GetPickListUseCase
 import com.wmserp.app.domain.usecase.GetWmsQrKeysUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.PickScanOutcome
+import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
 import com.wmserp.app.domain.usecase.SavePickRowProgressUseCase
+import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
 import com.wmserp.app.domain.usecase.StartPickRowUseCase
 import com.wmserp.app.domain.usecase.ValidatePickScanUseCase
 import com.wmserp.app.presentation.common.ScanQuantityPrompt
@@ -97,6 +101,11 @@ data class PickListUiState(
     val message: UiText? = null,
     val beep: Boolean = true,
     val vibrate: Boolean = true,
+    /** Required fields the ERPNext site added to the target document that still need a value (dialog while non-empty). */
+    val requiredFields: List<RequiredField> = emptyList(),
+    val requiredFieldAnswers: Map<String, String> = emptyMap(),
+    /** Possible values of the required Link fields, keyed by [RequiredField.key]. */
+    val linkOptions: Map<String, List<String>> = emptyMap(),
 ) {
     val cardStatus: PickingStatus? get() = pickList?.pickingStatus
     val isSyncing: Boolean get() = lines.any { it.syncing }
@@ -138,6 +147,8 @@ class PickListViewModel @Inject constructor(
     private val saveRowProgress: SavePickRowProgressUseCase,
     private val completeRow: CompletePickRowUseCase,
     private val generatePickDocument: GeneratePickDocumentUseCase,
+    private val searchLinkValues: SearchLinkValuesUseCase,
+    private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase,
     private val validateScan: ValidatePickScanUseCase,
     observeScannerSettings: ObserveScannerSettingsUseCase,
     private val scanner: ScannerController,
@@ -301,14 +312,20 @@ class PickListViewModel @Inject constructor(
         }
     }
 
-    /** Creates the draft Delivery Note / Stock Entry (the backend guarantees it happens once). */
-    fun generateDocument() {
+    /**
+     * Creates the draft Delivery Note / Stock Entry (the backend guarantees it happens once). When
+     * the site requires fields the order does not carry (a Department...), the dialog asks for
+     * them once and the call is retried with the answers.
+     */
+    fun generateDocument() = generateDocument(fieldValues = emptyMap())
+
+    private fun generateDocument(fieldValues: Map<String, String>) {
         val state = _uiState.value
         val pickList = state.pickList ?: return
         if (!state.canGenerate) return
         _uiState.update { it.copy(isGenerating = true, error = null, message = null) }
         viewModelScope.launch {
-            when (val result = generatePickDocument(pickList)) {
+            when (val result = generatePickDocument(pickList, fieldValues)) {
                 is AppResult.Success -> {
                     val doc = result.data
                     _uiState.update {
@@ -322,8 +339,52 @@ class PickListViewModel @Inject constructor(
                         )
                     }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(isGenerating = false, error = result.error.toUiText()) }
+                is AppResult.Failure -> {
+                    val error = result.error
+                    if (error is AppError.MissingRequiredFields) {
+                        askRequiredFields(error.fields, pickList.company)
+                    } else {
+                        _uiState.update { it.copy(isGenerating = false, error = error.toUiText()) }
+                    }
+                }
             }
+        }
+    }
+
+    /** ERPNext needs values the pick list does not carry: open the dialog and load the choices of its Link fields. */
+    private fun askRequiredFields(fields: List<RequiredField>, company: String?) {
+        _uiState.update { state ->
+            state.copy(
+                isGenerating = false,
+                requiredFields = fields,
+                requiredFieldAnswers = fields.associate { it.key to state.requiredFieldAnswers[it.key].orEmpty() },
+                linkOptions = emptyMap(),
+            )
+        }
+        viewModelScope.launch {
+            fields.filter { it.isLink }.forEach { field ->
+                val target = field.options ?: return@forEach
+                searchLinkValues(target, "", company).getOrNull()?.let { names ->
+                    _uiState.update { it.copy(linkOptions = it.linkOptions + (field.key to names)) }
+                }
+            }
+        }
+    }
+
+    fun setRequiredFieldAnswer(key: String, value: String) =
+        _uiState.update { it.copy(requiredFieldAnswers = it.requiredFieldAnswers + (key to value)) }
+
+    fun dismissRequiredFields() = _uiState.update { it.copy(requiredFields = emptyList()) }
+
+    /** Saves the answers for the next documents and retries the document with them. */
+    fun confirmRequiredFields() {
+        val state = _uiState.value
+        val answers = state.requiredFields.associate { it.key to state.requiredFieldAnswers[it.key].orEmpty().trim() }
+        if (answers.isEmpty() || answers.values.any { it.isBlank() }) return
+        _uiState.update { it.copy(requiredFields = emptyList()) }
+        viewModelScope.launch {
+            saveFieldDefaults(answers)
+            generateDocument(answers)
         }
     }
 

@@ -8,18 +8,22 @@ import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
+import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScannerMode
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.ScannerSettings
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.repository.PickListRepository
+import com.wmserp.app.domain.repository.SettingsRepository
 import com.wmserp.app.domain.usecase.CompletePickRowUseCase
 import com.wmserp.app.domain.usecase.GeneratePickDocumentUseCase
 import com.wmserp.app.domain.usecase.GetPickListUseCase
 import com.wmserp.app.domain.usecase.GetWmsQrKeysUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
+import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
 import com.wmserp.app.domain.usecase.SavePickRowProgressUseCase
+import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
 import com.wmserp.app.domain.usecase.StartPickRowUseCase
 import com.wmserp.app.domain.usecase.ValidatePickScanUseCase
 import com.wmserp.app.presentation.common.UiText
@@ -49,6 +53,9 @@ class PickListViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     private val repository: PickListRepository = mockk()
+    private val settingsRepository: SettingsRepository = mockk { every { documentFieldDefaults } returns flowOf(emptyMap()) }
+    private val searchLinkValues: SearchLinkValuesUseCase = mockk()
+    private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase = mockk()
     /** Legacy "+1 per scan" mode by default; the prompt tests switch [settings] before creating the view model. */
     private var settings = ScannerSettings(askQuantityOnScan = false)
     private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } answers { flowOf(settings) } }
@@ -67,7 +74,9 @@ class PickListViewModelTest {
             StartPickRowUseCase(repository),
             SavePickRowProgressUseCase(repository),
             CompletePickRowUseCase(repository),
-            GeneratePickDocumentUseCase(repository),
+            GeneratePickDocumentUseCase(repository, settingsRepository),
+            searchLinkValues,
+            saveFieldDefaults,
             ValidatePickScanUseCase(),
             observeSettings,
             scanner,
@@ -202,7 +211,7 @@ class PickListViewModelTest {
             current = current.withRow("prow1", qty, if (complete) PickRowStatus.PICKED else PickRowStatus.PICKING)
             AppResult.Success(rowUpdate(current, "prow1", rowCompleted = complete, lastPicker = complete))
         }
-        coEvery { repository.generateDocument(name) } returns AppResult.Success(GeneratedDocument("Delivery Note", "MAT-DN-00001"))
+        coEvery { repository.generateDocument(name, emptyMap()) } returns AppResult.Success(GeneratedDocument("Delivery Note", "MAT-DN-00001"))
         val vm = createViewModel(start)
 
         repeat(10) { vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD)) }
@@ -217,7 +226,34 @@ class PickListViewModelTest {
         assertEquals("MAT-DN-00001", vm.uiState.value.generatedDocument?.name)
         assertEquals(UiText.Res(R.string.pick_document_created, listOf("Delivery Note", "MAT-DN-00001")), vm.uiState.value.message)
         assertFalse(vm.uiState.value.canGenerate)
-        coVerify(exactly = 1) { repository.generateDocument(name) }
+        coVerify(exactly = 1) { repository.generateDocument(name, emptyMap()) }
+    }
+
+    @Test
+    fun `required fields the site added to the document are asked for once, saved and retried`() = runTest {
+        val picked = ready.withRow("prow1", 10.0, PickRowStatus.PICKED).withRow("prow2", 5.0, PickRowStatus.PICKED).withRow("prow3", 3.0, PickRowStatus.PICKED)
+        val department = RequiredField("Delivery Note", "department", "Department", "Link", options = "Department")
+        val answers = mapOf(department.key to "Warehouse - WM")
+        coEvery { repository.generateDocument(name, emptyMap()) } returns AppResult.Failure(AppError.MissingRequiredFields(listOf(department)))
+        coEvery { repository.generateDocument(name, answers) } returns AppResult.Success(GeneratedDocument("Delivery Note", "MAT-DN-00002"))
+        coEvery { searchLinkValues("Department", "", "WM Co") } returns AppResult.Success(listOf("Warehouse - WM"))
+        coEvery { saveFieldDefaults(answers) } returns Unit
+        val vm = createViewModel(picked)
+        assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
+
+        vm.generateDocument()
+
+        assertEquals(listOf(department), vm.uiState.value.requiredFields)
+        assertEquals(listOf("Warehouse - WM"), vm.uiState.value.linkOptions[department.key])
+        assertNull(vm.uiState.value.generatedDocument)
+        assertFalse(vm.uiState.value.isGenerating)
+
+        vm.setRequiredFieldAnswer(department.key, "Warehouse - WM")
+        vm.confirmRequiredFields()
+
+        assertTrue(vm.uiState.value.requiredFields.isEmpty())
+        assertEquals("MAT-DN-00002", vm.uiState.value.generatedDocument?.name)
+        coVerify { saveFieldDefaults(answers) }
     }
 
     @Test

@@ -30,6 +30,11 @@ interface PickListRepository {
         batchNo: String? = null,
         elapsedSeconds: Double? = null,
     ): AppResult<RowUpdate>
-    suspend fun generateDocument(name: String): AppResult<GeneratedDocument>
+    /**
+     * Creates the Delivery Note / Stock Entry of a picked card. [values] answers required fields the
+     * site added (`Doctype.fieldname` → value); when ERPNext still misses some, the result is a
+     * [com.wmserp.app.domain.common.AppError.MissingRequiredFields] failure listing them.
+     */
+    suspend fun generateDocument(name: String, values: Map<String, String> = emptyMap()): AppResult<GeneratedDocument>
     suspend fun getPickerKpis(): AppResult<PickerKpis>
 }

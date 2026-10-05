@@ -9,8 +9,8 @@ import com.wmserp.app.data.remote.dto.StockLedgerEntryDto
 import com.wmserp.app.data.util.DateProvider
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
-import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.ActivityHeatmap
 import com.wmserp.app.domain.model.DashboardKpis
 import com.wmserp.app.domain.model.DelayBucket
@@ -34,6 +34,10 @@ import java.time.format.TextStyle
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
+/**
+ * Operational figures only: the dashboard and the analytics screen count documents and
+ * quantities and never read amounts, rates or valuations (warehouse users see no monetary data).
+ */
 class AnalyticsRepositoryImpl(
     private val dataSource: ErpNextDataSource,
     private val apiCaller: ApiCaller,
@@ -46,22 +50,14 @@ class AnalyticsRepositoryImpl(
 
         val items = async { apiCaller.call { dataSource.getCount("Item", listOf(Filter.eq("disabled", 0))) } }
         val pendingPo = async {
-            apiCaller.call { dataSource.getCount("Purchase Order", listOf(Filter.eq("docstatus", 1), Filter.inList("status", OrderRepositoryImpl.PO_OPEN_STATUSES))) }
+            apiCaller.call { dataSource.getCount("Purchase Order", listOf(Filter.eq("docstatus", 1), Filter.inList("status", PO_OPEN_STATUSES))) }
         }
         val pendingSo = async {
-            apiCaller.call { dataSource.getCount("Sales Order", listOf(Filter.eq("docstatus", 1), Filter.inList("status", OrderRepositoryImpl.SO_OPEN_STATUSES))) }
+            apiCaller.call { dataSource.getCount("Sales Order", listOf(Filter.eq("docstatus", 1), Filter.inList("status", SO_OPEN_STATUSES))) }
         }
-        val revenue = async {
+        val receipts = async {
             apiCaller.call {
-                dataSource.sumField(
-                    doctype = "Sales Invoice",
-                    field = "grand_total",
-                    filters = listOf(
-                        Filter.eq("docstatus", 1),
-                        Filter.gte("posting_date", monthStart.toString()),
-                        Filter.lte("posting_date", today.toString()),
-                    ),
-                )
+                dataSource.getCount("Purchase Receipt", listOf(Filter.eq("docstatus", 1), Filter.gte("posting_date", monthStart.toString())))
             }
         }
         val dispatched = async {
@@ -69,9 +65,8 @@ class AnalyticsRepositoryImpl(
                 dataSource.getCount("Delivery Note", listOf(Filter.eq("docstatus", 1), Filter.gte("posting_date", monthStart.toString())))
             }
         }
-        val currency = async { apiCaller.call { dataSource.getSingleValue("Global Defaults", "default_currency") ?: "" } }
 
-        val results = listOf(items.await(), pendingPo.await(), pendingSo.await(), revenue.await(), dispatched.await(), currency.await())
+        val results = listOf(items.await(), pendingPo.await(), pendingSo.await(), receipts.await(), dispatched.await())
         results.firstOrNull { it is AppResult.Failure && it.error is AppError.Unauthorized }?.let {
             return@coroutineScope AppResult.Failure((it as AppResult.Failure).error)
         }
@@ -83,8 +78,7 @@ class AnalyticsRepositoryImpl(
             DashboardKpis(
                 totalItems = items.await().getOrNull() ?: 0,
                 pendingOrders = (pendingPo.await().getOrNull() ?: 0) + (pendingSo.await().getOrNull() ?: 0),
-                revenue = revenue.await().getOrNull() ?: 0.0,
-                currency = currency.await().getOrNull().orEmpty(),
+                receipts = receipts.await().getOrNull() ?: 0,
                 dispatched = dispatched.await().getOrNull() ?: 0,
                 periodLabel = today.month.getDisplayName(TextStyle.SHORT, Locale.getDefault()) + " " + today.year,
             )
@@ -95,7 +89,7 @@ class AnalyticsRepositoryImpl(
         val today = dateProvider.today()
         val weekAgo = today.minusDays(7)
         val deliveries = async {
-            apiCaller.call { dataSource.getCount("Sales Order", listOf(Filter.eq("docstatus", 1), Filter.inList("status", OrderRepositoryImpl.SO_OPEN_STATUSES))) }
+            apiCaller.call { dataSource.getCount("Sales Order", listOf(Filter.eq("docstatus", 1), Filter.inList("status", SO_OPEN_STATUSES))) }
         }
         val receipts = async {
             apiCaller.call { dataSource.getCount("Purchase Receipt", listOf(Filter.eq("docstatus", 1), Filter.gte("posting_date", weekAgo.toString()))) }
@@ -123,10 +117,10 @@ class AnalyticsRepositoryImpl(
         val today = dateProvider.today()
         val orders = dataSource.getList<SalesOrderDto>(
             doctype = "Sales Order",
-            fields = OrderRepositoryImpl.SO_LIST_FIELDS,
+            fields = SO_LIST_FIELDS,
             filters = listOf(
                 Filter.eq("docstatus", 1),
-                Filter.inList("status", OrderRepositoryImpl.SO_OPEN_STATUSES),
+                Filter.inList("status", SO_OPEN_STATUSES),
                 Filter.lt("delivery_date", today.toString()),
             ),
             orderBy = "delivery_date asc",
@@ -141,8 +135,6 @@ class AnalyticsRepositoryImpl(
                 deliveryDate = so.deliveryDate,
                 daysLate = ChronoUnit.DAYS.between(date, today).toInt().coerceAtLeast(1),
                 status = so.status,
-                grandTotal = so.grandTotal,
-                currency = so.currency,
             )
         }.sortedByDescending { it.daysLate }
         DeliveryDelayReport(buckets = bucketize(delays), orders = delays)
@@ -161,20 +153,17 @@ class AnalyticsRepositoryImpl(
         buildHeatmap(entries, start, days)
     }
 
+    /**
+     * ERPNext's *Stock Ageing* script report. Its filters changed across versions: v14 takes
+     * `range1` / `range2` / `range3`, v15 and v16 a single `range` ("30, 60, 90") and crash on the
+     * old names, so both shapes are sent (each version ignores the other's).
+     */
     override suspend fun getStockAging(limit: Int): AppResult<StockAgingReport> = apiCaller.call {
         val today = dateProvider.today()
         val company = dataSource.getSingleValue("Global Defaults", "default_company")
             ?: dataSource.getList<CompanyName>("Company", listOf("name"), limit = 1).firstOrNull()?.name
             ?: throw AppException(AppError.Validation("No company configured in ERPNext", ErrorCode.NO_COMPANY_CONFIGURED))
-        val filters = buildJsonObject {
-            put("company", company)
-            put("to_date", today.toString())
-            put("range1", 30)
-            put("range2", 60)
-            put("range3", 90)
-            put("show_warehouse_wise_stock", 0)
-        }
-        val message = dataSource.runReport("Stock Ageing", filters)
+        val message = dataSource.runReport(STOCK_AGEING_REPORT, stockAgingFilters(company, today))
         parseStockAging(message, limit)
     }
 
@@ -186,9 +175,24 @@ class AnalyticsRepositoryImpl(
     private fun parseDate(value: String): LocalDate? = runCatching { LocalDate.parse(value.take(10)) }.getOrNull()
 
     companion object {
+        const val STOCK_AGEING_REPORT = "Stock Ageing"
         private const val HEATMAP_MAX_ROWS = 2000
         private const val HOURS_PER_BLOCK = 3
         private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+        val AGEING_RANGES = listOf(30, 60, 90)
+
+        val PO_OPEN_STATUSES = listOf("To Receive and Bill", "To Receive")
+        val SO_OPEN_STATUSES = listOf("To Deliver and Bill", "To Deliver")
+        val SO_LIST_FIELDS = listOf("name", "customer", "customer_name", "status", "transaction_date", "delivery_date", "per_delivered", "company", "docstatus")
+
+        /** Filters accepted by every ERPNext version (see [getStockAging]). */
+        fun stockAgingFilters(company: String, today: LocalDate): JsonObject = buildJsonObject {
+            put("company", company)
+            put("to_date", today.toString())
+            put("range", AGEING_RANGES.joinToString(", "))
+            AGEING_RANGES.forEachIndexed { index, days -> put("range${index + 1}", days) }
+            put("show_warehouse_wise_stock", 0)
+        }
 
         fun bucketize(delays: List<DeliveryDelay>): List<DelayBucket> {
             val ranges = listOf("1-3 days" to 1..3, "4-7 days" to 4..7, "8-14 days" to 8..14)
@@ -218,7 +222,10 @@ class AnalyticsRepositoryImpl(
                 .getOrElse { clean.substringBefore(':').toIntOrNull() }
         }
 
-        /** Parses `frappe.desk.query_report.run` output for the Stock Ageing report. */
+        /**
+         * Parses `frappe.desk.query_report.run` output for the Stock Ageing report. Only the quantity
+         * columns (`range1`, `range2`...) are read; the `range1value`... amount columns are ignored.
+         */
         fun parseStockAging(message: JsonElement?, limit: Int): StockAgingReport {
             val obj = message as? JsonObject ?: return StockAgingReport(emptyList(), emptyList())
             val columns = (obj["columns"] as? JsonArray).orEmpty()
@@ -229,7 +236,7 @@ class AnalyticsRepositoryImpl(
                     else -> "col$index"
                 }
             }
-            val rangeFields = columnNames.filter { it.startsWith("range") }.sorted()
+            val rangeFields = columnNames.filter { QTY_RANGE_COLUMN.matches(it) }.sortedBy { it.removePrefix("range").toInt() }
             val rangeLabels = rangeFields.map { field ->
                 val idx = columnNames.indexOf(field)
                 (columns.getOrNull(idx) as? JsonObject)?.get("label")?.asString()?.let { cleanLabel(it) } ?: field
@@ -253,6 +260,8 @@ class AnalyticsRepositoryImpl(
                 .take(limit)
             return StockAgingReport(rangeLabels = rangeLabels, rows = rows)
         }
+
+        private val QTY_RANGE_COLUMN = Regex("range\\d+")
 
         private fun cleanLabel(label: String): String = label.replace("Age (", "").replace(")", "").trim()
 

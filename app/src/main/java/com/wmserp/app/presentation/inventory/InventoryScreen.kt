@@ -173,7 +173,7 @@ private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?) {
                     Text(delay.orderName, style = MaterialTheme.typography.titleSmall)
                     Text(delay.customerName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        stringResource(R.string.delays_due, Formatters.date(delay.deliveryDate), Formatters.money(delay.grandTotal, delay.currency)),
+                        stringResource(R.string.delays_due, Formatters.date(delay.deliveryDate), delay.status),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

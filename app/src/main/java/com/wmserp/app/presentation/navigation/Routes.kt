@@ -13,21 +13,18 @@ object Routes {
     const val ORDERS = "orders"
     const val PROFILE = "profile"
     const val RECEIVE_DETAIL = "receive"
-    const val DISPATCH_DETAIL = "dispatch"
     const val PICK_LIST_DETAIL = "picklist"
     const val STOCKTAKING_DETAIL = "stocktaking"
 
     const val ARG_TARGET = "target"
     const val ARG_TAB = "tab"
-    const val ARG_PO_NAME = "poName"
-    const val ARG_SO_NAME = "soName"
+    const val ARG_RECEIPT_NAME = "receiptName"
     const val ARG_PICK_LIST_NAME = "pickListName"
     const val ARG_SESSION_NAME = "sessionName"
 
     const val SCAN_PATTERN = "$SCAN?$ARG_TARGET={$ARG_TARGET}"
     const val ORDERS_PATTERN = "$ORDERS?$ARG_TAB={$ARG_TAB}"
-    const val RECEIVE_PATTERN = "$RECEIVE_DETAIL/{$ARG_PO_NAME}"
-    const val DISPATCH_PATTERN = "$DISPATCH_DETAIL/{$ARG_SO_NAME}"
+    const val RECEIVE_PATTERN = "$RECEIVE_DETAIL/{$ARG_RECEIPT_NAME}"
     const val PICK_LIST_PATTERN = "$PICK_LIST_DETAIL/{$ARG_PICK_LIST_NAME}"
     const val STOCKTAKING_PATTERN = "$STOCKTAKING_DETAIL/{$ARG_SESSION_NAME}"
 
@@ -36,8 +33,8 @@ object Routes {
 
     fun scan(target: ScanTarget? = null): String = if (target == null) SCAN else "$SCAN?$ARG_TARGET=${target.name}"
     fun orders(tab: OrdersTab? = null): String = if (tab == null) ORDERS else "$ORDERS?$ARG_TAB=${tab.name}"
-    fun receive(poName: String): String = "$RECEIVE_DETAIL/${Uri.encode(poName)}"
-    fun dispatch(soName: String): String = "$DISPATCH_DETAIL/${Uri.encode(soName)}"
+    /** Receiving screen of one draft Purchase Receipt. */
+    fun receive(receiptName: String): String = "$RECEIVE_DETAIL/${Uri.encode(receiptName)}"
     fun pickList(name: String): String = "$PICK_LIST_DETAIL/${Uri.encode(name)}"
     fun stocktaking(name: String): String = "$STOCKTAKING_DETAIL/${Uri.encode(name)}"
 

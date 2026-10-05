@@ -128,10 +128,6 @@ object ErpNextErrorParser {
         "TypeError", "KeyError", "AttributeError", "ValueError",
     )
 
-    /** Frappe v16 refuses `sum(x) as y` style fields ("SQL functions are not allowed as strings in SELECT"). */
-    fun rejectsSqlFunctionStrings(body: String?): Boolean =
-        body?.contains("SQL functions are not allowed", ignoreCase = true) == true
-
     /** Convenience for tests / callers that only have a raw JSON body. */
     fun exceptionTypeOf(body: String?): String? =
         body?.let { runCatching { json.parseToJsonElement(it).jsonObject["exc_type"]?.jsonPrimitive?.content }.getOrNull() }

@@ -7,6 +7,7 @@ import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.WmsQrKeys
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -170,5 +171,39 @@ class PickListRepositoryImplTest {
         assertTrue(error is AppError.Validation)
         assertNull(error.code)
         assertTrue(error.message.contains("Wrong batch"))
+    }
+
+    @Test
+    fun `generateDocument posts the answers to required fields and maps the created document`() = runTest {
+        harness.server.enqueue(MockResponse().setBody("""{"message":{"doctype":"Delivery Note","name":"MAT-DN-00001","docstatus":0,"already_generated":false,"created":true}}"""))
+
+        val result = repository.generateDocument("STO-PICK-2026-00012", mapOf("Delivery Note.department" to "Warehouse - WM", "Delivery Note.cost_center" to " "))
+
+        val doc = (result as AppResult.Success).data
+        assertEquals("MAT-DN-00001", doc.name)
+        assertFalse(doc.alreadyGenerated)
+        val request = harness.server.takeRequest()
+        assertEquals("/api/method/wmserp_picking.api.pick_list.generate_document", request.path)
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("STO-PICK-2026-00012", body["name"]!!.jsonPrimitive.content)
+        assertEquals("Warehouse - WM", body["values"]!!.jsonObject["Delivery Note.department"]!!.jsonPrimitive.content)
+        assertNull(body["values"]!!.jsonObject["Delivery Note.cost_center"])
+    }
+
+    @Test
+    fun `generateDocument surfaces the fields the site still requires`() = runTest {
+        harness.server.enqueue(
+            MockResponse().setBody(
+                """{"message":{"doctype":"Delivery Note","created":false,
+                   "missing_fields":[{"doctype":"Delivery Note","fieldname":"department","label":"Department","fieldtype":"Link","options":"Department"},
+                                     {"doctype":"Delivery Note Item","fieldname":"cost_center","label":"Cost Center","fieldtype":"Link","options":"Cost Center"}]}}"""
+            )
+        )
+
+        val result = repository.generateDocument("STO-PICK-2026-00012")
+
+        val error = (result as AppResult.Failure).error as AppError.MissingRequiredFields
+        assertEquals(listOf("Delivery Note.department", "Delivery Note Item.cost_center"), error.fields.map { it.key })
+        assertEquals("Cost Center", error.fields.last().options)
     }
 }

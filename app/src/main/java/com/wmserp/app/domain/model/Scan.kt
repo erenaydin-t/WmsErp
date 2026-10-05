@@ -2,9 +2,10 @@ package com.wmserp.app.domain.model
 
 /** What the user expects the scanned barcode to represent. */
 enum class ScanTarget(val label: String, val hint: String) {
-    ITEM("Item", "Ready to scan item barcode..."),
+    /** An item barcode, an item code, a batch number or a WMS JSON QR label (item, or item + batch). */
+    ITEM("Item / Batch", "Ready to scan item or batch label..."),
     WAREHOUSE("Warehouse", "Ready to scan warehouse label..."),
-    PURCHASE_ORDER("Purchase Order", "Ready to scan purchase order..."),
+    PURCHASE_RECEIPT("Purchase Receipt", "Ready to scan purchase receipt..."),
 }
 
 /** Where a barcode came from. */
@@ -22,8 +23,14 @@ sealed class ScanLookup {
     abstract val code: String
 
     data class ItemFound(override val code: String, val item: Item, val stock: List<StockLevel>) : ScanLookup()
+
+    /** A batch label (JSON QR with a batch, or a plain batch number): the batch with its item and stock per warehouse. */
+    data class BatchFound(override val code: String, val batch: Batch, val item: Item?, val stock: List<BatchWarehouseStock>) : ScanLookup() {
+        val totalQty: Double get() = stock.sumOf { it.qty }
+    }
+
     data class WarehouseFound(override val code: String, val warehouse: Warehouse, val stock: List<StockLevel>) : ScanLookup()
-    data class PurchaseOrderFound(override val code: String, val purchaseOrder: PurchaseOrder) : ScanLookup()
+    data class PurchaseReceiptFound(override val code: String, val receipt: PurchaseReceipt) : ScanLookup()
     data class NotFound(override val code: String, val target: ScanTarget) : ScanLookup()
 }
 

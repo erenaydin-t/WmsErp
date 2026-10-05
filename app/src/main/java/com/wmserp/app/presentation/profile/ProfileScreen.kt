@@ -70,12 +70,6 @@ fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     ProfileScreen(
         state = state,
-        onFirstNameChange = viewModel::onFirstNameChange,
-        onLastNameChange = viewModel::onLastNameChange,
-        onPhoneChange = viewModel::onPhoneChange,
-        onMobileChange = viewModel::onMobileChange,
-        onLocationChange = viewModel::onLocationChange,
-        onSave = viewModel::save,
         onOldPasswordChange = viewModel::onOldPasswordChange,
         onNewPasswordChange = viewModel::onNewPasswordChange,
         onConfirmPasswordChange = viewModel::onConfirmPasswordChange,
@@ -100,12 +94,6 @@ fun ProfileRoute(viewModel: ProfileViewModel = hiltViewModel()) {
 @Composable
 fun ProfileScreen(
     state: ProfileUiState,
-    onFirstNameChange: (String) -> Unit,
-    onLastNameChange: (String) -> Unit,
-    onPhoneChange: (String) -> Unit,
-    onMobileChange: (String) -> Unit,
-    onLocationChange: (String) -> Unit,
-    onSave: () -> Unit,
     onOldPasswordChange: (String) -> Unit,
     onNewPasswordChange: (String) -> Unit,
     onConfirmPasswordChange: (String) -> Unit,
@@ -166,17 +154,18 @@ fun ProfileScreen(
                 }
             }
 
-            SettingsCard(title = stringResource(R.string.profile_personal_info)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(state.firstName, onFirstNameChange, label = { Text(stringResource(R.string.profile_first_name)) }, singleLine = true, modifier = Modifier.weight(1f).testTag("profile_first_name"))
-                    OutlinedTextField(state.lastName, onLastNameChange, label = { Text(stringResource(R.string.profile_last_name)) }, singleLine = true, modifier = Modifier.weight(1f).testTag("profile_last_name"))
-                }
-                OutlinedTextField(state.phone, onPhoneChange, label = { Text(stringResource(R.string.profile_phone)) }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
-                OutlinedTextField(state.mobileNo, onMobileChange, label = { Text(stringResource(R.string.profile_mobile)) }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
-                OutlinedTextField(state.location, onLocationChange, label = { Text(stringResource(R.string.profile_location)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                state.saveMessage?.let { InfoBanner(it.asString(), container = colors.successContainer, content = MaterialTheme.colorScheme.onSurface) }
-                Button(onClick = onSave, enabled = state.canSave, modifier = Modifier.fillMaxWidth().testTag("profile_save")) {
-                    if (state.isSaving) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text(stringResource(R.string.profile_save))
+            // Read-only: what the ERPNext User holds. Personal details are maintained in ERPNext, never here.
+            SettingsCard(title = stringResource(R.string.profile_account)) {
+                Text(stringResource(R.string.profile_account_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ReadOnlyField(stringResource(R.string.profile_full_name), profile.fullName, tag = "profile_full_name")
+                ReadOnlyField(stringResource(R.string.profile_email), profile.email)
+                profile.username?.takeIf { it.isNotBlank() }?.let { ReadOnlyField(stringResource(R.string.profile_username), it) }
+                profile.phone?.takeIf { it.isNotBlank() }?.let { ReadOnlyField(stringResource(R.string.profile_phone), it) }
+                profile.mobileNo?.takeIf { it.isNotBlank() }?.let { ReadOnlyField(stringResource(R.string.profile_mobile), it) }
+                profile.location?.takeIf { it.isNotBlank() }?.let { ReadOnlyField(stringResource(R.string.profile_location), it) }
+                if (profile.visibleRoles.isNotEmpty()) {
+                    Text(stringResource(R.string.profile_roles), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(profile.visibleRoles.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("profile_roles"))
                 }
             }
 
@@ -267,6 +256,14 @@ fun ProfileScreen(
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun ReadOnlyField(label: String, value: String, tag: String? = null) {
+    Column(modifier = if (tag != null) Modifier.testTag(tag) else Modifier) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyLarge)
     }
 }
 

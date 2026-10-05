@@ -103,11 +103,4 @@ interface ErpNextApi {
         @Path("method") method: String,
         @Body body: JsonObject,
     ): FrappeMessageResponse
-
-    /** Whitelisted methods that answer outside `message` (e.g. `getdoctype` fills `docs`). */
-    @GET("api/method/{method}")
-    suspend fun callMethodJson(
-        @Path("method") method: String,
-        @QueryMap params: Map<String, String> = emptyMap(),
-    ): JsonObject
 }

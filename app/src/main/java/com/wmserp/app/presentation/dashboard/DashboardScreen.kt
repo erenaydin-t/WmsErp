@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Assessment
-import androidx.compose.material.icons.outlined.AttachMoney
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.PendingActions
@@ -72,7 +71,7 @@ import com.wmserp.app.presentation.update.showsBanner
 fun DashboardRoute(
     onScan: () -> Unit,
     onReceive: () -> Unit,
-    onDispatch: () -> Unit,
+    onPick: () -> Unit,
     onReport: () -> Unit,
     onOpenStocktaking: (String) -> Unit = {},
     viewModel: DashboardViewModel = hiltViewModel(),
@@ -85,7 +84,7 @@ fun DashboardRoute(
         onRetry = { viewModel.load() },
         onScan = onScan,
         onReceive = onReceive,
-        onDispatch = onDispatch,
+        onPick = onPick,
         onReport = onReport,
         onOpenStocktaking = onOpenStocktaking,
         updateState = updateState,
@@ -101,7 +100,7 @@ fun DashboardScreen(
     onRetry: () -> Unit,
     onScan: () -> Unit,
     onReceive: () -> Unit,
-    onDispatch: () -> Unit,
+    onPick: () -> Unit,
     onReport: () -> Unit,
     onOpenStocktaking: (String) -> Unit = {},
     updateState: UpdateState = UpdateState.Idle,
@@ -196,14 +195,14 @@ fun DashboardScreen(
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             KpiCard(
-                                title = stringResource(R.string.kpi_revenue),
-                                value = Formatters.compactMoney(kpis.revenue, kpis.currency),
-                                icon = Icons.Outlined.AttachMoney,
+                                title = stringResource(R.string.kpi_receipts),
+                                value = Formatters.int(kpis.receipts),
+                                icon = Icons.Outlined.MoveToInbox,
                                 accent = colors.kpiTeal,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .testTag("kpi_revenue"),
-                                subtitle = stringResource(R.string.kpi_revenue_sub, kpis.periodLabel),
+                                    .testTag("kpi_receipts"),
+                                subtitle = stringResource(R.string.kpi_receipts_sub, kpis.periodLabel),
                             )
                             KpiCard(
                                 title = stringResource(R.string.kpi_dispatched),
@@ -277,7 +276,7 @@ fun DashboardScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     QuickActionButton(stringResource(R.string.action_scan), Icons.Outlined.QrCodeScanner, colors.kpiPurple, onScan, Modifier.testTag("action_scan"))
                     QuickActionButton(stringResource(R.string.action_receive), Icons.Outlined.MoveToInbox, colors.kpiTeal, onReceive, Modifier.testTag("action_receive"))
-                    QuickActionButton(stringResource(R.string.action_dispatch), Icons.Outlined.Outbox, colors.kpiBlue, onDispatch, Modifier.testTag("action_dispatch"))
+                    QuickActionButton(stringResource(R.string.action_pick), Icons.Outlined.Checklist, colors.kpiBlue, onPick, Modifier.testTag("action_pick"))
                     QuickActionButton(stringResource(R.string.action_report), Icons.Outlined.Assessment, colors.kpiAmber, onReport, Modifier.testTag("action_report"))
                 }
             }

@@ -1,9 +1,10 @@
-"""Custom Fields, Property Setters and the label Print Format added to standard DocTypes.
+"""Custom Fields, Property Setters and the label Print Formats added to standard DocTypes.
 
 Everything here is additive (Custom Field / Property Setter / Print Format records), so no file
 in `frappe` or `erpnext` is modified. Re-running is safe: `create_custom_fields(update=True)`
-updates existing fields in place, the Property Setter is only created when missing and the
-print format is updated to the version shipped with the app.
+updates existing fields in place, the Property Setter is only created when missing and the label
+print formats are created when missing (never overwritten, so a site can adjust the label sheet
+layout in the Print Format; `reset_label_print_formats` restores the shipped templates).
 
 Apply manually (without installing the app) with:
 
@@ -16,12 +17,13 @@ import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
+from wmserp_picking.labels import rules as label_rules
 from wmserp_picking.picking import rules
 
 PICKING_STATUS_OPTIONS = "\n".join(rules.PICKING_STATUSES)
 ROW_STATUS_OPTIONS = "\n".join(rules.ROW_STATUSES)
 
-PRINT_FORMAT_NAME = "WMS Batch QR Label"
+PRINT_FORMAT_NAME = "WMS Batch QR Label"  # kept for callers of the 0.2 API
 
 # Fields from the first (card-level) design that the row-level workflow replaced.
 OBSOLETE_CUSTOM_FIELDS = [
@@ -194,7 +196,7 @@ def setup_customizations():
     create_custom_fields(get_custom_fields(), ignore_validate=True, update=True)
     remove_obsolete_fields()
     extend_purpose_options()
-    ensure_print_format()
+    ensure_label_print_formats()
     frappe.clear_cache(doctype="Pick List")
     frappe.clear_cache(doctype="Pick List Item")
     frappe.clear_cache(doctype="Stock Reconciliation")
@@ -228,37 +230,75 @@ def extend_purpose_options():
     )
 
 
-def label_template_html() -> str:
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "print_formats", "wms_batch_qr_label.html")
-    with open(path, encoding="utf-8") as handle:
+def template_path(file_name) -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "print_formats", file_name)
+
+
+def label_template_html(file_name="wms_batch_qr_label.html") -> str:
+    with open(template_path(file_name), encoding="utf-8") as handle:
         return handle.read()
 
 
 def ensure_print_format():
-    """Creates/updates the Batch print format that renders the JSON QR label."""
-    html = label_template_html()
-    if frappe.db.exists("Print Format", PRINT_FORMAT_NAME):
-        doc = frappe.get_doc("Print Format", PRINT_FORMAT_NAME)
-        if doc.html != html or doc.disabled:
-            doc.html = html
+    """Kept for callers of the 0.2 API; creates every label print format (see below)."""
+    ensure_label_print_formats()
+
+
+def ensure_label_print_formats():
+    """Creates the label print formats that are missing: the single labels (one document per page,
+    for Frappe's own Print) and the sheets (many labels per page, for the list action).
+
+    Existing formats are left untouched on purpose: the sheet layout (labels per page, label and
+    QR sizes, margins) is meant to be adjusted in the Print Format by the site, and a migrate must
+    not undo that. `reset_label_print_formats` restores the shipped templates explicitly.
+    """
+    for name, file_name in label_rules.TEMPLATE_FILES.items():
+        if frappe.db.exists("Print Format", name):
+            continue
+        create_label_print_format(name, file_name)
+
+
+def reset_label_print_formats(names=None):
+    """Overwrites the label print formats with the templates shipped in this version:
+
+        bench --site <site> execute wmserp_picking.setup.custom_fields.reset_label_print_formats
+        bench --site <site> execute wmserp_picking.setup.custom_fields.reset_label_print_formats \
+            --kwargs '{"names": ["WMS Batch QR Label Sheet"]}'
+    """
+    wanted = set(frappe.parse_json(names) or []) if names else None
+    for name, file_name in label_rules.TEMPLATE_FILES.items():
+        if wanted is not None and name not in wanted:
+            continue
+        if frappe.db.exists("Print Format", name):
+            doc = frappe.get_doc("Print Format", name)
+            doc.html = label_template_html(file_name)
             doc.disabled = 0
             doc.save(ignore_permissions=True)
-        return
+        else:
+            create_label_print_format(name, file_name)
+    frappe.db.commit()
+
+
+def create_label_print_format(name, file_name):
+    doctype = "Batch" if name.startswith("WMS Batch") else "Item"
+    is_sheet = name.endswith("Sheet")
     frappe.get_doc(
         {
             "doctype": "Print Format",
-            "name": PRINT_FORMAT_NAME,
-            "doc_type": "Batch",
+            "name": name,
+            "doc_type": doctype,
             "module": "WMS ERP Picking",
             "print_format_type": "Jinja",
             "custom_format": 1,
             "standard": "No",
-            "html": html,
+            "html": label_template_html(file_name),
             "font_size": 10,
-            "margin_top": 2,
-            "margin_bottom": 2,
-            "margin_left": 2,
-            "margin_right": 2,
+            # Sheets carry their margins in the template (.print-format rule); single labels print
+            # one per page with a small border.
+            "margin_top": 8 if is_sheet else 2,
+            "margin_bottom": 8 if is_sheet else 2,
+            "margin_left": 8 if is_sheet else 2,
+            "margin_right": 8 if is_sheet else 2,
             "disabled": 0,
         }
     ).insert(ignore_permissions=True)

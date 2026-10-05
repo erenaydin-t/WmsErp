@@ -63,7 +63,7 @@ class DashboardViewModelTest {
     )
 
     private val data = DashboardData(
-        kpis = DashboardKpis(totalItems = 120, pendingOrders = 7, revenue = 15000.0, currency = "USD", dispatched = 12, periodLabel = "Sep 2026"),
+        kpis = DashboardKpis(totalItems = 120, pendingOrders = 7, receipts = 9, dispatched = 12, periodLabel = "Sep 2026"),
         recentActivity = emptyList(),
     )
 

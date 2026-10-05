@@ -1,13 +1,13 @@
 app_name = "wmserp_picking"
 app_title = "WMS ERP Picking"
 app_publisher = "WMS ERP"
-app_description = "Row-level physical picking (Ready to Pick -> Picking -> Picked) with JSON QR labels and picker KPIs for ERPNext Pick Lists, plus stocktaking sessions (warehouse freeze, scan-to-count, second counts, manager review, Stock Reconciliation), used by the WMS ERP Android app"
+app_description = "Row-level physical picking (Ready to Pick -> Picking -> Picked) with JSON QR labels and picker KPIs for ERPNext Pick Lists, receiving against draft Purchase Receipts, QR label sheets, plus stocktaking sessions (warehouse freeze, scan-to-count, second counts, manager review, Stock Reconciliation), used by the WMS ERP Android app"
 app_email = "wms@example.com"
 app_license = "MIT"
 
 required_apps = ["erpnext"]
 
-# Custom Fields / Property Setters / the label Print Format are created on install and re-applied
+# Custom Fields / Property Setters / the label Print Formats are created on install and re-applied
 # on every migrate (idempotent), so nothing in the frappe or erpnext code base is ever modified.
 after_install = "wmserp_picking.install.after_install"
 after_migrate = "wmserp_picking.install.after_migrate"
@@ -30,13 +30,22 @@ doc_events = {
     },
 }
 
-# Jinja helpers for print formats (WMS Batch QR Label) and custom labels.
+# Jinja helpers for print formats (WMS Batch / Item QR Label and the label sheets) and custom labels.
 jinja = {
     "methods": [
         "wmserp_picking.qr.wms_qr_keys",
         "wmserp_picking.qr.wms_qr_payload",
         "wmserp_picking.qr.wms_batch_qr_payload",
+        "wmserp_picking.qr.wms_item_qr_payload",
         "wmserp_picking.qr.wms_qr_svg",
         "wmserp_picking.qr.wms_batch_qr_svg",
+        "wmserp_picking.qr.wms_item_qr_svg",
     ]
+}
+
+# Batch / Item list > Actions > "Print QR Label Sheet" (many labels per A4 page, layout in the
+# sheet Print Format). Read from the app folder by the desk, no `bench build` needed.
+doctype_list_js = {
+    "Batch": ["public/js/wms_labels.js", "public/js/batch_list.js"],
+    "Item": ["public/js/wms_labels.js", "public/js/item_list.js"],
 }

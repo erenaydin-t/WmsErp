@@ -63,12 +63,14 @@ import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.createLabelRes
+import com.wmserp.app.presentation.common.doctypeLabelRes
 import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.components.CameraScannerSheet
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
 import com.wmserp.app.presentation.components.LoadingState
+import com.wmserp.app.presentation.components.RequiredFieldsDialog
 import com.wmserp.app.presentation.components.ScanQuantityDialog
 import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SectionHeader
@@ -92,6 +94,9 @@ fun PickListRoute(onBack: () -> Unit, onDone: () -> Unit, viewModel: PickListVie
         onGenerate = viewModel::generateDocument,
         onDismissMessage = viewModel::dismissMessage,
         onRetry = viewModel::load,
+        onRequiredFieldChange = viewModel::setRequiredFieldAnswer,
+        onConfirmRequiredFields = viewModel::confirmRequiredFields,
+        onDismissRequiredFields = viewModel::dismissRequiredFields,
         onPendingQtyChange = viewModel::setPendingQty,
         onPendingIncrement = viewModel::incrementPendingQty,
         onPendingDecrement = viewModel::decrementPendingQty,
@@ -122,6 +127,9 @@ fun PickListScreen(
     onGenerate: () -> Unit,
     onDismissMessage: () -> Unit,
     onRetry: () -> Unit,
+    onRequiredFieldChange: (String, String) -> Unit = { _, _ -> },
+    onConfirmRequiredFields: () -> Unit = {},
+    onDismissRequiredFields: () -> Unit = {},
     onPendingQtyChange: (String) -> Unit = {},
     onPendingIncrement: () -> Unit = {},
     onPendingDecrement: () -> Unit = {},
@@ -149,6 +157,17 @@ fun PickListScreen(
             onAll = onPendingAll,
             onConfirm = onConfirmPending,
             onDismiss = onCancelPending,
+        )
+    }
+    if (state.requiredFields.isNotEmpty() && pickList != null) {
+        RequiredFieldsDialog(
+            doctype = stringResource(pickList.purpose.targetDocument?.doctypeLabelRes() ?: R.string.doctype_delivery_note),
+            fields = state.requiredFields,
+            answers = state.requiredFieldAnswers,
+            linkOptions = state.linkOptions,
+            onAnswerChange = onRequiredFieldChange,
+            onConfirm = onConfirmRequiredFields,
+            onDismiss = onDismissRequiredFields,
         )
     }
     Scaffold(

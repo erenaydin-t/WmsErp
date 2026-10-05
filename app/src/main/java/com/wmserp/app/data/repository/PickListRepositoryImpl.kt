@@ -1,5 +1,6 @@
 package com.wmserp.app.data.repository
 
+import com.wmserp.app.data.mapper.missingRequiredFieldsOrNull
 import com.wmserp.app.data.mapper.toDomain
 import com.wmserp.app.data.remote.ApiCaller
 import com.wmserp.app.data.remote.ErpNextDataSource
@@ -8,6 +9,7 @@ import com.wmserp.app.data.remote.dto.PickListDto
 import com.wmserp.app.data.remote.dto.PickerKpisDto
 import com.wmserp.app.data.remote.dto.RowUpdateDto
 import com.wmserp.app.data.remote.dto.WmsSettingsDto
+import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
@@ -78,8 +80,15 @@ class PickListRepositoryImpl(
         dataSource.postMethod<RowUpdateDto>(method("complete_row"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds)).toDomain()
     }
 
-    override suspend fun generateDocument(name: String): AppResult<GeneratedDocument> = apiCaller.call {
-        dataSource.postMethod<GeneratedDocumentDto>(method("generate_document"), buildJsonObject { put("name", name) }).toDomain()
+    override suspend fun generateDocument(name: String, values: Map<String, String>): AppResult<GeneratedDocument> = apiCaller.call {
+        val body = buildJsonObject {
+            put("name", name)
+            put("values", buildJsonObject { values.filterValues { it.isNotBlank() }.forEach { (key, value) -> put(key, value) } })
+        }
+        val message = dataSource.postRaw(method("generate_document"), body)
+        // HTTP 200 with `missing_fields`: the site requires values the app must ask the picker for.
+        message.missingRequiredFieldsOrNull(dataSource.json)?.let { throw AppException(it) }
+        dataSource.decode(GeneratedDocumentDto.serializer(), message, method("generate_document")).toDomain()
     }
 
     override suspend fun getPickerKpis(): AppResult<PickerKpis> = apiCaller.call {

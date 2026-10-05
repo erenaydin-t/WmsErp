@@ -14,6 +14,8 @@ import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.model.isPickComplete
 import com.wmserp.app.domain.repository.PickListRepository
+import com.wmserp.app.domain.repository.SettingsRepository
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 class GetWmsQrKeysUseCase @Inject constructor(private val repository: PickListRepository) {
@@ -104,8 +106,16 @@ class CompletePickRowUseCase @Inject constructor(private val repository: PickLis
     }
 }
 
-class GeneratePickDocumentUseCase @Inject constructor(private val repository: PickListRepository) {
-    suspend operator fun invoke(pickList: PickList): AppResult<GeneratedDocument> {
+/**
+ * Creates the target document of a picked card. Required fields the site added (a Department, a
+ * cost center...) are answered from [fieldValues] and from the answers remembered on the device;
+ * when some are still missing the failure lists them so the screen can ask once.
+ */
+class GeneratePickDocumentUseCase @Inject constructor(
+    private val repository: PickListRepository,
+    private val settingsRepository: SettingsRepository,
+) {
+    suspend operator fun invoke(pickList: PickList, fieldValues: Map<String, String> = emptyMap()): AppResult<GeneratedDocument> {
         if (!pickList.isCardPicked) {
             return AppResult.Failure(AppError.Validation("All rows must be picked before creating a document", ErrorCode.PICKING_NOT_COMPLETED))
         }
@@ -114,7 +124,7 @@ class GeneratePickDocumentUseCase @Inject constructor(private val repository: Pi
                 AppError.Validation("No document can be generated for purpose ${pickList.purposeLabel}", ErrorCode.UNSUPPORTED_PICK_PURPOSE, listOf(pickList.purposeLabel))
             )
         }
-        return repository.generateDocument(pickList.name)
+        return repository.generateDocument(pickList.name, settingsRepository.documentFieldDefaults.first() + fieldValues)
     }
 }
 

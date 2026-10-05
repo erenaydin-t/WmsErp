@@ -42,34 +42,43 @@ app/src/main/java/com/wmserp/app
 
 ## Screens
 
+The app is for warehouse users: it shows quantities, batches, dates and document stages, **never prices,
+amounts, costs or values** (no field of the kind is requested from ERPNext).
+
 1. **Login** – ERPNext URL, username/email, password, *Remember me*. Advanced: API key / secret (token auth).
-2. **Dashboard** – greeting, KPI cards (Total Items, Pending Orders, Revenue, Dispatched), the picker's
-   *My picking today* KPIs (rows picked, average time per row, open rows, cards completed), quick actions
-   (Scan, Receive, Dispatch, Report), the counter's *Stocktaking in progress* sessions, recent stock ledger activity.
+2. **Dashboard** – greeting, KPI cards (Total Items, Pending Orders, Receipts, Dispatched; counts only), the
+   picker's *My picking today* KPIs (rows picked, average time per row, open rows, cards completed), quick actions
+   (Scan, Receive, Pick, Report), the counter's *Stocktaking in progress* sessions, recent stock ledger activity.
 3. **Inventory / Analytics** – KPI cards (Pending Deliveries, Receipts, Picklists) and tabs:
-   Delivery Delays (bar chart), Activity Heatmap (7 days × 3h blocks), Stock Aging (ERPNext *Stock Ageing* report).
-4. **Scan** – Item / Warehouse / Purchase Order targets, viewfinder with status text
-   ("Ready to scan item barcode…"), manual entry, result cards, stock transfer (Material Transfer Stock Entry).
-5. **Profile / Settings** – avatar, role, editable personal info, password change, scanner preferences,
-   app language (System / English / فارسی), sign out.
-6. **Orders → Receive / Dispatch** – count goods against Purchase Orders (creates *Purchase Receipt*) and pick
-   against Sales Orders (creates *Delivery Note*); scanning an item barcode opens a quantity prompt for the
-   matching line, prefilled with everything still open (see [Scan → quantity prompt](#scan--quantity-prompt)).
-   Both documents start from ERPNext's own `make_purchase_receipt` / `make_delivery_note` mapping of the
-   order, so rates, taxes, accounting dimensions and custom mandatory row fields (a *Department*, a
-   *Project*…) are inherited; the app only overrides the counted quantity and the warehouse. Required fields
-   that the order does not carry (read from the DocType meta, custom fields included) are filled from the
-   company's default accounting dimensions or, failing that, asked for once in a dialog and remembered on the
-   device, instead of ERPNext rejecting the document with *Value missing for: …*. Batch-tracked
-   items on a Delivery Note are split over the warehouse's batches **first-expiry-first-out** (expired and
-   disabled batches are skipped; not enough batch stock is reported before anything is created); items with
-   serial numbers are refused and must be delivered from ERPNext.
+   Delivery Delays (bar chart, order / customer / due date / status), Activity Heatmap (7 days × 3h blocks),
+   Stock Aging (ERPNext *Stock Ageing* report; quantities per age range, the value columns are ignored).
+4. **Scan** – *Item / Batch*, *Warehouse* and *Receipt* targets, viewfinder with status text, manual entry,
+   result cards, stock transfer (Material Transfer Stock Entry). Scanning a **batch** label (the JSON QR of a
+   batch, or a plain batch number) shows the batch: item, expiry, manufacturing date, supplier and the stock
+   per warehouse; an item label or barcode shows the item and its stock.
+5. **Profile / Settings** – read-only account card (name, email, username, phone, mobile, location, roles as
+   stored in ERPNext; personal details are maintained there, never edited from the app), password change,
+   scanner preferences, app language (System / English / فارسی), app updates, sign out.
+6. **Orders → Receive** – receiving is based on **draft Purchase Receipts**: purchasing creates the receipt from
+   the Purchase Order and runs it through the site's approval workflow; when it reaches the warehouse stage it
+   appears in the app, the warehouse counts the goods against its rows (scan or type; batch tracked rows take
+   their batch from a scanned batch label or the batch field), confirms, and the backend submits the receipt
+   through the workflow so the stock enters. Counts that differ from the draft are confirmed first; rows counted
+   0 are dropped and stay open on the Purchase Order. *Save progress* stores the counts without changing anything
+   else (see [Receiving workflow](#receiving-workflow-purchase-receipts)).
 7. **Orders → Pick** – the picker's tasks: open ERPNext *Pick Lists* with rows assigned to the signed-in user,
    picked row by row through strict JSON QR labels, with hidden timers and a context-aware "Create Delivery
    Note / Material Transfer / Material Issue" button for the last picker (see [Pick List workflow](#pick-list-workflow)).
 8. **Orders → Count** – the counter's open *Stocktaking Sessions*: scan-to-count with batch and expiry, the ERP
    quantity (unless the session is blind), an immediate verdict (accepted / second count needed / manager review),
    counts saved locally first and synced in the background (see [Stocktaking workflow](#stocktaking-workflow)).
+
+**Mandatory fields a site added** (a *Department*, a *Cost Center*, a custom field…) on the documents the app
+creates or submits (Purchase Receipt, Delivery Note, Stock Entry, Stock Reconciliation) are filled server-side
+by `wmserp_picking` from the user's defaults and the company's default accounting dimensions; what is still
+missing is answered **once** in a dialog in the app (Link fields offer their values), remembered on the device
+and sent with the next documents, so ERPNext never refuses a document with *Value missing for: …* behind the
+user's back.
 
 ## ERPNext integration
 
@@ -81,14 +90,13 @@ All calls go through `ErpNextApi` (`app/src/main/java/com/wmserp/app/data/remote
 | Token auth | `Authorization: token <key>:<secret>` |
 | Who am I | `GET /api/method/frappe.auth.get_logged_user` |
 | Documents | `GET/POST/PUT /api/resource/{doctype}[/{name}]` with `fields`, `filters`, `or_filters` |
-| Counts | `frappe.client.get_count` |
-| Sums | `fields=["sum(x) as total"]` on Frappe ≤ 15, `[{"SUM": "x", "as": "total"}]` on Frappe 16 (detected at runtime) |
-| Receive / Dispatch drafts | `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt`, `erpnext.selling.doctype.sales_order.sales_order.make_delivery_note` (`source_name`), then `POST /api/resource/...` |
-| Batch stock | `erpnext.stock.doctype.batch.batch.get_batch_qty` (`item_code`, `warehouse`) + `Batch.expiry_date` |
-| Required fields | `frappe.desk.form.load.getdoctype` (meta incl. custom fields) + `…accounting_dimension.get_dimensions` (company defaults) |
+| Counts | `frappe.client.get_count` (dashboard and analytics KPIs are document counts; no sums of amounts) |
+| Receiving | `wmserp_picking.api.purchase_receipt.*` – `get_receivable`, `get_receipt`, `receive` (counts + `values` for required fields, `submit`, `remove_unreceived`) (see [Receiving workflow](#receiving-workflow-purchase-receipts)) |
+| Batch scan | `GET /api/resource/Batch/{name}` (fallback `batch_id`) + `erpnext.stock.doctype.batch.batch.get_batch_qty` (`batch_no`) |
+| Required fields | answered through the `missing_fields` reply of `receive` / `generate_document`; Link values from `GET /api/resource/{doctype}` |
 | Submit | `frappe.client.submit` |
-| Reports | `frappe.desk.query_report.run` (Stock Ageing) |
-| Picking | `wmserp_picking.api.pick_list.*` – `get_settings`, `get_my_pick_lists`, `get_pick_list`, `start_row`, `save_row_progress`, `complete_row`, `generate_document`, `get_picker_kpis` (see [Pick List workflow](#pick-list-workflow)) |
+| Reports | `frappe.desk.query_report.run` (Stock Ageing; filters `range` "30, 60, 90" for ERPNext v15/v16 and `range1..3` for v14, `ignore_prepared_report=1`) |
+| Picking | `wmserp_picking.api.pick_list.*` – `get_settings`, `get_my_pick_lists`, `get_pick_list`, `start_row`, `save_row_progress`, `complete_row`, `generate_document` (`values` for required fields), `get_picker_kpis` (see [Pick List workflow](#pick-list-workflow)) |
 | Stocktaking | `wmserp_picking.api.stocktaking.*` – `get_my_sessions`, `get_session`, `get_items` (paged), `lookup`, `submit_count`, `sync_counts` (see [Stocktaking workflow](#stocktaking-workflow)) |
 | Password | `frappe.core.doctype.user.user.update_password` |
 
@@ -96,6 +104,33 @@ The base URL is dynamic: `BaseUrlInterceptor` rewrites every request to the serv
 CSRF: the app logs in with `device=mobile`; if a server still answers `CSRFTokenError`, `CsrfRetryInterceptor`
 fetches a token and retries once. Session expiry triggers a silent re-login when *Remember me* is on,
 otherwise the user is returned to the login screen.
+
+## Receiving workflow (Purchase Receipts)
+
+Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only counts and confirms:
+
+1. Purchasing creates the Purchase Receipt from the Purchase Order (desk: *Create > Purchase Receipt*) and the
+   site's **Purchase Receipt workflow** carries it through its approvals. The draft reaches the warehouse stage:
+   a workflow state whose `doc_status` is *Draft* and that the warehouse role may edit (`allow_edit`). Sites
+   without a workflow show every draft the user can write. *WMS Settings > Receipt Workflow States* can pin the
+   states explicitly (one per line).
+2. **Orders → Receive** lists those drafts (`get_receivable`: supplier, stage, rows and units). Scanning a
+   receipt barcode on the *Scan* screen (*Receipt* target) opens it as well.
+3. The warehouse counts: scanning an item barcode / item code counts the row (quantity prompt or +1), scanning
+   a **batch label** (JSON QR or plain batch number) fills the batch of the batch tracked row and counts it, the
+   stepper allows any quantity. Rows ERPNext cannot submit without a batch (`has_batch_no` without
+   `create_new_batch`) show a batch field and are refused until it is filled.
+4. **Confirm receipt**: when the counts differ from the draft a confirmation lists every difference (rows counted
+   0 are removed and stay open on the Purchase Order; over-receipt is allowed when ERPNext's over-receipt
+   allowance permits it). The backend writes the counts (`received_qty`, `qty`, `stock_qty`, warehouse,
+   `batch_no` + `use_serial_batch_fields`), saves, and submits through the workflow transition available to the
+   user that leads to a submitted state (*Receive / Submit / Approve / …*), or `doc.submit()` without a workflow.
+   The response tells whether the receipt was submitted or only moved to the next approval stage.
+5. **Save progress** stores the counts of the rows counted so far (`submit=0`, `remove_unreceived=0`) and
+   changes nothing else, so a long count can continue later.
+
+Required fields the site added to the Purchase Receipt or its rows are handled as described under
+[Screens](#screens): filled from defaults, else asked once.
 
 ## Pick List workflow
 
@@ -268,7 +303,7 @@ the app to people outside your warehouse, and never upload such an APK to Google
 
 CI builds are versioned `<base>.<workflow run number>` (`versionName`) with the run number as `versionCode`;
 the base (`1.1`) lives in `app/build.gradle.kts` (`baseVersion`) and `.github/workflows/android.yml`
-(`BASE_VERSION`). Local builds are `1.1.0-dev` / `versionCode 1` and therefore always accept an update.
+(`BASE_VERSION`). Local builds are `1.2.0-dev` / `versionCode 1` and therefore always accept an update.
 
 ## CI / CD (GitHub Actions)
 
@@ -299,7 +334,7 @@ The app updates itself from the repository's GitHub Releases, so a PDA never nee
 1. On start the dashboard asks `GET https://api.github.com/repos/erenaydin-t/WmsErp/releases/latest`
    (unauthenticated, at most once every 6 hours; *Profile → App updates → Check for updates* always
    checks). The repository is set at build time (`BuildConfig.UPDATE_GITHUB_REPO`).
-2. When the release tag (`v1.1.57`) is newer than the installed `versionName`, a banner on the dashboard
+2. When the release tag (`v1.2.57`) is newer than the installed `versionName`, a banner on the dashboard
    and the card in Profile offer **Update now**; *Later* hides the banner until the next check.
 3. The APK asset is streamed to `filesDir/updates/` with a progress bar (a finished download is reused,
    partial files are deleted). Downloads keep running while you move between screens
@@ -348,13 +383,25 @@ add the locale to `locales_config.xml` and a case to `AppLanguage` (with its lab
 
 ## Checking a server before testing on a device
 
-`tools/erpnext_smoke_test.py` replays every request the app makes (login, dashboard KPIs, analytics,
-items, bins, warehouses, orders, the Stock Ageing report, the picking API and the stocktaking API) against a real site with
-an API key and prints which ones fail and why (permission, missing field, missing app, report filters):
+`tools/erpnext_smoke_test.py` replays every request the app makes (login, dashboard and analytics counts,
+items, batches, bins, warehouses, the Stock Ageing report with the version-specific filters, the draft
+Purchase Receipts at the user's stage, the label sheet API, the picking API and the stocktaking API) against
+a real site with an API key and prints which ones fail and why (permission, missing field, missing app,
+report filters, workflow stage). It also **diagnoses Pick List creation**: it runs ERPNext's own
+`create_pick_list` mapper on an open Sales Order (what the desk's *Create > Pick List* button does) and lists
+the mandatory fields of *Pick List* / *Pick List Item* (custom fields included) that the mapped document
+leaves empty, which is what produces *a required field cannot be found / Value missing for* errors.
+
+Run it with the API key of the **regular warehouse user** (not Administrator), so the permission and
+workflow checks reflect what that user will see in the app:
 
 ```bash
 python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY --secret API_SECRET \
     --barcode 8690000000017            # optional: exercise the barcode lookup
+    # --batch B-2026-001               # optional: batch lookup + label sheet of that batch
+    # --sales-order SAL-ORD-2026-00001 # optional: Pick List creation diagnostic on this order
+    # --insert-pick-list               # optional: insert the mapped Pick List and delete it again (writes!)
+    # --receive MAT-PRE-2026-00001     # optional: save the expected quantities as count progress (writes!)
     # --pick-list STO-PICK-00001       # optional: run start/save/complete/generate on a test pick list (writes!)
 ```
 
@@ -365,8 +412,8 @@ python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY 
   AES/GCM cipher, formatters, the strict QR label parser and scan validation, the picking use cases and
   repository, the stocktaking use cases (paged download with cache fallback, scan resolution, the device-side
   count evaluator, the offline count queue), the file-backed stocktaking store and repository, and ViewModels
-  (Login, Dashboard, Scan, Receive, Pick List, Counting, Main) including the resource-id based (`UiText`)
-  messages they emit.
+  (Login, Dashboard, Scan, Receive against a draft Purchase Receipt with the differences confirmation and the
+  required-fields dialog, Pick List, Counting, Main) including the resource-id based (`UiText`) messages they emit.
 * **Compose UI tests** (`app/src/androidTest`): login form validation and submission, dashboard KPIs, quick
   actions and bottom navigation, hardware scanner input delivered to the scan screen, manual code entry, and
   the picking screen (only the picker's rows, expected batch, no manual inputs, wrong-batch alert,
@@ -375,5 +422,7 @@ python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY 
   sync badge).
 * **Backend rules** (`erpnext/wmserp_picking`): `python -m unittest discover -p "test_*.py"` covers row/card
   completion, quantity validation, JSON QR parsing and matching, purpose mapping, permissions and KPI
-  aggregation, and the stocktaking rules (count evaluation, second counts, duplicate policies, assignment,
-  session status transitions, progress totals, reconciliation rows) without a bench.
+  aggregation, the stocktaking rules (count evaluation, second counts, duplicate policies, assignment,
+  session status transitions, progress totals, reconciliation rows), the receiving rules (editable workflow
+  states, submit transition, counted-vs-expected plan), the required-field helpers and the label sheet layout
+  (rendered with Jinja: 20 batches → 12 + 8 labels on two A4 pages) without a bench.

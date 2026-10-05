@@ -1,11 +1,12 @@
 package com.wmserp.app.domain.model
 
-/** KPI values shown on the dashboard. */
+/** KPI values shown on the dashboard. Counts only: warehouse users see no monetary data. */
 data class DashboardKpis(
     val totalItems: Int,
     val pendingOrders: Int,
-    val revenue: Double,
-    val currency: String,
+    /** Purchase Receipts submitted this month. */
+    val receipts: Int,
+    /** Delivery Notes submitted this month. */
     val dispatched: Int,
     val periodLabel: String,
 )
@@ -36,8 +37,6 @@ data class DeliveryDelay(
     val deliveryDate: String,
     val daysLate: Int,
     val status: String,
-    val grandTotal: Double,
-    val currency: String?,
 )
 
 data class DelayBucket(val label: String, val count: Int)

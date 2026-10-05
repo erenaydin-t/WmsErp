@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_datetime, getdate, now_datetime, nowdate
 
-from wmserp_picking import __version__
+from wmserp_picking import __version__, documents
 from wmserp_picking.picking import rules
 from wmserp_picking.picking.pick_list_events import add_assignment, remove_assignment
 from wmserp_picking.wms_erp_picking.doctype.wms_settings.wms_settings import get_qr_keys
@@ -92,7 +92,13 @@ ROW_FIELDS = [
 def get_settings():
     """JSON keys of the QR labels (from WMS Settings) plus the app version."""
     keys = get_qr_keys()
-    return {"qr_item_key": keys["qr_item_key"], "qr_batch_key": keys["qr_batch_key"], "app_version": __version__}
+    return {
+        "qr_item_key": keys["qr_item_key"],
+        "qr_batch_key": keys["qr_batch_key"],
+        "app_version": __version__,
+        # What this backend offers beyond picking, so the app can tell an old backend from a broken one.
+        "features": ["stocktaking", "purchase_receipt_receiving", "label_sheets", "required_field_values"],
+    }
 
 
 @frappe.whitelist()
@@ -242,11 +248,17 @@ def assign_rows(name, user, rows=None):
 
 
 @frappe.whitelist()
-def generate_document(name):
-    """Creates the draft Delivery Note / Stock Entry for a picked card, exactly once."""
+def generate_document(name, values=None):
+    """Creates the draft Delivery Note / Stock Entry for a picked card, exactly once.
+
+    `values` answers required fields the site added (`{"Delivery Note Item.department": "..."}`).
+    When required fields are still empty the answer is `{"missing_fields": [...], "created": false}`
+    (HTTP 200) and nothing is created; the app asks the user and calls again with `values`.
+    """
     doc = load_for_card(name)
     if current_status(doc) != rules.STATUS_PICKED:
         frappe.throw(_("All rows of Pick List {0} must be picked before creating a document.").format(name))
+    values = frappe.parse_json(values) or {}
 
     # Row lock: two devices pressing the button at the same time serialize here, and the second
     # one sees the document created by the first.
@@ -256,14 +268,25 @@ def generate_document(name):
     existing = find_generated_document(doc)
     if existing:
         existing["already_generated"] = True
+        existing["created"] = True
         existing["documents"] = [{"doctype": existing["doctype"], "name": existing["name"]}]
         return existing
 
     doctype, stock_entry_purpose = target_for(doc)
-    if doctype == rules.DELIVERY_NOTE:
-        created = make_delivery_notes(doc)
-    else:
-        created = [make_stock_entry(doc, stock_entry_purpose)]
+    try:
+        if doctype == rules.DELIVERY_NOTE:
+            created = make_delivery_notes(doc, values)
+        else:
+            created = [make_stock_entry(doc, stock_entry_purpose, values)]
+    except documents.MissingRequiredFields as exc:
+        frappe.db.rollback()
+        frappe.clear_messages()
+        return exc.response()
+    except frappe.MandatoryError as exc:
+        answer = documents.missing_fields_answer(doctype, exc)
+        if answer:
+            return answer
+        raise
 
     primary = created[0]
     doc.db_set({"custom_generated_doctype": primary.doctype, "custom_generated_docname": primary.name}, notify=True)
@@ -273,6 +296,7 @@ def generate_document(name):
         "name": primary.name,
         "docstatus": primary.docstatus,
         "already_generated": False,
+        "created": True,
         "documents": [{"doctype": d.doctype, "name": d.name} for d in created],
     }
 
@@ -527,9 +551,10 @@ def delivery_note_skeleton(sales_order):
     return make_dn_from_so(sales_order, skip_item_mapping=True)
 
 
-def make_delivery_notes(pick_list):
+def make_delivery_notes(pick_list, values=None):
     """One draft Delivery Note per customer (mirrors erpnext's create_delivery_note, but built from
-    the physically picked quantities and skipping rows that were not picked)."""
+    the physically picked quantities and skipping rows that were not picked). Every note is
+    prepared first; nothing is inserted while a required field is still unanswered."""
     from frappe.model.mapper import map_child_doc
 
     rows = pickable_rows(pick_list)
@@ -537,7 +562,7 @@ def make_delivery_notes(pick_list):
         "doctype": "Delivery Note Item",
         "field_map": {"rate": "rate", "name": "so_detail", "parent": "against_sales_order"},
     }
-    created = []
+    prepared = []
 
     so_customers, by_customer = {}, {}
     for row in rows:
@@ -557,8 +582,8 @@ def make_delivery_notes(pick_list):
             else:
                 dn_item = delivery_note.append("items", {"item_code": row.item_code, "against_sales_order": row.sales_order})
             fill_delivery_note_item(dn_item, row)
-        finalize_delivery_note(delivery_note, pick_list)
-        created.append(delivery_note)
+        prepare_delivery_note(delivery_note, pick_list)
+        prepared.append((delivery_note, [frappe.get_doc("Sales Order", so) for so in sales_orders]))
 
     unlinked = [row for row in rows if not row.get("sales_order")]
     if unlinked:
@@ -568,9 +593,30 @@ def make_delivery_notes(pick_list):
         delivery_note.customer = pick_list.customer
         for row in unlinked:
             fill_delivery_note_item(delivery_note.append("items", {"item_code": row.item_code}), row)
-        finalize_delivery_note(delivery_note, pick_list)
+        prepare_delivery_note(delivery_note, pick_list)
+        prepared.append((delivery_note, []))
+
+    require_fields(rules.DELIVERY_NOTE, [(note, sources + [pick_list]) for note, sources in prepared], values)
+    created = []
+    for delivery_note, _sources in prepared:
+        delivery_note.flags.ignore_mandatory = True  # same as erpnext's create_delivery_note
+        delivery_note.insert()
         created.append(delivery_note)
     return created
+
+
+def require_fields(doctype, docs_with_sources, values):
+    """Fills the required fields of every prepared document; raises MissingRequiredFields with the
+    union of what is still empty, before anything is inserted."""
+    missing, seen = [], set()
+    for document, sources in docs_with_sources:
+        for field in documents.fill_required(document, values, sources=sources, company=document.get("company")):
+            key = (field["doctype"], field["fieldname"])
+            if key not in seen:
+                seen.add(key)
+                missing.append(field)
+    if missing:
+        raise documents.MissingRequiredFields(doctype, missing)
 
 
 def fill_delivery_note_item(dn_item, row):
@@ -591,17 +637,15 @@ def fill_delivery_note_item(dn_item, row):
     set_if_field(dn_item, "pick_list_item", row.name)
 
 
-def finalize_delivery_note(delivery_note, pick_list):
+def prepare_delivery_note(delivery_note, pick_list):
     set_if_field(delivery_note, "pick_list", pick_list.name)
     delivery_note.company = pick_list.company
     delivery_note.run_method("set_missing_values")
     delivery_note.run_method("set_po_nos")
     delivery_note.run_method("calculate_taxes_and_totals")
-    delivery_note.flags.ignore_mandatory = True  # same as erpnext's create_delivery_note
-    delivery_note.insert()
 
 
-def make_stock_entry(pick_list, purpose):
+def make_stock_entry(pick_list, purpose, values=None):
     rows = pickable_rows(pick_list)
     stock_entry = frappe.new_doc("Stock Entry")
     stock_entry.company = pick_list.company
@@ -648,6 +692,10 @@ def make_stock_entry(pick_list, purpose):
             set_if_field(item, "material_request_item", row.get("material_request_item"))
 
     stock_entry.run_method("set_missing_values")
+    sources = [pick_list]
+    if pick_list.get("material_request"):
+        sources.insert(0, frappe.get_doc("Material Request", pick_list.material_request))
+    require_fields(rules.STOCK_ENTRY, [(stock_entry, sources)], values)
     stock_entry.insert()
     return stock_entry
 

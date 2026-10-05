@@ -1,5 +1,9 @@
 package com.wmserp.app.domain.model
 
+/**
+ * The signed-in ERPNext `User`, read-only: the app shows what the site holds and never edits it
+ * (personal details are maintained in ERPNext itself).
+ */
 data class UserProfile(
     val email: String,
     val firstName: String,
@@ -31,6 +35,9 @@ data class UserProfile(
             ?: roles.firstOrNull { it !in GENERIC_ROLES }
             ?: "User"
 
+    /** Roles worth showing (the technical "All" / "Guest" / "Desk User" are hidden). */
+    val visibleRoles: List<String> get() = roles.filter { it !in GENERIC_ROLES }.sorted()
+
     private companion object {
         val PREFERRED_ROLES = listOf(
             "Stock Manager", "Stock User", "Warehouse Manager", "Purchase Manager",
@@ -39,11 +46,3 @@ data class UserProfile(
         val GENERIC_ROLES = setOf("All", "Guest", "Desk User")
     }
 }
-
-data class ProfileUpdate(
-    val firstName: String,
-    val lastName: String,
-    val phone: String?,
-    val mobileNo: String?,
-    val location: String?,
-)

@@ -51,7 +51,6 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.PASSWORDS_DO_NOT_MATCH -> R.string.error_passwords_do_not_match
     ErrorCode.PASSWORD_UNCHANGED -> R.string.error_password_unchanged
     ErrorCode.CURRENT_PASSWORD_INCORRECT -> R.string.error_current_password_incorrect
-    ErrorCode.FIRST_NAME_REQUIRED -> R.string.error_first_name_required
     ErrorCode.ITEM_REQUIRED -> R.string.error_item_required
     ErrorCode.QTY_MUST_BE_POSITIVE -> R.string.error_qty_positive
     ErrorCode.WAREHOUSES_REQUIRED -> R.string.error_warehouses_required
@@ -59,18 +58,13 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.TARGET_WAREHOUSE_REQUIRED -> R.string.error_target_warehouse_required
     ErrorCode.SOURCE_WAREHOUSE_REQUIRED -> R.string.error_source_warehouse_required
     ErrorCode.UNKNOWN_ORDER_ROW -> R.string.error_unknown_order_row
-    ErrorCode.OVER_RECEIVE -> R.string.error_over_receive
-    ErrorCode.OVER_DISPATCH -> R.string.error_over_dispatch
     ErrorCode.SELECT_WAREHOUSE_FOR_ITEM -> R.string.error_select_warehouse
     ErrorCode.NOTHING_TO_RECEIVE -> R.string.error_nothing_to_receive
-    ErrorCode.NOTHING_TO_DISPATCH -> R.string.error_nothing_to_dispatch
-    ErrorCode.ORDER_ROW_UNAVAILABLE -> R.string.error_order_row_unavailable
-    ErrorCode.SERIAL_ITEM_UNSUPPORTED -> R.string.error_serial_item_unsupported
-    ErrorCode.INSUFFICIENT_BATCH_STOCK -> R.string.error_insufficient_batch_stock
+    ErrorCode.BATCH_REQUIRED_FOR_ITEM -> R.string.error_batch_required
+    ErrorCode.PURCHASE_RECEIPT_NOT_FOUND -> R.string.error_pr_not_found
+    ErrorCode.RECEIPT_NOT_RECEIVABLE -> R.string.error_receipt_not_receivable
     ErrorCode.MISSING_REQUIRED_FIELDS -> R.string.error_missing_required_fields
     ErrorCode.EMPTY_BARCODE -> R.string.error_empty_barcode
-    ErrorCode.PURCHASE_ORDER_NOT_FOUND -> R.string.error_po_not_found
-    ErrorCode.SALES_ORDER_NOT_FOUND -> R.string.error_so_not_found
     ErrorCode.NO_COMPANY_CONFIGURED -> R.string.error_no_company
     ErrorCode.NETWORK_UNREACHABLE -> R.string.error_network_unreachable
     ErrorCode.NETWORK_DNS -> R.string.error_network_dns
@@ -186,6 +180,13 @@ fun PickTargetDocument.createLabelRes(): Int = when (this) {
     PickTargetDocument.STOCK_ENTRY_MATERIAL_ISSUE -> R.string.pick_create_material_issue
 }
 
+/** Name of the ERPNext document a pick purpose creates, for the required-fields dialog. */
+@StringRes
+fun PickTargetDocument.doctypeLabelRes(): Int = when (this) {
+    PickTargetDocument.DELIVERY_NOTE -> R.string.doctype_delivery_note
+    PickTargetDocument.STOCK_ENTRY_MATERIAL_TRANSFER, PickTargetDocument.STOCK_ENTRY_MATERIAL_ISSUE -> R.string.doctype_stock_entry
+}
+
 fun AppError.toUiText(): UiText {
     val code = code ?: return UiText.Plain(message)
     return UiText.Res(code.stringRes(), args)
@@ -195,14 +196,14 @@ fun AppError.toUiText(): UiText {
 fun ScanTarget.labelRes(): Int = when (this) {
     ScanTarget.ITEM -> R.string.scan_target_item
     ScanTarget.WAREHOUSE -> R.string.scan_target_warehouse
-    ScanTarget.PURCHASE_ORDER -> R.string.scan_target_purchase_order
+    ScanTarget.PURCHASE_RECEIPT -> R.string.scan_target_purchase_receipt
 }
 
 @StringRes
 fun ScanTarget.hintRes(): Int = when (this) {
     ScanTarget.ITEM -> R.string.scan_hint_item
     ScanTarget.WAREHOUSE -> R.string.scan_hint_warehouse
-    ScanTarget.PURCHASE_ORDER -> R.string.scan_hint_purchase_order
+    ScanTarget.PURCHASE_RECEIPT -> R.string.scan_hint_purchase_receipt
 }
 
 @StringRes
@@ -223,7 +224,6 @@ fun AnalyticsSection.titleRes(): Int = when (this) {
 @StringRes
 fun OrdersTab.titleRes(): Int = when (this) {
     OrdersTab.RECEIVE -> R.string.tab_receive
-    OrdersTab.DISPATCH -> R.string.tab_dispatch
     OrdersTab.PICK -> R.string.tab_pick
     OrdersTab.COUNT -> R.string.tab_count
 }

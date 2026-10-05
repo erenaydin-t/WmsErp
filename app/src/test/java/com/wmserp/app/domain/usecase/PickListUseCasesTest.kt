@@ -8,13 +8,16 @@ import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.repository.PickListRepository
+import com.wmserp.app.domain.repository.SettingsRepository
 import com.wmserp.app.testutil.TestFixtures
 import com.wmserp.app.testutil.qrLabel
 import com.wmserp.app.testutil.rowUpdate
 import com.wmserp.app.testutil.withRow
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -24,6 +27,7 @@ import org.junit.Test
 class PickListUseCasesTest {
 
     private val repository: PickListRepository = mockk()
+    private val settingsRepository: SettingsRepository = mockk { every { documentFieldDefaults } returns flowOf(emptyMap()) }
     private val pickList = TestFixtures.pickList
     private val mine = pickList.items.first { it.rowName == "prow1" }
     private val notMine = pickList.items.first { it.rowName == "prow3" }
@@ -134,12 +138,12 @@ class PickListUseCasesTest {
 
     @Test
     fun `document generation needs a picked card with a supported purpose`() = runTest {
-        assertEquals(ErrorCode.PICKING_NOT_COMPLETED, GeneratePickDocumentUseCase(repository)(pickList).code())
+        assertEquals(ErrorCode.PICKING_NOT_COMPLETED, GeneratePickDocumentUseCase(repository, settingsRepository)(pickList).code())
         val picked = pickList.copy(pickingStatus = PickingStatus.PICKED, allRowsPicked = true)
-        val unsupported = GeneratePickDocumentUseCase(repository)(picked.copy(purpose = PickListPurpose.OTHER, purposeLabel = "Weird"))
+        val unsupported = GeneratePickDocumentUseCase(repository, settingsRepository)(picked.copy(purpose = PickListPurpose.OTHER, purposeLabel = "Weird"))
         assertEquals(ErrorCode.UNSUPPORTED_PICK_PURPOSE, unsupported.code())
         assertEquals(listOf("Weird"), unsupported.args())
-        coVerify(exactly = 0) { repository.generateDocument(any()) }
+        coVerify(exactly = 0) { repository.generateDocument(any(), any()) }
     }
 
     @Test

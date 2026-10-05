@@ -5,13 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PickList
-import com.wmserp.app.domain.model.PurchaseOrder
-import com.wmserp.app.domain.model.SalesOrder
+import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.StocktakingSession
 import com.wmserp.app.domain.usecase.GetMyPickListsUseCase
 import com.wmserp.app.domain.usecase.GetMyStocktakingSessionsUseCase
-import com.wmserp.app.domain.usecase.GetOpenPurchaseOrdersUseCase
-import com.wmserp.app.domain.usecase.GetOpenSalesOrdersUseCase
+import com.wmserp.app.domain.usecase.GetReceivableReceiptsUseCase
 import com.wmserp.app.domain.usecase.PendingCountQueue
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
@@ -26,13 +24,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class OrdersTab { RECEIVE, DISPATCH, PICK, COUNT }
+/** Receive (draft Purchase Receipts at the warehouse stage), Pick (my pick lists) and Count (stocktaking). */
+enum class OrdersTab { RECEIVE, PICK, COUNT }
 
 data class OrdersUiState(
     val tab: OrdersTab = OrdersTab.RECEIVE,
     val query: String = "",
-    val purchaseOrders: List<PurchaseOrder> = emptyList(),
-    val salesOrders: List<SalesOrder> = emptyList(),
+    /** Draft Purchase Receipts the signed-in user may count and confirm. */
+    val receipts: List<PurchaseReceipt> = emptyList(),
     val pickLists: List<PickList> = emptyList(),
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
@@ -62,11 +61,10 @@ data class OrdersUiState(
         }
 }
 
-/** Lists open Purchase Orders (to receive), Sales Orders (to dispatch) and the user's Pick Lists. */
+/** Lists the receivable Purchase Receipts, the user's Pick Lists and the stocktaking sessions. */
 @HiltViewModel
 class OrdersViewModel @Inject constructor(
-    private val getOpenPurchaseOrders: GetOpenPurchaseOrdersUseCase,
-    private val getOpenSalesOrders: GetOpenSalesOrdersUseCase,
+    private val getReceivableReceipts: GetReceivableReceiptsUseCase,
     private val getMyPickLists: GetMyPickListsUseCase,
     private val getMySessions: GetMyStocktakingSessionsUseCase,
     private val pendingQueue: PendingCountQueue,
@@ -99,7 +97,7 @@ class OrdersViewModel @Inject constructor(
 
     fun refresh() = load(refresh = true)
 
-    /** Called when the screen comes back to the foreground (e.g. after finishing a pick list). */
+    /** Called when the screen comes back to the foreground (e.g. after confirming a receipt or finishing a pick list). */
     fun onResumed() {
         if (loadedOnce) load(refresh = true, silent = true)
     }
@@ -109,31 +107,27 @@ class OrdersViewModel @Inject constructor(
         val query = _uiState.value.query
         _uiState.update {
             it.copy(
-                isLoading = !refresh && it.purchaseOrders.isEmpty() && it.salesOrders.isEmpty() && it.pickLists.isEmpty(),
+                isLoading = !refresh && it.receipts.isEmpty() && it.pickLists.isEmpty(),
                 isRefreshing = refresh && !silent,
                 error = null,
             )
         }
         loadJob = viewModelScope.launch {
-            val po = async { getOpenPurchaseOrders(query) }
-            val so = async { getOpenSalesOrders(query) }
+            val pr = async { getReceivableReceipts(query) }
             val pl = if (reloadPickLists) async { getMyPickLists() } else null
             val st = if (reloadPickLists) async { getMySessions() } else null
-            val poResult = po.await()
-            val soResult = so.await()
+            val prResult = pr.await()
             val plResult = pl?.await()
             val stResult = st?.await()
             val pending = (stResult as? AppResult.Success)?.data?.associate { it.name to pendingQueue.pending(it.name).size }
             loadedOnce = true
-            val error = listOfNotNull(poResult.errorOrNull(), soResult.errorOrNull()).firstOrNull()?.toUiText()
             _uiState.update {
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    purchaseOrders = (poResult as? AppResult.Success)?.data ?: it.purchaseOrders,
-                    salesOrders = (soResult as? AppResult.Success)?.data ?: it.salesOrders,
+                    receipts = (prResult as? AppResult.Success)?.data ?: it.receipts,
                     pickLists = (plResult as? AppResult.Success)?.data ?: it.pickLists,
-                    error = error,
+                    error = prResult.errorOrNull()?.toUiText(),
                     pickListError = if (plResult == null) it.pickListError else plResult.errorOrNull()?.toUiText(),
                     sessions = (stResult as? AppResult.Success)?.data ?: it.sessions,
                     sessionError = if (stResult == null) it.sessionError else stResult.errorOrNull()?.toUiText(),

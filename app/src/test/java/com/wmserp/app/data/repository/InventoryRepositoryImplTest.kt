@@ -112,4 +112,37 @@ class InventoryRepositoryImplTest {
         assertTrue(expired)
         job.cancel()
     }
+
+    @Test
+    fun `getBatch reads the batch by name and falls back to the printed batch id`() = runTest {
+        harness.server.enqueue(MockResponse().setBody("""{"data":{"name":"B-001","batch_id":"B-001","item":"ITEM-001","item_name":"Bolt","expiry_date":"2027-01-31","disabled":0,"stock_uom":"Nos"}}"""))
+        harness.server.enqueue(MockResponse().setResponseCode(404).setBody("""{"exc_type":"DoesNotExistError"}"""))
+        harness.server.enqueue(MockResponse().setBody("""{"data":[{"name":"BATCH-00007","batch_id":"LOT-7","item":"ITEM-002","disabled":1}]}"""))
+
+        val byName = (repository.getBatch("B-001") as AppResult.Success).data!!
+        val byId = (repository.getBatch("LOT-7") as AppResult.Success).data!!
+
+        assertEquals("ITEM-001", byName.itemCode)
+        assertEquals("2027-01-31", byName.expiryDate)
+        assertTrue(byName.isExpiredOn("2027-02-01"))
+        assertEquals("BATCH-00007", byId.name)
+        assertTrue(byId.disabled)
+        assertEquals("/api/resource/Batch/B-001", harness.server.takeRequest().path)
+        assertEquals("/api/resource/Batch/LOT-7", harness.server.takeRequest().path)
+        val list = URLDecoder.decode(harness.server.takeRequest().path, "UTF-8")
+        assertTrue(list.contains("""["batch_id","=","LOT-7"]"""))
+    }
+
+    @Test
+    fun `getBatchStock keeps the warehouses with stock, largest first`() = runTest {
+        harness.server.enqueue(MockResponse().setBody("""{"message":[{"warehouse":"Stores - WM","qty":5},{"warehouse":"Finished Goods - WM","qty":12.5},{"warehouse":"Scrap - WM","qty":0}]}"""))
+
+        val stock = (repository.getBatchStock("B-001") as AppResult.Success).data
+
+        assertEquals(listOf("Finished Goods - WM", "Stores - WM"), stock.map { it.warehouse })
+        assertEquals(12.5, stock.first().qty, 0.0)
+        val path = URLDecoder.decode(harness.server.takeRequest().path, "UTF-8")
+        assertTrue(path.startsWith("/api/method/erpnext.stock.doctype.batch.batch.get_batch_qty?"))
+        assertTrue(path.contains("batch_no=B-001"))
+    }
 }

@@ -242,9 +242,14 @@ class ScanViewModel @Inject constructor(
             UiText.Res(R.string.history_warehouse_summary, listOf(lookup.warehouse.warehouseName, lookup.stock.size)),
             true, time,
         )
-        is ScanLookup.PurchaseOrderFound -> ScanHistoryEntry(
-            lookup.code, ScanTarget.PURCHASE_ORDER,
-            UiText.Res(R.string.history_po_summary, listOf(lookup.purchaseOrder.supplierName, lookup.purchaseOrder.status)),
+        is ScanLookup.BatchFound -> ScanHistoryEntry(
+            lookup.code, ScanTarget.ITEM,
+            UiText.Res(R.string.history_batch_summary, listOf(lookup.batch.name, lookup.item?.name ?: lookup.batch.itemCode, lookup.totalQty.trimQty())),
+            true, time,
+        )
+        is ScanLookup.PurchaseReceiptFound -> ScanHistoryEntry(
+            lookup.code, ScanTarget.PURCHASE_RECEIPT,
+            UiText.Res(R.string.history_pr_summary, listOf(lookup.receipt.supplierName, lookup.receipt.workflowState ?: lookup.receipt.status ?: "")),
             true, time,
         )
         is ScanLookup.NotFound -> ScanHistoryEntry(lookup.code, lookup.target, UiText.Res(R.string.scan_chip_not_found), false, time)

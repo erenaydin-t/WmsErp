@@ -118,6 +118,6 @@ private fun ScanHost(initial: ScanUiState, onManualSubmit: (String) -> Unit = {}
         onTransferToChange = {},
         onTransferQtyChange = {},
         onSubmitTransfer = {},
-        onReceivePurchaseOrder = {},
+        onReceivePurchaseReceipt = {},
     )
 }

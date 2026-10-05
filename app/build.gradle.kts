@@ -23,7 +23,7 @@ plugins {
  * Versioning: CI passes WMSERP_VERSION_CODE (the workflow run number) and WMSERP_VERSION_NAME
  * (<base>.<run number>); local builds get versionCode 1 and "<base>.0-dev".
  */
-val baseVersion = "1.1"
+val baseVersion = "1.2"
 val ciVersionCode = System.getenv("WMSERP_VERSION_CODE")?.trim()?.toIntOrNull()
 val ciVersionName = System.getenv("WMSERP_VERSION_NAME")?.trim()?.takeIf { it.isNotBlank() }
 val keystorePropsFile = rootProject.file("keystore.properties")

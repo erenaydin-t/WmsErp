@@ -1,42 +1,64 @@
 package com.wmserp.app.testutil
 
+import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.BatchWarehouseStock
 import com.wmserp.app.domain.model.Item
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickListPurpose
 import com.wmserp.app.domain.model.PickingStatus
-import com.wmserp.app.domain.model.PurchaseOrder
-import com.wmserp.app.domain.model.PurchaseOrderItem
-import com.wmserp.app.domain.model.SalesOrder
-import com.wmserp.app.domain.model.SalesOrderItem
+import com.wmserp.app.domain.model.PurchaseReceipt
+import com.wmserp.app.domain.model.PurchaseReceiptItem
 import com.wmserp.app.domain.model.StockLevel
 import com.wmserp.app.domain.model.UserSession
 
 object TestFixtures {
     val session = UserSession(userId = "user@example.com", fullName = "Eren Aydin", baseUrl = "https://erp.example.com")
 
-    val item = Item(code = "ITEM-001", name = "Steel Bolt M8", group = "Fasteners", stockUom = "Nos", barcodes = listOf("8690000000017"))
+    val item = Item(code = "ITEM-001", name = "Steel Bolt M8", group = "Fasteners", stockUom = "Nos", barcodes = listOf("8690000000017"), hasBatchNo = true)
 
     val stock = listOf(
         StockLevel(itemCode = "ITEM-001", warehouse = "Stores - WM", actualQty = 120.0, reservedQty = 20.0),
         StockLevel(itemCode = "ITEM-001", warehouse = "Finished Goods - WM", actualQty = 30.0),
     )
 
-    val purchaseOrder = PurchaseOrder(
-        name = "PUR-ORD-2026-00001",
+    val batch = Batch(
+        name = "B-001",
+        itemCode = "ITEM-001",
+        itemName = "Steel Bolt M8",
+        expiryDate = "2027-01-31",
+        manufacturingDate = "2026-01-15",
+        stockUom = "Nos",
+        supplier = "SUP-001",
+    )
+
+    val batchStock = listOf(BatchWarehouseStock(warehouse = "Stores - WM", qty = 40.0))
+
+    /** A draft Purchase Receipt at the warehouse stage: one batch tracked row without a batch yet, one plain row. */
+    val purchaseReceipt = PurchaseReceipt(
+        name = "MAT-PRE-2026-00001",
         supplier = "SUP-001",
         supplierName = "Acme Supplies",
-        status = "To Receive and Bill",
-        transactionDate = "2026-09-20",
-        scheduleDate = "2026-09-27",
-        grandTotal = 1500.0,
-        currency = "USD",
-        perReceived = 0.0,
-        setWarehouse = "Stores - WM",
+        postingDate = "2026-09-28",
         company = "WM Co",
+        setWarehouse = "Stores - WM",
+        status = "Draft",
+        workflowState = "Warehouse",
+        docStatus = 0,
+        supplierDeliveryNote = "DN-778",
+        itemCount = 2,
+        totalQty = 15.0,
+        canReceive = true,
+        hasWorkflow = true,
         items = listOf(
-            PurchaseOrderItem(rowName = "row1", itemCode = "ITEM-001", itemName = "Steel Bolt M8", qty = 10.0, receivedQty = 0.0, uom = "Nos", warehouse = "Stores - WM", rate = 100.0, amount = 1000.0),
-            PurchaseOrderItem(rowName = "row2", itemCode = "ITEM-002", itemName = "Steel Nut M8", qty = 5.0, receivedQty = 2.0, uom = "Nos", warehouse = null, rate = 100.0, amount = 500.0),
+            PurchaseReceiptItem(
+                rowName = "row1", idx = 1, itemCode = "ITEM-001", itemName = "Steel Bolt M8", qty = 10.0, uom = "Nos", stockUom = "Nos",
+                warehouse = "Stores - WM", hasBatchNo = true, needsBatch = true, purchaseOrder = "PUR-ORD-2026-00001", barcodes = listOf("8690000000017"),
+            ),
+            PurchaseReceiptItem(
+                rowName = "row2", idx = 2, itemCode = "ITEM-002", itemName = "Steel Nut M8", qty = 5.0, uom = "Nos", stockUom = "Nos",
+                warehouse = "Stores - WM", purchaseOrder = "PUR-ORD-2026-00001",
+            ),
         ),
     )
 
@@ -73,21 +95,6 @@ object TestFixtures {
                 batchNo = "B-777", expiryDate = null, serialNo = null, requiredQty = 3.0, pickedQty = 0.0, uom = "Nos", hasBatchNo = true,
                 picker = "other@example.com", isMine = false,
             ),
-        ),
-    )
-
-    val salesOrder = SalesOrder(
-        name = "SAL-ORD-2026-00001",
-        customer = "CUST-001",
-        customerName = "Globex",
-        status = "To Deliver and Bill",
-        transactionDate = "2026-09-20",
-        deliveryDate = "2026-09-25",
-        grandTotal = 900.0,
-        currency = "USD",
-        setWarehouse = "Finished Goods - WM",
-        items = listOf(
-            SalesOrderItem(rowName = "srow1", itemCode = "ITEM-001", itemName = "Steel Bolt M8", qty = 4.0, deliveredQty = 0.0, uom = "Nos", warehouse = "Finished Goods - WM", rate = 150.0),
         ),
     )
 }

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Replays every ERPNext request the WMS ERP Android app makes against a real site and reports
 what fails, so server-side problems (permissions, missing fields, missing custom app, report
-filters) can be found without a device.
+filters, workflow stages) can be found without a device.
 
-Only the Python standard library is used. Run it from any machine that can reach the site:
+Only the Python standard library is used. Run it from any machine that can reach the site, with the
+API key of the *regular warehouse user* the app will be used with (not an Administrator), so the
+permission and workflow checks mean something:
 
     python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY --secret API_SECRET
 
@@ -12,13 +14,19 @@ Only the Python standard library is used. Run it from any machine that can reach
 
 Options:
     --barcode 8690000000017     also test the barcode lookup used by the Scan screen
+    --batch B-2026-001          also test the batch lookup (Scan > Item / Batch) and the label sheet of that batch
+    --sales-order SAL-ORD-...   diagnose Pick List creation from this Sales Order (default: the first open one)
+    --insert-pick-list          actually insert the mapped Pick List as a draft and delete it again (WRITES)
+    --receive MAT-PRE-...       save the expected quantities as the progress of a count on this draft Purchase
+                                Receipt (submit=0, nothing removed, nothing submitted). WRITES the counts.
     --pick-list STO-PICK-00001  run the row-level picking workflow (start_row / save_row_progress /
                                 complete_row / generate_document) on the rows of this submitted Pick List
                                 that are assigned to the API user. THIS WRITES DATA; use a test site.
     --json                      print the raw JSON of every response (verbose)
 
-Read checks never modify anything (the make_purchase_receipt / make_delivery_note calls only return the
-mapped draft the app edits; nothing is inserted). Exit code is 1 when at least one check fails.
+Without the write flags nothing is modified: the Pick List diagnostic only calls ERPNext's own mapper
+(`create_pick_list`, what the desk's *Create > Pick List* button runs) and inspects the DocType meta.
+Exit code is 1 when at least one check fails.
 """
 
 from __future__ import annotations
@@ -35,20 +43,21 @@ import urllib.request
 # Mirrors app/src/main/java/com/wmserp/app/data/repository/*.kt
 PO_OPEN_STATUSES = ["To Receive and Bill", "To Receive"]
 SO_OPEN_STATUSES = ["To Deliver and Bill", "To Deliver"]
-PO_LIST_FIELDS = ["name", "supplier", "supplier_name", "status", "transaction_date", "schedule_date", "grand_total", "currency", "per_received", "set_warehouse", "company", "docstatus"]
-SO_LIST_FIELDS = ["name", "customer", "customer_name", "status", "transaction_date", "delivery_date", "grand_total", "currency", "per_delivered", "set_warehouse", "company", "docstatus"]
-DN_LIST_FIELDS = ["name", "customer", "customer_name", "status", "posting_date", "docstatus", "grand_total", "currency"]
-ITEM_LIST_FIELDS = ["name", "item_code", "item_name", "item_group", "stock_uom", "description", "image", "disabled", "is_stock_item", "valuation_rate", "standard_rate", "brand"]
+SO_LIST_FIELDS = ["name", "customer", "customer_name", "status", "transaction_date", "delivery_date", "per_delivered", "company", "docstatus"]
+ITEM_LIST_FIELDS = ["name", "item_code", "item_name", "item_group", "stock_uom", "description", "image", "disabled", "is_stock_item", "has_batch_no", "has_serial_no", "brand"]
+BATCH_FIELDS = ["name", "batch_id", "item", "item_name", "expiry_date", "manufacturing_date", "disabled", "stock_uom", "supplier", "description"]
 BIN_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "reserved_qty", "ordered_qty", "projected_qty", "stock_uom"]
 WAREHOUSE_FIELDS = ["name", "warehouse_name", "company", "is_group", "parent_warehouse", "disabled", "warehouse_type", "city"]
 SLE_FIELDS = ["name", "item_code", "warehouse", "actual_qty", "voucher_type", "voucher_no", "posting_date", "posting_time"]
+AGEING_RANGES = [30, 60, 90]
 PICKING_METHOD = "wmserp_picking.api.pick_list."
 STOCKTAKING_METHOD = "wmserp_picking.api.stocktaking."
+RECEIPT_METHOD = "wmserp_picking.api.purchase_receipt."
+LABELS_METHOD = "wmserp_picking.api.labels."
 GET_DOCTYPE = "frappe.desk.form.load.getdoctype"
 GET_DIMENSIONS = "erpnext.accounts.doctype.accounting_dimension.accounting_dimension.get_dimensions"
 ANSWERABLE_FIELDTYPES = {"Link", "Dynamic Link", "Select", "Data", "Small Text", "Text", "Long Text", "Int", "Float", "Currency", "Percent", "Date", "Datetime", "Time"}
-MAKE_PURCHASE_RECEIPT = "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt"
-MAKE_DELIVERY_NOTE = "erpnext.selling.doctype.sales_order.sales_order.make_delivery_note"
+CREATE_PICK_LIST = "erpnext.selling.doctype.sales_order.sales_order.create_pick_list"
 GET_BATCH_QTY = "erpnext.stock.doctype.batch.batch.get_batch_qty"
 
 
@@ -58,7 +67,7 @@ class Client:
         self.headers = {
             "Authorization": f"token {key}:{secret}",
             "Accept": "application/json",
-            "User-Agent": "WmsErp-smoke-test/1.1",
+            "User-Agent": "WmsErp-smoke-test/1.2",
         }
         self.verbose = verbose
 
@@ -191,20 +200,6 @@ def check_doc(client, report, area, name, doctype, docname, expect_keys=()):
     return doc if ok else None
 
 
-def check_sum(client, report, area, name, doctype, field, filters):
-    """The dashboard's SUM. Frappe up to v15 takes `sum(field) as total`; v16 rejects SQL functions as
-    strings and wants {"SUM": field, "as": "total"} - the app tries the first and falls back like this."""
-    status, payload, raw = client.get_list(doctype, [f"sum({field}) as total"], filters=filters, limit=1)
-    syntax = "string syntax"
-    if status != 200 and "SQL functions are not allowed" in server_message(payload, raw):
-        status, payload, raw = client.get_list(doctype, [{"SUM": field, "as": "total"}], filters=filters, limit=1)
-        syntax = "dict syntax (Frappe v16)"
-    rows = payload.get("data") if isinstance(payload, dict) else None
-    ok = status == 200 and isinstance(rows, list)
-    total = rows[0].get("total") if ok and rows else None
-    report.add(area, name, status, ok, f"total={total} via {syntax}" if ok else server_message(payload, raw))
-
-
 def check_count(client, report, area, name, doctype, filters):
     status, payload, raw = client.get_count(doctype, filters)
     ok = status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), (int, float))
@@ -234,6 +229,10 @@ def main() -> int:
     parser.add_argument("--key", default=os.environ.get("ERP_KEY"))
     parser.add_argument("--secret", default=os.environ.get("ERP_SECRET"))
     parser.add_argument("--barcode")
+    parser.add_argument("--batch")
+    parser.add_argument("--sales-order", dest="sales_order")
+    parser.add_argument("--insert-pick-list", dest="insert_pick_list", action="store_true")
+    parser.add_argument("--receive")
     parser.add_argument("--pick-list", dest="pick_list")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -253,6 +252,8 @@ def main() -> int:
     if not ok:
         print("\nAuthentication failed; nothing else can be checked. Verify the API key/secret pair and that the user is enabled.")
         return 1
+    if user == "Administrator":
+        report.add("auth", "regular user", 200, True, "WARNING: running as Administrator; permission and workflow checks will not reflect a warehouse user. Use the warehouse user's API key.")
 
     status, payload, raw = client.call("frappe.utils.change_log.get_versions")
     if status == 200 and isinstance(payload, dict):
@@ -263,25 +264,23 @@ def main() -> int:
         installed_picking = False
         report.add("auth", "installed apps", status, False, server_message(payload, raw))
 
-    # ---- Profile -----------------------------------------------------------------------
-    check_doc(client, report, "profile", "GET User/<me>", "User", user, ("name", "first_name", "full_name", "roles"))
+    # ---- Profile (read-only in the app) ---------------------------------------------------
+    check_doc(client, report, "profile", "GET User/<me> (read-only account card)", "User", user, ("name", "first_name", "full_name", "roles"))
 
-    # ---- Dashboard KPIs ------------------------------------------------------------------
+    # ---- Dashboard KPIs: counts only, never an amount -------------------------------------
     check_count(client, report, "dashboard", "count Item (disabled=0)", "Item", [["disabled", "=", 0]])
     check_count(client, report, "dashboard", "count Purchase Order (open)", "Purchase Order", [["docstatus", "=", 1], ["status", "in", PO_OPEN_STATUSES]])
     check_count(client, report, "dashboard", "count Sales Order (open)", "Sales Order", [["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]])
-    check_sum(client, report, "dashboard", "Sales Invoice SUM(grand_total) this month", "Sales Invoice", "grand_total",
-              [["docstatus", "=", 1], ["posting_date", ">=", str(month_start)], ["posting_date", "<=", str(today)]])
+    check_count(client, report, "dashboard", "count Purchase Receipt this month", "Purchase Receipt", [["docstatus", "=", 1], ["posting_date", ">=", str(month_start)]])
     check_count(client, report, "dashboard", "count Delivery Note this month", "Delivery Note", [["docstatus", "=", 1], ["posting_date", ">=", str(month_start)]])
-    check_single_value(client, report, "dashboard", "Global Defaults.default_currency", "Global Defaults", "default_currency")
     check_list(client, report, "dashboard", "recent Stock Ledger Entry (activity)", "Stock Ledger Entry", SLE_FIELDS, ("item_code", "warehouse", "actual_qty"),
                filters=[["is_cancelled", "=", 0]], order_by="posting_date desc, posting_time desc, creation desc", limit=10)
 
     # ---- Inventory / analytics -----------------------------------------------------------
     check_count(client, report, "analytics", "count Purchase Receipt last 7 days", "Purchase Receipt", [["docstatus", "=", 1], ["posting_date", ">=", str(today - dt.timedelta(days=7))]])
     check_count(client, report, "analytics", "count Pick List (Draft/Open)", "Pick List", [["docstatus", "<", 2], ["status", "in", ["Draft", "Open"]]])
-    check_list(client, report, "analytics", "overdue Sales Orders (delivery delays)", "Sales Order", SO_LIST_FIELDS, ("name", "delivery_date"),
-               filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES], ["delivery_date", "<", str(today)]], order_by="delivery_date asc", limit=50)
+    sos = check_list(client, report, "analytics", "overdue Sales Orders (delivery delays, no amounts)", "Sales Order", SO_LIST_FIELDS, ("name", "delivery_date"),
+                     filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES], ["delivery_date", "<", str(today)]], order_by="delivery_date asc", limit=50)
     check_list(client, report, "analytics", "Stock Ledger Entry last 7 days (heatmap)", "Stock Ledger Entry", SLE_FIELDS, ("posting_date",),
                filters=[["is_cancelled", "=", 0], ["posting_date", ">=", str(today - dt.timedelta(days=6))]], order_by="posting_date asc", limit=2000)
     company = check_single_value(client, report, "analytics", "Global Defaults.default_company", "Global Defaults", "default_company")
@@ -289,15 +288,11 @@ def main() -> int:
         rows = check_list(client, report, "analytics", "first Company (fallback)", "Company", ["name"], ("name",), limit=1)
         company = rows[0]["name"] if rows else None
     if company:
-        status, payload, raw = client.run_report("Stock Ageing", {"company": company, "to_date": str(today), "range1": 30, "range2": 60, "range3": 90, "show_warehouse_wise_stock": 0})
-        message = payload.get("message") if isinstance(payload, dict) else None
-        ok = status == 200 and isinstance(message, dict) and "result" in message
-        report.add("analytics", "query_report.run Stock Ageing", status, ok,
-                   f"{len(message.get('result') or [])} row(s), {len(message.get('columns') or [])} column(s)" if ok else server_message(payload, raw))
+        check_stock_ageing(client, report, company, today)
     else:
         report.add("analytics", "query_report.run Stock Ageing", 0, False, "no company available")
 
-    # ---- Items / scan ----------------------------------------------------------------------
+    # ---- Items / batches / scan -------------------------------------------------------------
     items = check_list(client, report, "inventory", "Item list (search)", "Item", ITEM_LIST_FIELDS, ("item_code", "item_name", "stock_uom"),
                        filters=[["disabled", "=", 0]], order_by="modified desc", limit=20)
     first_item = items[0]["name"] if items else None
@@ -308,6 +303,14 @@ def main() -> int:
     if args.barcode:
         check_list(client, report, "inventory", f"Item by barcode {args.barcode} (child filter)", "Item", ITEM_LIST_FIELDS, ("item_code",),
                    filters=[["Item Barcode", "barcode", "=", args.barcode]], limit=1)
+    batches = check_list(client, report, "inventory", "Batch list (batch scan)", "Batch", BATCH_FIELDS, ("name", "item"),
+                         filters=[["disabled", "=", 0]], order_by="modified desc", limit=5)
+    batch_name = args.batch or (batches[0]["name"] if batches else None)
+    if batch_name:
+        check_doc(client, report, "inventory", f"GET Batch/{batch_name} (scan a batch label)", "Batch", batch_name, ("name", "item"))
+        check_method(client, report, "inventory", f"get_batch_qty batch_no={batch_name} (stock per warehouse)", GET_BATCH_QTY, params={"batch_no": batch_name}, expect=list)
+    elif args.batch:
+        report.add("inventory", "batch scan", 0, False, "no batch found")
     warehouses = check_list(client, report, "inventory", "Warehouse list", "Warehouse", WAREHOUSE_FIELDS, ("name", "warehouse_name"),
                             filters=[["is_group", "=", 0], ["disabled", "=", 0]], order_by="name asc", limit=50)
     if warehouses:
@@ -315,21 +318,58 @@ def main() -> int:
         check_list(client, report, "inventory", "Bin by warehouse", "Bin", BIN_FIELDS, ("item_code",),
                    filters=[["warehouse", "=", warehouses[0]["name"]], ["actual_qty", ">", 0]], order_by="actual_qty desc", limit=50)
 
-    # ---- Orders ----------------------------------------------------------------------------
-    pos = check_list(client, report, "orders", "open Purchase Orders", "Purchase Order", PO_LIST_FIELDS, ("name", "supplier_name", "per_received"),
-                     filters=[["docstatus", "=", 1], ["status", "in", PO_OPEN_STATUSES]], order_by="schedule_date asc, modified desc", limit=30)
-    if pos:
-        check_doc(client, report, "orders", "GET Purchase Order/<first> (items)", "Purchase Order", pos[0]["name"], ("items", "supplier"))
-        check_mapper(client, report, "receive", "make_purchase_receipt (draft the app edits)", MAKE_PURCHASE_RECEIPT, pos[0]["name"], "purchase_order_item")
-    sos = check_list(client, report, "orders", "open Sales Orders", "Sales Order", SO_LIST_FIELDS, ("name", "customer_name", "per_delivered"),
-                     filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]], order_by="delivery_date asc, modified desc", limit=30)
-    if sos:
-        so = check_doc(client, report, "orders", "GET Sales Order/<first> (items)", "Sales Order", sos[0]["name"], ("items", "customer"))
-        mapped = check_mapper(client, report, "dispatch", "make_delivery_note (draft the app edits)", MAKE_DELIVERY_NOTE, sos[0]["name"], "so_detail")
-        if so and mapped:
-            check_batches(client, report, so, mapped)
-    check_list(client, report, "orders", "recent Delivery Notes", "Delivery Note", DN_LIST_FIELDS, ("name",),
-               filters=[["docstatus", "=", 1]], order_by="posting_date desc, modified desc", limit=10)
+    # ---- Pick List creation diagnostic (the desk's Create > Pick List) ----------------------
+    so_name = args.sales_order
+    if not so_name:
+        open_sos = check_list(client, report, "orders", "open Sales Orders (pick list source)", "Sales Order", SO_LIST_FIELDS, ("name",),
+                              filters=[["docstatus", "=", 1], ["status", "in", SO_OPEN_STATUSES]], order_by="modified desc", limit=5)
+        so_name = open_sos[0]["name"] if open_sos else None
+    if so_name:
+        diagnose_pick_list_creation(client, report, so_name, insert=args.insert_pick_list)
+    else:
+        report.add("picklist-create", "Pick List creation diagnostic", 0, True, "skipped: no open Sales Order (pass --sales-order NAME)")
+
+    # ---- Receiving: draft Purchase Receipts at the warehouse stage ---------------------------
+    drafts = check_list(client, report, "receive", "draft Purchase Receipts (read permission)", "Purchase Receipt",
+                        ["name", "supplier", "supplier_name", "posting_date", "workflow_state", "docstatus"], ("name",),
+                        filters=[["docstatus", "=", 0], ["is_return", "=", 0]], order_by="modified desc", limit=10)
+    if not installed_picking:
+        report.add("receive", "wmserp_picking app", 0, False, "not installed on this site: the Receive tab needs wmserp_picking 0.4.0+ (get_receivable / get_receipt / receive)")
+    else:
+        receivable = check_method(client, report, "receive", "get_receivable (Orders > Receive)", RECEIPT_METHOD + "get_receivable", params={"limit": 50}, expect=list)
+        if receivable is not None:
+            print(f"           {len(receivable)} draft receipt(s) at this user's stage; {len(drafts or [])} draft receipt(s) readable in total")
+            if drafts and not receivable:
+                print("           drafts exist but none is receivable: check the Purchase Receipt workflow stage of the user's role, or set"
+                      " WMS Settings > Receipt Workflow States")
+        target = args.receive or (receivable[0]["name"] if receivable else None)
+        if target:
+            receipt = check_method(client, report, "receive", f"get_receipt {target}", RECEIPT_METHOD + "get_receipt", params={"name": target})
+            if receipt:
+                rows = receipt.get("items") or []
+                needs_batch = [r["item_code"] for r in rows if r.get("needs_batch")]
+                print(f"           stage={receipt.get('workflow_state') or 'Draft'} can_receive={receipt.get('can_receive')} rows={len(rows)}"
+                      f" expected={sum(float(r.get('qty') or 0) for r in rows)} batch needed for {needs_batch or 'no row'}")
+                check_required_fields(client, report, "receive", receipt, "Purchase Receipt")
+                if args.receive:
+                    run_receive_progress(client, report, receipt)
+        else:
+            report.add("receive", "receiving workflow", 0, True, "skipped: no receivable draft (pass --receive NAME to count one; writes)")
+
+    # ---- Label sheets (desk list action; printed from ERPNext, not the app) ------------------
+    if installed_picking:
+        for doctype, names in (("Batch", [b["name"] for b in (batches or [])[:3]]), ("Item", [first_item] if first_item else [])):
+            formats = check_method(client, report, "labels", f"get_label_sheet_formats {doctype}", LABELS_METHOD + "get_label_sheet_formats", params={"doctype": doctype}, expect=list)
+            if formats is None:
+                print("           (label API missing: update wmserp_picking to 0.4.0 or later and run bench migrate)")
+                break
+            print(f"           {doctype} sheet formats: {[f.get('name') for f in formats]}")
+            if names:
+                status, payload, raw = client.call(LABELS_METHOD + "label_sheet_html", {"doctype": doctype, "names": json.dumps(names)})
+                html = payload.get("message") if isinstance(payload, dict) else None
+                ok = status == 200 and isinstance(html, str) and "wms-page" in html and "<svg" in html
+                report.add("labels", f"label_sheet_html {doctype} x{len(names)}", status, ok,
+                           f"{html.count('wms-label')} label cell(s), {html.count('wms-page')} page(s)" if ok else server_message(payload, raw))
 
     # ---- Picking (custom app) ----------------------------------------------------------------
     if not installed_picking:
@@ -337,7 +377,10 @@ def main() -> int:
     else:
         settings = check_method(client, report, "picking", "get_settings (QR keys)", PICKING_METHOD + "get_settings")
         if settings:
-            print(f"           QR keys: item={settings.get('qr_item_key')!r} batch={settings.get('qr_batch_key')!r} app={settings.get('app_version')}")
+            print(f"           QR keys: item={settings.get('qr_item_key')!r} batch={settings.get('qr_batch_key')!r} app={settings.get('app_version')} features={settings.get('features')}")
+            missing_features = {"purchase_receipt_receiving", "label_sheets", "required_field_values"} - set(settings.get("features") or [])
+            report.add("picking", "backend features for this app version", 200, not missing_features,
+                       "all present" if not missing_features else f"missing {sorted(missing_features)}: update wmserp_picking to 0.4.0+")
         kpis = check_method(client, report, "picking", "get_picker_kpis (dashboard)", PICKING_METHOD + "get_picker_kpis")
         if kpis:
             print(f"           today: rows_picked={kpis.get('rows_picked')} avg={kpis.get('avg_seconds_per_row')} open_rows={kpis.get('open_rows')}")
@@ -389,99 +432,111 @@ def main() -> int:
         print(f"  - [{area}] {name}: HTTP {status} {detail}")
     if failures:
         print("\nTypical causes: 403 = the API user's roles lack read permission on that DocType (grant Stock User /"
-              " Sales User / Purchase User / Accounts User, or Stock Manager); 417/500 on a report = filters changed"
-              " in this ERPNext version; 404 on wmserp_picking.* = custom app not installed or bench not restarted.")
+              " Sales User / Purchase User, or Stock Manager); 417/500 on a report = filters changed"
+              " in this ERPNext version; 404 on wmserp_picking.* = custom app not installed, too old, or bench not restarted;"
+              " 'Value missing for' = a mandatory field the site added (see the required-field rows above).")
     return 1 if failures else 0
 
 
-def check_mapper(client, report, area, name, method, source_name, link_field):
-    """The Receive / Dispatch screens start from ERPNext's own mapped draft (nothing is saved here)."""
-    doc = check_method(client, report, area, f"{name} for {source_name}", method, params={"source_name": source_name})
+def check_stock_ageing(client, report, company, today):
+    """The app sends both filter shapes: `range` ("30, 60, 90", ERPNext v15/v16) and `range1..3` (v14)."""
+    filters = {"company": company, "to_date": str(today), "range": ", ".join(str(d) for d in AGEING_RANGES), "show_warehouse_wise_stock": 0}
+    for index, days in enumerate(AGEING_RANGES, start=1):
+        filters[f"range{index}"] = days
+    status, payload, raw = client.run_report("Stock Ageing", filters)
+    message = payload.get("message") if isinstance(payload, dict) else None
+    ok = status == 200 and isinstance(message, dict) and "result" in message
+    if ok:
+        columns = [c.get("fieldname") for c in message.get("columns") or [] if isinstance(c, dict)]
+        qty_columns = [c for c in columns if c and c.startswith("range") and not c.endswith("value")]
+        detail = f"{len(message.get('result') or [])} row(s); quantity columns {qty_columns} (value columns are ignored by the app)"
+        if not qty_columns:
+            ok = False
+            detail = f"no range columns in {columns}: the report filters of this ERPNext version are not understood"
+    else:
+        detail = server_message(payload, raw)
+    report.add("analytics", "query_report.run Stock Ageing", status, ok, detail)
+
+
+def diagnose_pick_list_creation(client, report, sales_order, insert=False):
+    """Reproduces 'Create > Pick List' on a Sales Order: ERPNext maps the Pick List (`create_pick_list`,
+    nothing saved), then the required fields of Pick List / Pick List Item (custom ones included) are
+    compared with the mapped document. A mandatory field the mapper leaves empty is what makes the desk
+    fail with 'Value missing for' / 'required field' errors; `--insert-pick-list` inserts the draft to
+    see the exact server message and deletes it again."""
+    area = "picklist-create"
+    doc = check_method(client, report, area, f"create_pick_list (mapper) for {sales_order}", CREATE_PICK_LIST, params={"source_name": sales_order})
     if not doc:
-        return None
-    rows = doc.get("items") or []
-    unlinked = [r.get("item_code") for r in rows if not r.get(link_field)]
-    ok = bool(rows) and not unlinked
-    detail = f"{len(rows)} pending row(s)" + (f"; rows without {link_field}: {unlinked}" if unlinked else "")
-    if not rows:
-        detail = "no pending rows (everything received/delivered); the app refuses to create an empty document"
-    report.add(area, f"{name}: mapped rows carry {link_field}", 200, ok, detail)
-    check_required_fields(client, report, area, doc)
-    return doc
-
-
-def check_required_fields(client, report, area, mapped):
-    """Required fields the site added (Custom Fields / Property Setters) that the mapped draft leaves empty:
-    the app fills them from the company's default accounting dimensions or asks the user once."""
-    doctype = mapped.get("doctype")
-    if not doctype:
+        print("           the mapper itself fails: this is the error the desk shows when creating the Pick List")
         return
+    rows = doc.get("locations") or doc.get("items") or []
+    print(f"           mapped Pick List: purpose={doc.get('purpose')} rows={len(rows)} parent_warehouse={doc.get('parent_warehouse')}")
+    check_required_fields(client, report, area, doc, "Pick List", child_table="locations")
+    if not insert:
+        return
+    status, payload, raw = client.request("POST", "api/resource/Pick%20List", body=doc)
+    created = (payload or {}).get("data", {}).get("name") if status == 200 and isinstance(payload, dict) else None
+    report.add(area, "insert mapped Pick List as a draft (writes)", status, bool(created), f"created {created}" if created else server_message(payload, raw))
+    if created:
+        status, payload, raw = client.request("DELETE", f"api/resource/Pick%20List/{urllib.parse.quote(created, safe='')}")
+        report.add(area, f"delete draft {created}", status, status in (200, 202), "" if status in (200, 202) else server_message(payload, raw))
+
+
+def check_required_fields(client, report, area, doc, doctype, child_table="items"):
+    """Required fields of the DocType and its child table (Custom Fields / Property Setters included) that
+    the document leaves empty: ERPNext refuses to save it with 'Value missing for'. The app fills them from
+    the company's default accounting dimensions or asks the user once (wmserp_picking.documents)."""
     status, payload, raw = client.call(GET_DOCTYPE, {"doctype": doctype})
-    docs = payload.get("docs") if isinstance(payload, dict) else None
-    if status != 200 or not isinstance(docs, list):
+    metas = payload.get("docs") if isinstance(payload, dict) else None
+    if status != 200 or not isinstance(metas, list):
         report.add(area, f"getdoctype {doctype} (required fields)", status, False, server_message(payload, raw))
         return
     required = {}
-    for meta in docs:
+    for meta in metas:
         for df in meta.get("fields", []):
             if str(df.get("reqd")) in ("1", "True", "true") and df.get("fieldtype") in ANSWERABLE_FIELDTYPES and not df.get("default"):
                 required.setdefault(meta.get("name"), []).append(df)
+    children = [r for r in doc.get(child_table, []) if isinstance(r, dict)]
     missing = []
     for dt, fields in required.items():
-        targets = [mapped] if dt == doctype else [r for r in mapped.get("items", []) if r.get("doctype") == dt]
+        targets = [doc] if dt == doctype else [r for r in children if r.get("doctype") in (dt, None)]
+        if dt != doctype and not any(r.get("doctype") == dt for r in children):
+            continue
         for df in fields:
             if any(t.get(df["fieldname"]) in (None, "") for t in targets):
                 missing.append(f"{dt}.{df['fieldname']} ({df.get('label')}, {df.get('fieldtype')}{' -> ' + df['options'] if df.get('fieldtype') == 'Link' else ''})")
-    status, payload, raw = client.call(GET_DIMENSIONS, {"with_cost_center_and_project": "0"})
+    status, payload, raw = client.call(GET_DIMENSIONS, {"with_cost_center_and_project": "1"})
     defaults = {}
     if status == 200 and isinstance(payload, dict) and isinstance(payload.get("message"), list) and len(payload["message"]) > 1:
-        defaults = (payload["message"][1] or {}).get(mapped.get("company"), {}) or {}
-    ok = not missing
-    detail = "nothing required beyond what the order provides" if ok else "empty required field(s): " + "; ".join(missing)
+        defaults = (payload["message"][1] or {}).get(doc.get("company"), {}) or {}
+    detail = "nothing required beyond what the document carries" if not missing else "empty required field(s): " + "; ".join(missing)
     if defaults:
-        detail += f"; default accounting dimensions for {mapped.get('company')}: {defaults}"
+        detail += f"; default accounting dimensions for {doc.get('company')}: {defaults}"
     report.add(area, f"required fields on {doctype} (site customisations)", 200, True, detail)
-    if missing and not all(m.split(" ")[0].split(".")[1] in defaults for m in missing):
-        print("           the app will ask for the field(s) above once and remember the answer on the device")
+    if missing:
+        covered = all(m.split(" ")[0].split(".")[1] in defaults for m in missing)
+        print("           " + ("the company defaults cover them; wmserp_picking fills them server-side" if covered
+                               else "the desk fails on these; the app asks for them once and remembers the answer on the device"))
 
 
-def check_batches(client, report, sales_order, mapped_note):
-    """Batch-tracked items on the first open Sales Order: the app allocates batches first-expiry-first-out
-    from get_batch_qty + Batch.expiry_date before creating the Delivery Note."""
-    codes = sorted({r.get("item_code") for r in sales_order.get("items", []) if r.get("item_code")})
-    if not codes:
+def run_receive_progress(client, report, receipt):
+    """Saves the expected quantity of every row as the progress of a count (submit=0, remove_unreceived=0):
+    the draft keeps all its rows and stays at its stage; only the counted quantities are written."""
+    rows = receipt.get("items") or []
+    counts = [{"row": r["name"], "qty": r.get("qty")} for r in rows if not r.get("needs_batch")]
+    skipped = [r["item_code"] for r in rows if r.get("needs_batch")]
+    if not counts:
+        report.add("receive", "receive (save progress)", 0, True, f"skipped: every row needs a batch ({skipped})")
         return
-    tracking = check_list(client, report, "dispatch", "Item has_batch_no / has_serial_no", "Item", ["name", "has_batch_no", "has_serial_no"],
-                          ("name", "has_batch_no", "has_serial_no"), filters=[["name", "in", codes]], limit=len(codes))
-    if not tracking:
-        return
-    serial = [t["name"] for t in tracking if t.get("has_serial_no")]
-    if serial:
-        report.add("dispatch", "serial-numbered items on the order", 200, True, f"{serial}: the app refuses these (deliver them from ERPNext)")
-    batch_items = {t["name"] for t in tracking if t.get("has_batch_no")}
-    for row in mapped_note.get("items", []):
-        if row.get("item_code") not in batch_items:
-            continue
-        warehouse = row.get("warehouse") or sales_order.get("set_warehouse")
-        if not warehouse:
-            report.add("dispatch", f"batches of {row['item_code']}", 0, False, "row has no warehouse; the app asks the user to pick one")
-            continue
-        batches = check_method(client, report, "dispatch", f"get_batch_qty {row['item_code']} @ {warehouse}", GET_BATCH_QTY,
-                               params={"item_code": row["item_code"], "warehouse": warehouse}, expect=list)
-        if batches is None:
-            continue
-        names = [b.get("batch_no") for b in batches if b.get("batch_no") and float(b.get("qty") or 0) > 0]
-        if not names:
-            report.add("dispatch", f"stock in batches for {row['item_code']}", 200, False,
-                       f"no batch has stock in {warehouse}; dispatching {row['item_code']} from the app will fail with 'insufficient batch stock'")
-            continue
-        details = check_list(client, report, "dispatch", f"Batch expiry for {len(names)} batch(es)", "Batch", ["name", "expiry_date", "disabled"], ("name",),
-                             filters=[["name", "in", names]], limit=len(names))
-        if details is not None:
-            usable = [d for d in details if not d.get("disabled") and (not d.get("expiry_date") or d["expiry_date"] >= str(dt.date.today()))]
-            usable.sort(key=lambda d: (d.get("expiry_date") is None, d.get("expiry_date") or ""))
-            print(f"           FEFO order for {row['item_code']}: {[(d['name'], d.get('expiry_date')) for d in usable]}")
-        break
+    body = {"name": receipt["name"], "rows": counts, "submit": 0, "remove_unreceived": 0, "values": {}}
+    result = check_method(client, report, "receive", f"receive {receipt['name']} submit=0 (save progress, writes)", RECEIPT_METHOD + "receive", body=body)
+    if result:
+        if result.get("missing_fields"):
+            report.add("receive", "required fields answered by the app", 200, True,
+                       "the site requires " + ", ".join(f"{f.get('doctype')}.{f.get('fieldname')}" for f in result["missing_fields"]) + " (the app asks once)")
+        else:
+            print(f"           saved; submitted={result.get('submitted')} differences={len(result.get('differences') or [])} removed={result.get('removed_rows')}"
+                  + (f"; rows needing a batch were skipped: {skipped}" if skipped else ""))
 
 
 def run_picking_flow(client, report, name, doc, settings):
@@ -526,10 +581,14 @@ def run_picking_flow(client, report, name, doc, settings):
     if not last_picker:
         report.add("picking", "last picker rule", 200, True, "other pickers still have open rows: 'Task completed' path (no document CTA)")
         return
-    result = check_method(client, report, "picking", "generate_document (last picker)", PICKING_METHOD + "generate_document", body={"name": name})
+    result = check_method(client, report, "picking", "generate_document (last picker)", PICKING_METHOD + "generate_document", body={"name": name, "values": {}})
     if result:
+        if result.get("missing_fields"):
+            report.add("picking", "generate_document needs required fields", 200, True,
+                       "the site requires " + ", ".join(f"{f.get('doctype')}.{f.get('fieldname')}" for f in result["missing_fields"]) + " (the app asks once and retries with `values`)")
+            return
         print(f"           {result.get('doctype')} {result.get('name')} already_generated={result.get('already_generated')}")
-        again = check_method(client, report, "picking", "generate_document again (duplicate prevention)", PICKING_METHOD + "generate_document", body={"name": name})
+        again = check_method(client, report, "picking", "generate_document again (duplicate prevention)", PICKING_METHOD + "generate_document", body={"name": name, "values": {}})
         if again and not (again.get("already_generated") and again.get("name") == result.get("name")):
             report.add("picking", "duplicate prevention", 200, False, f"second call returned {again.get('name')} already_generated={again.get('already_generated')}")
 

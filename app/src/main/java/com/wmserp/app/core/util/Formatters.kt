@@ -6,13 +6,11 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.util.Currency
 import java.util.Locale
 import kotlin.math.abs
 
 object Formatters {
     private val qtyFormat = DecimalFormat("#,##0.###", DecimalFormatSymbols(Locale.US))
-    private val moneyFormat = DecimalFormat("#,##0.00", DecimalFormatSymbols(Locale.US))
     private val intFormat = DecimalFormat("#,##0", DecimalFormatSymbols(Locale.US))
     // Month names follow the app language (see LocaleDefaults); digits stay ASCII so they match ERPNext.
     private val dateOut get() = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
@@ -29,14 +27,6 @@ object Formatters {
         else -> "$bytes B"
     }
 
-    fun money(value: Double, currency: String?): String {
-        val symbol = currency?.takeIf { it.isNotBlank() }?.let { code ->
-            runCatching { Currency.getInstance(code).getSymbol(Locale.getDefault()) }.getOrDefault(code)
-        }
-        val number = moneyFormat.format(value)
-        return if (symbol == null) number else "$symbol $number"
-    }
-
     /** 1234 -> "1.2K", 1_234_567 -> "1.23M". */
     fun compact(value: Double): String {
         val magnitude = abs(value)
@@ -47,13 +37,6 @@ object Formatters {
             magnitude == Math.floor(magnitude) -> intFormat.format(value)
             else -> qtyFormat.format(value)
         }
-    }
-
-    fun compactMoney(value: Double, currency: String?): String {
-        val symbol = currency?.takeIf { it.isNotBlank() }?.let { code ->
-            runCatching { Currency.getInstance(code).getSymbol(Locale.getDefault()) }.getOrDefault(code)
-        }
-        return if (symbol == null) compact(value) else "$symbol${compact(value)}"
     }
 
     fun date(iso: String?): String {
