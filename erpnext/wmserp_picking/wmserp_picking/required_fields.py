@@ -33,10 +33,14 @@ ANSWERABLE_FIELDTYPES = (
     "Time",
 )
 
+# Required fields Frappe fills itself while naming / inserting: never asked, never copied from a
+# source document (a Delivery Note taking the Sales Order's naming series would consume that counter).
+NEVER_ASKED_FIELDNAMES = ("naming_series", "amended_from", "name", "owner", "docstatus")
+
 # frappe.MandatoryError: "[Delivery Note, new-delivery-note-1]: department, cost_center"
 _MANDATORY_ERROR = re.compile(r"^\s*\[[^\]]*\]:\s*(?P<fields>.+?)\s*$", re.S)
 
-# msgprint texts of _validate_mandatory (Frappe v13-v16), with or without translation markup:
+# msgprint texts of _validate_mandatory (Frappe 16), with or without translation markup:
 #   "Error: Value missing for Delivery Note: Department"
 #   "Error: <b>Delivery Note Item</b> Row #1: Value missing for: Department"
 #   "Value missing for: Department" / "Department is mandatory" / "Missing Fields: Department"
@@ -58,7 +62,14 @@ def is_answerable(df) -> bool:
         return False
     if _get(df, "default") not in (None, ""):
         return False
-    return bool(_get(df, "fieldname"))
+    fieldname = _get(df, "fieldname")
+    return bool(fieldname) and fieldname not in NEVER_ASKED_FIELDNAMES
+
+
+def copies_from_sources(df) -> bool:
+    """Whether the same-named value of a source document may fill `df`: `no_copy` and
+    `set_only_once` fields (series, links back to the origin...) belong to the new document alone."""
+    return not is_truthy(_get(df, "no_copy")) and not is_truthy(_get(df, "set_only_once"))
 
 
 def describe(df, doctype) -> dict:

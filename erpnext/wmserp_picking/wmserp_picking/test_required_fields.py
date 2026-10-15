@@ -5,8 +5,10 @@ import unittest
 from wmserp_picking import required_fields as rf
 
 
-def df(fieldname, label=None, fieldtype="Link", reqd=1, default=None, options=None):
-    return {"fieldname": fieldname, "label": label or fieldname.title(), "fieldtype": fieldtype, "reqd": reqd, "default": default, "options": options}
+def df(fieldname, label=None, fieldtype="Link", reqd=1, default=None, options=None, **extra):
+    out = {"fieldname": fieldname, "label": label or fieldname.title(), "fieldtype": fieldtype, "reqd": reqd, "default": default, "options": options}
+    out.update(extra)
+    return out
 
 
 class AnswerableTests(unittest.TestCase):
@@ -18,6 +20,16 @@ class AnswerableTests(unittest.TestCase):
         self.assertFalse(rf.is_answerable(df("customer", reqd=0)))
         self.assertFalse(rf.is_answerable(df("x", reqd="0")))
         self.assertTrue(rf.is_answerable(df("x", reqd="1")))
+
+    def test_fields_frappe_names_itself_are_never_asked(self):
+        # Delivery Note.naming_series is reqd without a meta default: Frappe fills it on insert.
+        self.assertFalse(rf.is_answerable(df("naming_series", "Series", fieldtype="Select", options="MAT-DN-.YYYY.-")))
+        self.assertFalse(rf.is_answerable(df("amended_from", fieldtype="Link")))
+
+    def test_no_copy_and_set_only_once_fields_are_not_taken_from_sources(self):
+        self.assertTrue(rf.copies_from_sources(df("department")))
+        self.assertFalse(rf.copies_from_sources(df("naming_series", fieldtype="Select", no_copy=1)))
+        self.assertFalse(rf.copies_from_sources(df("po_no", fieldtype="Data", set_only_once="1")))
 
     def test_describe_and_resolve(self):
         self.assertEqual(

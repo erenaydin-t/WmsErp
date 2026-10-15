@@ -139,19 +139,19 @@ def item_groups_with_children(group) -> list:
 def batch_balances(warehouses) -> dict:
     """{(item_code, warehouse, batch_no): qty} for the batches held in `warehouses`.
 
-    Works on v14 (batch_no on the Stock Ledger Entry) and v15/v16 (Serial and Batch Bundle) by
-    summing legacy entries and bundle entries separately, so no entry is counted twice.
+    Batches live in Serial and Batch Bundles; ledger entries written before the site moved to
+    bundles (ERPNext < 15) carry `batch_no` directly. Both are summed separately, so no entry is
+    counted twice.
     """
     balances = {}
     if not warehouses:
         return balances
-    has_bundle_column = frappe.db.has_column("Stock Ledger Entry", "serial_and_batch_bundle")
-    legacy_condition = "and ifnull(sle.serial_and_batch_bundle, '') = ''" if has_bundle_column else ""
     legacy = frappe.db.sql(
-        f"""
+        """
         select sle.item_code, sle.warehouse, sle.batch_no, sum(sle.actual_qty) as qty
         from `tabStock Ledger Entry` sle
-        where sle.warehouse in %(warehouses)s and sle.is_cancelled = 0 and ifnull(sle.batch_no, '') != '' {legacy_condition}
+        where sle.warehouse in %(warehouses)s and sle.is_cancelled = 0 and ifnull(sle.batch_no, '') != ''
+          and ifnull(sle.serial_and_batch_bundle, '') = ''
         group by sle.item_code, sle.warehouse, sle.batch_no
         """,
         {"warehouses": warehouses},
@@ -159,22 +159,21 @@ def batch_balances(warehouses) -> dict:
     )
     for row in legacy:
         balances[(row.item_code, row.warehouse, row.batch_no)] = balances.get((row.item_code, row.warehouse, row.batch_no), 0.0) + flt(row.qty)
-    if has_bundle_column and frappe.db.table_exists("Serial and Batch Entry"):
-        bundled = frappe.db.sql(
-            """
-            select sle.item_code, sle.warehouse, sbe.batch_no, sum(sbe.qty) as qty
-            from `tabStock Ledger Entry` sle
-            inner join `tabSerial and Batch Entry` sbe on sbe.parent = sle.serial_and_batch_bundle
-            where sle.warehouse in %(warehouses)s and sle.is_cancelled = 0
-              and ifnull(sle.serial_and_batch_bundle, '') != '' and ifnull(sbe.batch_no, '') != ''
-            group by sle.item_code, sle.warehouse, sbe.batch_no
-            """,
-            {"warehouses": warehouses},
-            as_dict=True,
-        )
-        for row in bundled:
-            key = (row.item_code, row.warehouse, row.batch_no)
-            balances[key] = balances.get(key, 0.0) + flt(row.qty)
+    bundled = frappe.db.sql(
+        """
+        select sle.item_code, sle.warehouse, sbe.batch_no, sum(sbe.qty) as qty
+        from `tabStock Ledger Entry` sle
+        inner join `tabSerial and Batch Entry` sbe on sbe.parent = sle.serial_and_batch_bundle
+        where sle.warehouse in %(warehouses)s and sle.is_cancelled = 0
+          and ifnull(sle.serial_and_batch_bundle, '') != '' and ifnull(sbe.batch_no, '') != ''
+        group by sle.item_code, sle.warehouse, sbe.batch_no
+        """,
+        {"warehouses": warehouses},
+        as_dict=True,
+    )
+    for row in bundled:
+        key = (row.item_code, row.warehouse, row.batch_no)
+        balances[key] = balances.get(key, 0.0) + flt(row.qty)
     return balances
 
 

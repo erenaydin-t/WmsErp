@@ -95,7 +95,7 @@ All calls go through `ErpNextApi` (`app/src/main/java/com/wmserp/app/data/remote
 | Batch scan | `GET /api/resource/Batch/{name}` (fallback `batch_id`) + `erpnext.stock.doctype.batch.batch.get_batch_qty` (`batch_no`) |
 | Required fields | answered through the `missing_fields` reply of `receive` / `generate_document`; Link values from `GET /api/resource/{doctype}` |
 | Submit | `frappe.client.submit` |
-| Reports | `frappe.desk.query_report.run` (Stock Ageing; filters `range` "30, 60, 90" for ERPNext v15/v16 and `range1..3` for v14, `ignore_prepared_report=1`) |
+| Reports | `frappe.desk.query_report.run` (Stock Ageing; filter `range` "30, 60, 90", `ignore_prepared_report=1`) |
 | Picking | `wmserp_picking.api.pick_list.*` – `get_settings`, `get_my_pick_lists`, `get_pick_list`, `start_row`, `save_row_progress`, `complete_row`, `generate_document` (`values` for required fields), `get_picker_kpis` (see [Pick List workflow](#pick-list-workflow)) |
 | Stocktaking | `wmserp_picking.api.stocktaking.*` – `get_my_sessions`, `get_session`, `get_items` (paged), `lookup`, `submit_count`, `sync_counts` (see [Stocktaking workflow](#stocktaking-workflow)) |
 | Password | `frappe.core.doctype.user.user.update_password` |
@@ -118,16 +118,20 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
    receipt barcode on the *Scan* screen (*Receipt* target) opens it as well.
 3. The warehouse counts: scanning an item barcode / item code counts the row (quantity prompt or +1), scanning
    a **batch label** (JSON QR or plain batch number) fills the batch of the batch tracked row and counts it, the
-   stepper allows any quantity. Rows ERPNext cannot submit without a batch (`has_batch_no` without
-   `create_new_batch`) show a batch field and are refused until it is filled.
+   stepper allows any quantity. Scanning an item that has several rows on the receipt counts the first row that
+   is still open. Rows ERPNext cannot submit without a batch (`has_batch_no` without `create_new_batch`) show a
+   batch field and are refused until it is filled; a batch purchasing chose through ERPNext's *Serial and Batch
+   Bundle* dialog is shown as the row's batch.
 4. **Confirm receipt**: when the counts differ from the draft a confirmation lists every difference (rows counted
    0 are removed and stay open on the Purchase Order; over-receipt is allowed when ERPNext's over-receipt
    allowance permits it). The backend writes the counts (`received_qty`, `qty`, `stock_qty`, warehouse,
    `batch_no` + `use_serial_batch_fields`), saves, and submits through the workflow transition available to the
    user that leads to a submitted state (*Receive / Submit / Approve / …*), or `doc.submit()` without a workflow.
    The response tells whether the receipt was submitted or only moved to the next approval stage.
-5. **Save progress** stores the counts of the rows counted so far (`submit=0`, `remove_unreceived=0`) and
-   changes nothing else, so a long count can continue later.
+5. **Save progress** stores the counts of the rows counted so far (`submit=0`, `remove_unreceived=0`) in the
+   row's *WMS Counted Qty* (`custom_wms_counted_qty`), plus the batch and warehouse scanned, and changes nothing
+   else: the expected quantities stay what purchasing entered, and reopening the receipt continues the count
+   from the saved quantities.
 
 Required fields the site added to the Purchase Receipt or its rows are handled as described under
 [Screens](#screens): filled from defaults, else asked once.

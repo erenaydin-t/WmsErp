@@ -41,6 +41,7 @@ fun PurchaseReceiptItemDto.toDomain(): PurchaseReceiptItem = PurchaseReceiptItem
     itemCode = itemCode,
     itemName = itemName ?: itemCode,
     qty = qty,
+    countedQty = countedQty,
     receivedQty = receivedQty,
     uom = uom,
     stockUom = stockUom,

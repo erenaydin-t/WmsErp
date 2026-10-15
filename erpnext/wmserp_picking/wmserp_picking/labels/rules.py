@@ -94,15 +94,6 @@ def page_size(value) -> str:
     return "A4"
 
 
-def chunk(items, size) -> list[list]:
-    """Splits `items` into pages of `size` (the last page may be shorter): 20 labels at 12 per
-    page give [12, 8]."""
-    size = int(size)
-    if size <= 0:
-        raise LabelRuleError("labels per page must be positive")
-    return [list(items[i : i + size]) for i in range(0, len(items), size)]
-
-
 def wrap_page(body, css="", title="Labels") -> str:
     """The complete HTML document handed to the PDF renderer. The template's own `<style>` (with
     the `.print-format` margins Frappe reads) stays inside `body`; the Print Format's CSS field is

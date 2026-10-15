@@ -36,6 +36,8 @@ data class PurchaseReceiptItemDto(
     @SerialName("item_name") val itemName: String? = null,
     val description: String? = null,
     val qty: Double = 0.0,
+    /** Counted so far through the app and saved as progress (`custom_wms_counted_qty`); 0 on backends before 0.4.1. */
+    @SerialName("counted_qty") val countedQty: Double = 0.0,
     @SerialName("received_qty") val receivedQty: Double = 0.0,
     @SerialName("rejected_qty") val rejectedQty: Double = 0.0,
     val uom: String? = null,

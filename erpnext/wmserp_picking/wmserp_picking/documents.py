@@ -4,7 +4,8 @@ Order of sources for an empty `reqd` field (header and every child row):
 1. the values the app sends (`values`, keyed `"<Doctype>.<fieldname>"` or by fieldname), which it
    asked the user for and remembers on the device;
 2. the same-named field of the source documents (the Sales Order / Material Request behind a pick
-   list row, the Pick List itself);
+   list row, the Pick List itself), except `no_copy` / `set_only_once` fields and the fields Frappe
+   names itself (`naming_series`...), which are never taken from a source nor asked for;
 3. the user's defaults (`frappe.defaults`), then the company's default accounting dimensions.
 
 What is still empty is reported as `missing_fields` so the app can ask once and call again; the
@@ -60,7 +61,7 @@ def fill_required(doc, values=None, sources=(), company=None) -> list:
             if target.get(df.fieldname) not in (None, ""):
                 continue
             value = rules.resolve_value(doctype, df.fieldname, values)
-            if value in (None, ""):
+            if value in (None, "") and rules.copies_from_sources(df):
                 value = value_from_sources(df.fieldname, row_sources)
             if value in (None, ""):
                 value = frappe.defaults.get_user_default(df.fieldname)
@@ -82,6 +83,7 @@ def fill_required(doc, values=None, sources=(), company=None) -> list:
 
 
 def value_from_sources(fieldname, sources):
+    """The first non-empty `fieldname` of `sources` (documents or plain dicts/rows)."""
     for source in sources:
         if source is None:
             continue
@@ -89,6 +91,14 @@ def value_from_sources(fieldname, sources):
         if value not in (None, ""):
             return value
     return None
+
+
+def source_values(doctype, name):
+    """A source document as one row read (`frappe.db.get_value(..., "*")`): `fill_required` only
+    needs header fields, so the child tables of a full `get_doc` are never loaded."""
+    if not name:
+        return None
+    return frappe.db.get_value(doctype, name, "*", as_dict=True)
 
 
 def default_dimensions(company) -> dict:

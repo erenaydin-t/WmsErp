@@ -104,14 +104,12 @@ class AnalyticsRepositoryImplTest {
     }
 
     @Test
-    fun `stock ageing filters carry both the v14 range fields and the v15 range string`() {
+    fun `stock ageing filters carry the ERPNext 16 range string only`() {
         val filters = AnalyticsRepositoryImpl.stockAgingFilters("WM Co", LocalDate.of(2026, 9, 28))
         assertEquals("WM Co", filters["company"]!!.jsonPrimitive.content)
         assertEquals("2026-09-28", filters["to_date"]!!.jsonPrimitive.content)
         assertEquals("30, 60, 90", filters["range"]!!.jsonPrimitive.content)
-        assertEquals("30", filters["range1"]!!.jsonPrimitive.content)
-        assertEquals("60", filters["range2"]!!.jsonPrimitive.content)
-        assertEquals("90", filters["range3"]!!.jsonPrimitive.content)
+        assertEquals(setOf("company", "to_date", "range", "show_warehouse_wise_stock"), filters.keys)
         assertEquals("0", filters["show_warehouse_wise_stock"]!!.jsonPrimitive.content)
     }
 

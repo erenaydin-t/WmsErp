@@ -77,12 +77,22 @@ def load(doctype, names, print_format):
     except rules.LabelRuleError as exc:
         frappe.throw(_(str(exc)))
     fmt = sheet_format(doctype, print_format)
-    docs = []
-    for name in names:
-        doc = frappe.get_doc(doctype, name)
-        validate_print_permission(doc)
-        docs.append(doc.as_dict())
-    return docs, fmt
+    return load_documents(doctype, names), fmt
+
+
+def load_documents(doctype, names) -> list:
+    """The selected documents as rows, in the order of the selection, in one query. The templates
+    read header fields only, so the child tables a `get_doc` would load are not needed.
+    `frappe.get_list` applies the caller's read permissions (roles and user permissions), and the
+    print permission is checked once for the DocType, as Frappe's print view does per document."""
+    if not frappe.has_permission(doctype, "print"):
+        frappe.throw(_("Not permitted to print {0}.").format(_(doctype)), frappe.PermissionError)
+    rows = frappe.get_list(doctype, filters={"name": ["in", names]}, fields=["*"], limit_page_length=len(names))
+    by_name = {row.name: row for row in rows}
+    missing = [name for name in names if name not in by_name]
+    if missing:
+        frappe.throw(_("{0} {1} not found or not permitted.").format(_(doctype), ", ".join(missing)), frappe.DoesNotExistError)
+    return [by_name[name] for name in names]
 
 
 def sheet_format(doctype, name=None):
@@ -102,7 +112,12 @@ def sheet_format(doctype, name=None):
     if fmt.doc_type != doctype:
         frappe.throw(_("Print Format {0} belongs to {1}, not {2}.").format(name, _(fmt.doc_type), _(doctype)))
     if fmt.disabled:
-        frappe.throw(_("Print Format {0} is disabled.").format(name))
+        if name != default:
+            frappe.throw(_("Print Format {0} is disabled.").format(name))
+        # The shipped sheet is the fallback of the list action: a disabled one is brought back
+        # (its HTML is left as the site edited it; `reset_label_print_formats` restores the template).
+        frappe.db.set_value(PRINT_FORMAT, name, "disabled", 0, update_modified=False)
+        fmt.disabled = 0
     if not rules.is_sheet_template(fmt.html):
         frappe.throw(
             _("Print Format {0} prints one document per page. Choose a label sheet format (it contains the '{1}' marker).").format(
@@ -124,10 +139,3 @@ def render(doctype, docs, fmt) -> str:
     return rules.wrap_page(body, css=fmt.css or "", title=f"{_(doctype)} {_('QR labels')}")
 
 
-def validate_print_permission(doc):
-    try:
-        from frappe.www.printview import validate_print_permission as frappe_validate
-    except ImportError:  # pragma: no cover - very old frappe
-        doc.check_permission("read")
-        return
-    frappe_validate(doc)

@@ -153,11 +153,7 @@ class AnalyticsRepositoryImpl(
         buildHeatmap(entries, start, days)
     }
 
-    /**
-     * ERPNext's *Stock Ageing* script report. Its filters changed across versions: v14 takes
-     * `range1` / `range2` / `range3`, v15 and v16 a single `range` ("30, 60, 90") and crash on the
-     * old names, so both shapes are sent (each version ignores the other's).
-     */
+    /** ERPNext's *Stock Ageing* script report (quantities per age range; the value columns are ignored). */
     override suspend fun getStockAging(limit: Int): AppResult<StockAgingReport> = apiCaller.call {
         val today = dateProvider.today()
         val company = dataSource.getSingleValue("Global Defaults", "default_company")
@@ -185,12 +181,11 @@ class AnalyticsRepositoryImpl(
         val SO_OPEN_STATUSES = listOf("To Deliver and Bill", "To Deliver")
         val SO_LIST_FIELDS = listOf("name", "customer", "customer_name", "status", "transaction_date", "delivery_date", "per_delivered", "company", "docstatus")
 
-        /** Filters accepted by every ERPNext version (see [getStockAging]). */
+        /** Filters of the ERPNext 16 *Stock Ageing* report: one `range` string with the day boundaries. */
         fun stockAgingFilters(company: String, today: LocalDate): JsonObject = buildJsonObject {
             put("company", company)
             put("to_date", today.toString())
             put("range", AGEING_RANGES.joinToString(", "))
-            AGEING_RANGES.forEachIndexed { index, days -> put("range${index + 1}", days) }
             put("show_warehouse_wise_stock", 0)
         }
 

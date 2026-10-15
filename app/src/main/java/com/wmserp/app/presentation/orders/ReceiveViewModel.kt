@@ -38,10 +38,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** One row of the draft receipt with what the warehouse counted so far. */
+/** One row of the draft receipt with what the warehouse counted so far (a saved count continues where it stopped). */
 data class ReceiveLineState(
     val item: PurchaseReceiptItem,
-    val qtyText: String = "0",
+    val qtyText: String = if (item.countedQty > 0.0) item.countedQty.format() else "0",
     /** Batch scanned or typed for a batch tracked row (the draft's own batch when it has one). */
     val batchNo: String = item.batchNo.orEmpty(),
     val highlighted: Boolean = false,
@@ -210,9 +210,11 @@ class ReceiveViewModel @Inject constructor(
         if (code.source != ScanSource.MANUAL) scanner.feedback(state.beep, state.vibrate)
         val value = ScanCodeSanitizer.sanitize(code.value)
         if (value.isEmpty()) return
-        val direct = state.lines.indexOfFirst { it.item.matches(value) }
-        if (direct >= 0) {
-            countScan(direct)
+        // A row of the scanned item or barcode is on the receipt: count it like a looked-up item, so
+        // that a second row of the same item takes over once the first one is complete.
+        val direct = state.lines.firstOrNull { it.item.matches(value) }
+        if (direct != null) {
+            countItem(direct.item.itemCode, batchNo = null, receipt = receipt)
             return
         }
         viewModelScope.launch {

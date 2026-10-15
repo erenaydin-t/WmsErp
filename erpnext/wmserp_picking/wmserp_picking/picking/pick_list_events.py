@@ -40,7 +40,7 @@ def sync_picker_assignments(doc, previous_pickers=None):
     """Every distinct row picker gets a standard assignment; pickers removed from all rows lose it."""
     current = row_pickers(doc)
     if previous_pickers is None:
-        before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
+        before = doc.get_doc_before_save()
         previous_pickers = row_pickers(before) if before is not None else set()
     for user in set(previous_pickers) - current:
         remove_assignment(doc, user)

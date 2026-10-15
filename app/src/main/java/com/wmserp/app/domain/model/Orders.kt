@@ -37,6 +37,8 @@ data class PurchaseReceiptItem(
     val itemName: String,
     /** Expected (accepted) quantity on the draft. */
     val qty: Double,
+    /** Counted so far and saved as progress from the app; the count continues from here. */
+    val countedQty: Double = 0.0,
     val receivedQty: Double = qty,
     val uom: String? = null,
     val stockUom: String? = null,

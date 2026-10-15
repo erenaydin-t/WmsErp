@@ -121,6 +121,37 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun `a second row of the same item takes over once the first one is complete`() = runTest {
+        val second = receipt.items[1]
+        val twoRows = receipt.copy(items = listOf(second, second.copy(rowName = "row3", idx = 3, qty = 2.0)))
+        val vm = createViewModel(twoRows)
+
+        repeat(7) { vm.onScanned(ScannedCode("ITEM-002", ScanSource.HARDWARE_KEYBOARD)) }
+
+        assertEquals("5", vm.uiState.value.lines.first { it.item.rowName == "row2" }.qtyText)
+        assertEquals("2", vm.uiState.value.lines.first { it.item.rowName == "row3" }.qtyText)
+        vm.onScanned(ScannedCode("ITEM-002", ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(7.0, vm.uiState.value.totalQty, 0.0)
+        assertEquals(UiText.Res(R.string.receive_already_counted, listOf("5", "ITEM-002")), vm.uiState.value.message)
+        coVerify(exactly = 0) { lookupScan(any(), any()) }
+    }
+
+    @Test
+    fun `a saved count continues from the counted quantities and the expected ones stay intact`() = runTest {
+        val resumed = receipt.copy(items = receipt.items.map { if (it.rowName == "row2") it.copy(countedQty = 2.0) else it })
+        val vm = createViewModel(resumed)
+
+        assertEquals("2", vm.line("ITEM-002").qtyText)
+        assertEquals("0", vm.line("ITEM-001").qtyText)
+        assertEquals(5.0, vm.line("ITEM-002").item.qty, 0.0)
+        assertEquals(15.0, vm.uiState.value.expectedQty, 0.0)
+        assertTrue(vm.uiState.value.canSubmit)
+
+        vm.onScanned(ScannedCode("ITEM-002", ScanSource.HARDWARE_KEYBOARD))
+        assertEquals("3", vm.line("ITEM-002").qtyText)
+    }
+
+    @Test
     fun `scanning a batch label fills the batch of the batch tracked row and counts it`() = runTest {
         val batch = TestFixtures.batch.copy(name = "LOT-9")
         coEvery { lookupScan("LOT-9", ScanTarget.ITEM) } returns AppResult.Success(ScanLookup.BatchFound("LOT-9", batch, TestFixtures.item, TestFixtures.batchStock))

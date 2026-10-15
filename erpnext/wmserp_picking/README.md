@@ -37,8 +37,9 @@ by the WMS ERP Android app:
 
 ## Installation
 
-Supported: ERPNext / Frappe **v14, v15 and v16** (the API only uses plain field lists and aliases, which
-all three accept; the Delivery Note mapper is called with the signature of the installed version).
+Supported: ERPNext / Frappe **16 only** since 0.4.1 (0.4.0 and earlier also ran on v14 / v15). The app relies on
+the Serial and Batch Bundle, `Pick List.status`, `pick_list_item` on Delivery Note / Stock Entry rows and the
+`kwargs` signature of the Delivery Note mapper.
 
 The Android project and this Frappe app live in one repository, but bench needs a Frappe app at the
 root of what it clones. CI therefore publishes this folder as its own branch, **`wmserp_picking`**
@@ -49,7 +50,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.4.0     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.4.1     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -60,17 +61,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.4.0                              # or pin a version
+# git checkout wmserp_picking-v0.4.1                              # or pin a version
 cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format, creates the stocktaking DocTypes
 bench restart                    # no `bench build` needed: the form / list / report scripts are served from the app folder
-bench version                    # should list wmserp_picking 0.4.0
+bench version                    # should list wmserp_picking 0.4.1
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.4.1 | `wmserp_picking-v0.4.1` | **ERPNext / Frappe 16 only** (the v14 / v15 compatibility code is gone: Serial and Batch Bundles, `make_delivery_note(..., kwargs=...)`, `Pick List.status`, Stock Ageing `range` filter). Receiving fixes: *Save progress* keeps the expected `qty` and stores the count in the new `Purchase Receipt Item.custom_wms_counted_qty` (returned as `counted_qty`); rows whose batch lives in a *Serial and Batch Bundle* (ERPNext v15+) report that batch and are re-bundled when the count or batch changes; *Receipt Workflow States* only apply while a Purchase Receipt workflow is active. `fill_required` never asks for or copies `naming_series` / `no_copy` / `set_only_once` fields from the source documents (a Delivery Note no longer takes the Sales Order's series). Label sheets load the selected documents in one query; a disabled shipped label print format is re-enabled on migrate and on use. |
 | 0.4.0 | `wmserp_picking-v0.4.0` | QR label **sheets** for Batch and Item (list action *Print QR label sheet*, PDF through `wmserp_picking.api.labels.download_label_sheet`, layout in the editable *WMS Batch QR Label Sheet* / *WMS Item QR Label Sheet* print formats, `reset_label_print_formats` to restore the shipped templates), the single *WMS Item QR Label* format and the `wms_item_qr_payload` / `wms_item_qr_svg` Jinja helpers; **receiving** against draft Purchase Receipts (`wmserp_picking.api.purchase_receipt`: `get_receivable`, `get_receipt`, `receive` with workflow-aware submit, *WMS Settings > Receipt Workflow States*); **required fields** filled server-side (`wmserp_picking.documents`) and reported as `missing_fields` by `receive` and `generate_document` (`values` parameter); `get_settings` lists `features`. Picking and stocktaking unchanged. |
 | 0.3.0 | `wmserp_picking-v0.3.0` | Stocktaking sessions: warehouse freeze through `Stock Ledger Entry.before_insert`, snapshot of item / batch quantities and valuation rates, scan-to-count API with forced second counts, duplicate-count policies, blind counts and tolerances, bulk assignment by filters or *Open* mode, manager review and recounts, append-only count log, offline `sync_counts`, Stock Reconciliation posting with `custom_stocktaking_session`, the *Stocktaking Variance* and *Stocktaking Uncounted Items* reports. Picking unchanged. |
 | 0.2.1 | `wmserp_picking-v0.2.1` | Fixes the *WMS Batch QR Label* print format: `wms_qr_svg` handed pyqrcode a text buffer although `QRCode.svg()` writes UTF-8 bytes, so every label failed with `string argument expected, got 'bytes'`. The QR helpers no longer import frappe at module level and are covered by `test_qr.py`. Payload format unchanged. |
@@ -100,7 +102,7 @@ Upgrading from the first (card-level) version removes the old header fields `cus
 | --- | --- | --- |
 | `qr_item_key` | `item_code` | JSON key holding the Item Code in QR labels |
 | `qr_batch_key` | `batch_no` | JSON key holding the Batch No in QR labels |
-| `receipt_workflow_states` | empty | Workflow states (one per line) in which the app may receive a draft Purchase Receipt. Empty: every *Draft* state of the active Purchase Receipt workflow whose *Allow Edit* role the user has (all drafts without a workflow). |
+| `receipt_workflow_states` | empty | Workflow states (one per line) in which the app may receive a draft Purchase Receipt; only read while a Purchase Receipt workflow is active. Empty: every *Draft* state of the active workflow whose *Allow Edit* role the user has (all drafts without a workflow). |
 
 **Pick List** (section *WMS Picking*, all `allow_on_submit`):
 
@@ -111,6 +113,12 @@ Upgrading from the first (card-level) version removes the old header fields `cus
 | `custom_card_completed_at` | Datetime | Last row picked. |
 | `custom_target_warehouse` | Link → Warehouse | Destination for *Material Transfer* Stock Entries. |
 | `custom_generated_doctype` / `custom_generated_docname` | Link → DocType / Dynamic Link | Duplicate prevention for `generate_document`. |
+
+**Purchase Receipt Item:**
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `custom_wms_counted_qty` | Float (row UOM) | Quantity counted so far through the app while the draft is received (*Save progress*). `qty` / `received_qty` keep what purchasing expects until the receipt is confirmed (ERPNext requires `received_qty = qty + rejected_qty` on every save, so neither can hold a partial count). |
 
 **Pick List Item:**
 
@@ -131,7 +139,8 @@ item); *WMS Batch QR Label Sheet* and *WMS Item QR Label Sheet* lay many labels 
 action (see [Label sheets](#label-sheets)). The QR is rendered by the Jinja helpers `wms_batch_qr_svg(doc)`,
 `wms_item_qr_svg(doc)`, `wms_qr_svg(text, scale, omit_size)` and the payload helpers `wms_batch_qr_payload(doc)` /
 `wms_item_qr_payload(doc)` (pyqrcode, shipped with Frappe), which you can reuse in your own formats. The
-formats are created when missing and **never overwritten by a migrate**, so a site can edit them;
+formats are created when missing and re-enabled when disabled, but their HTML is **never overwritten by a
+migrate**, so a site can edit them;
 `bench --site <site> execute wmserp_picking.setup.custom_fields.reset_label_print_formats` restores the shipped
 templates (`--kwargs '{"names": ["WMS Batch QR Label Sheet"]}'` for one of them).
 
@@ -193,9 +202,9 @@ Purchase Order, and the site's *Purchase Receipt* workflow (if any) carries the 
 
 | Method | Parameters | Effect |
 | --- | --- | --- |
-| `get_receivable` | `query?`, `limit?=50` | Draft, non-return Purchase Receipts the caller may receive: `workflow_state` in *WMS Settings > Receipt Workflow States*, else in the *Draft* states of the active workflow whose *Allow Edit* role the caller has (every draft without a workflow); `query` matches name / supplier / supplier name. Headers only: supplier, posting date, stage, `item_count`, `total_qty`, `can_receive`, `has_workflow`. |
-| `get_receipt` | `name` | The receipt with its rows (`qty`, `received_qty`, UOM, conversion factor, warehouse, `batch_no`, `has_batch_no`, `has_serial_no`, `needs_batch`, the item's barcodes) plus `can_receive`. |
-| `receive` | `name`, `rows`, `values?`, `submit?=1`, `remove_unreceived?=1` | `rows`: `[{"row", "qty", "warehouse"?, "batch_no"?}]` in the row UOM. Rows missing or counted 0 are removed when `remove_unreceived` (the Purchase Order stays open for them) and left untouched otherwise (saving the progress of a count). Writes `received_qty`, `qty`, `stock_qty`, `rejected_qty = 0`, the warehouse and the batch (`use_serial_batch_fields = 1` on v15+), fills required fields, saves, and with `submit` applies the caller's workflow transition that leads to a submitted state (an action named *Receive / Submit / Approve / Confirm / Complete / Accept* first) or `doc.submit()` without a workflow. Returns the receipt plus `created`, `submitted`, `differences` (`[{row, item_code, expected, counted}]`) and `removed_rows`, or the `missing_fields` answer. |
+| `get_receivable` | `query?`, `limit?=50` | Draft, non-return Purchase Receipts the caller may receive: with an active Purchase Receipt workflow, `workflow_state` in *WMS Settings > Receipt Workflow States*, else in the *Draft* states of that workflow whose *Allow Edit* role the caller has; every draft without an active workflow (the configured states are ignored then); `query` matches name / supplier / supplier name. Headers only: supplier, posting date, stage, `item_count`, `total_qty`, `can_receive`, `has_workflow`. |
+| `get_receipt` | `name` | The receipt with its rows (`qty`, `counted_qty` saved so far, `received_qty`, UOM, conversion factor, warehouse, `batch_no` - from the row or from its *Serial and Batch Bundle* -, `has_batch_no`, `has_serial_no`, `needs_batch`, the item's barcodes) plus `can_receive`. |
+| `receive` | `name`, `rows`, `values?`, `submit?=1`, `remove_unreceived?=1` | `rows`: `[{"row", "qty", "warehouse"?, "batch_no"?}]` in the row UOM. Rows missing or counted 0 are removed when `remove_unreceived` (the Purchase Order stays open for them) and left untouched otherwise. With `submit=0` and `remove_unreceived=0` (saving the progress of a count) only `custom_wms_counted_qty`, the warehouse and the batch are written and `qty` keeps the expected quantity. Otherwise writes `received_qty`, `qty`, `stock_qty`, `rejected_qty = 0`, the warehouse and the batch (`use_serial_batch_fields = 1`; a *Serial and Batch Bundle* whose batch or quantity no longer matches is unlinked and rebuilt by ERPNext on submit), fills required fields, saves, and with `submit` applies the caller's workflow transition that leads to a submitted state (an action named *Receive / Submit / Approve / Confirm / Complete / Accept* first) or `doc.submit()` without a workflow. Returns the receipt plus `created`, `submitted`, `differences` (`[{row, item_code, expected, counted}]`) and `removed_rows`, or the `missing_fields` answer. |
 
 Batch tracked rows without a batch that ERPNext would not create on submit (`needs_batch`) are refused
 until a batch is sent. Over-receipt is passed on to ERPNext, which applies its own over-receipt allowance.
@@ -220,8 +229,9 @@ label stock; labels are paged `columns × rows` per sheet with a page break betw
 submits the same treatment: the required fields of the DocType and its child tables (custom fields
 included; Link, Select, Data, Date, numeric…) that are still empty are filled, in order, from the
 `values` sent by the app (`"Doctype.fieldname"` or `fieldname`), from the source documents (the Pick List,
-the Material Request), from the user's defaults (`frappe.defaults`) and from the company's default
-accounting dimensions (cost center and project included). What is still empty is returned as
+the Sales Order, the Material Request; `no_copy` / `set_only_once` fields excluded), from the user's defaults
+(`frappe.defaults`) and from the company's default accounting dimensions (cost center and project included).
+Fields Frappe fills itself (`naming_series`, `amended_from`) are never asked for nor copied. What is still empty is returned as
 `missing_fields` with HTTP 200, nothing is saved, and the app asks the user once. A
 `frappe.MandatoryError` raised by ERPNext itself on save or submit is translated the same way.
 
@@ -248,7 +258,7 @@ Manager Review → Approved → Finalized.
 
 * **Start** checks that no other session freezes the warehouse, snapshots the *Bin* rows (item group / brand
   filter and the zero-stock option applied) and, for batch items, one row per batch with stock in the warehouse
-  (batch balances come from the Stock Ledger on v14 and from *Serial and Batch Entry* on v15 / v16) plus a
+  (batch balances come from *Serial and Batch Entry*, plus ledger entries written before the site used bundles) plus a
   remainder row without batch, inserted with `frappe.db.bulk_insert`. In *Assigned* mode rows stay
   *Not Counted* until assigned; in *Open* mode every row is countable by anyone with the app and counters are
   registered on their first count.

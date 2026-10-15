@@ -3,8 +3,9 @@
 Everything here is additive (Custom Field / Property Setter / Print Format records), so no file
 in `frappe` or `erpnext` is modified. Re-running is safe: `create_custom_fields(update=True)`
 updates existing fields in place, the Property Setter is only created when missing and the label
-print formats are created when missing (never overwritten, so a site can adjust the label sheet
-layout in the Print Format; `reset_label_print_formats` restores the shipped templates).
+print formats are created when missing and re-enabled when disabled (their HTML is never overwritten,
+so a site can adjust the label sheet layout in the Print Format; `reset_label_print_formats` restores
+the shipped templates).
 
 Apply manually (without installing the app) with:
 
@@ -127,6 +128,18 @@ def get_custom_fields():
                 description="Set when the reconciliation was created from a WMS stocktaking session; submitting it completes that session and unfreezes the warehouse.",
             ),
         ],
+        "Purchase Receipt Item": [
+            dict(
+                fieldname="custom_wms_counted_qty",
+                fieldtype="Float",
+                label="WMS Counted Qty",
+                insert_after="received_qty",
+                read_only=1,
+                no_copy=1,
+                default="0",
+                description="Quantity counted so far through the WMS app (row UOM) while the draft is being received; Received Qty / Qty stay what purchasing expects until the receipt is confirmed.",
+            ),
+        ],
         "Pick List Item": [
             dict(
                 fieldname="custom_picker",
@@ -200,6 +213,8 @@ def setup_customizations():
     frappe.clear_cache(doctype="Pick List")
     frappe.clear_cache(doctype="Pick List Item")
     frappe.clear_cache(doctype="Stock Reconciliation")
+    frappe.clear_cache(doctype="Purchase Receipt")
+    frappe.clear_cache(doctype="Purchase Receipt Item")
 
 
 def remove_obsolete_fields():
@@ -248,14 +263,17 @@ def ensure_label_print_formats():
     """Creates the label print formats that are missing: the single labels (one document per page,
     for Frappe's own Print) and the sheets (many labels per page, for the list action).
 
-    Existing formats are left untouched on purpose: the sheet layout (labels per page, label and
-    QR sizes, margins) is meant to be adjusted in the Print Format by the site, and a migrate must
-    not undo that. `reset_label_print_formats` restores the shipped templates explicitly.
+    The HTML of an existing format is left untouched on purpose: the sheet layout (labels per page,
+    label and QR sizes, margins) is meant to be adjusted in the Print Format by the site, and a
+    migrate must not undo that. A shipped format that was disabled is re-enabled, because the list
+    action and the single-label print fall back to it. `reset_label_print_formats` restores the
+    shipped templates explicitly.
     """
     for name, file_name in label_rules.TEMPLATE_FILES.items():
-        if frappe.db.exists("Print Format", name):
-            continue
-        create_label_print_format(name, file_name)
+        if not frappe.db.exists("Print Format", name):
+            create_label_print_format(name, file_name)
+        elif frappe.db.get_value("Print Format", name, "disabled"):
+            frappe.db.set_value("Print Format", name, "disabled", 0, update_modified=False)
 
 
 def reset_label_print_formats(names=None):
