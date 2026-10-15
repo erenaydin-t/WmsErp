@@ -127,7 +127,9 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
    allowance permits it). The backend writes the counts (`received_qty`, `qty`, `stock_qty`, warehouse,
    `batch_no` + `use_serial_batch_fields`), saves, and submits through the workflow transition available to the
    user that leads to a submitted state (*Receive / Submit / Approve / …*), or `doc.submit()` without a workflow.
-   The response tells whether the receipt was submitted or only moved to the next approval stage.
+   The response tells whether the receipt was submitted or only moved to the next approval stage. Values a site's
+   own submit rules require on every receipt (the warehouse department on each row, for instance) are configured
+   once in *WMS Settings > Receipt Field Values* and written by the backend before the save.
 5. **Save progress** stores the counts of the rows counted so far (`submit=0`, `remove_unreceived=0`) in the
    row's *WMS Counted Qty* (`custom_wms_counted_qty`), plus the batch and warehouse scanned, and changes nothing
    else: the expected quantities stay what purchasing entered, and reopening the receipt continues the count

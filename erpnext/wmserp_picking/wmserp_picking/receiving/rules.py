@@ -9,6 +9,8 @@ goods against it in the app and confirms, which submits the receipt and puts the
 
 from __future__ import annotations
 
+import json
+
 QTY_TOLERANCE = 1e-6
 
 # Workflow actions that submit a receipt, in order of preference when several are allowed.
@@ -38,6 +40,32 @@ def parse_states(text) -> list[str]:
         if state and state not in out:
             out.append(state)
     return out
+
+
+def parse_field_values(text) -> dict:
+    """WMS Settings > Receipt Field Values: a JSON object `{"<Doctype>.<fieldname>" or
+    "<fieldname>": value}`; blanks are dropped, anything else is refused."""
+    if text in (None, "") or not str(text).strip():
+        return {}
+    try:
+        data = json.loads(text) if isinstance(text, str) else text
+    except ValueError as exc:
+        raise ReceivingRuleError("WMS Settings > Receipt Field Values is not valid JSON") from exc
+    if not isinstance(data, dict):
+        raise ReceivingRuleError("WMS Settings > Receipt Field Values must be a JSON object")
+    out = {}
+    for key, value in data.items():
+        key = str(key).strip()
+        if key and value not in (None, "") and not isinstance(value, (dict, list)):
+            out[key] = value
+    return out
+
+
+def split_field_key(key) -> tuple[str | None, str]:
+    """`"Purchase Receipt Item.department"` -> ("Purchase Receipt Item", "department");
+    `"department"` -> (None, "department")."""
+    doctype, dot, fieldname = str(key).rpartition(".")
+    return (doctype.strip() or None, fieldname.strip()) if dot else (None, str(key).strip())
 
 
 def editable_states(states, roles) -> list[str]:
@@ -133,7 +161,8 @@ def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
         total += qty
         if abs(qty - expected) > QTY_TOLERANCE:
             differences.append({"row": name, "item_code": _get(row, "item_code"), "expected": expected, "counted": qty})
-    if not updates:
+    if not updates and (remove_unreceived or not cleared):
+        # Saving a count in which every row was reset to 0 is a legitimate progress save.
         raise ReceivingRuleError("Nothing was received: count at least one row")
     return {"updates": updates, "removed": removed, "cleared": cleared, "differences": differences, "total_qty": total}
 
