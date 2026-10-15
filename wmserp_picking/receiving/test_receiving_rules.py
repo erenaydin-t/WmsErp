@@ -39,6 +39,15 @@ class StateTests(unittest.TestCase):
         self.assertIsNone(rules.choose_submit_action([], docstatus))
 
 
+class BundleTests(unittest.TestCase):
+    def test_bundle_batch_is_the_single_batch_of_the_entries(self):
+        self.assertEqual("LOT-1", rules.bundle_batch([{"batch_no": "LOT-1", "qty": 4}, {"batch_no": "LOT-1", "qty": 6}]))
+        self.assertIsNone(rules.bundle_batch([{"batch_no": "LOT-1"}, {"batch_no": "LOT-2"}]))
+        self.assertIsNone(rules.bundle_batch([{"serial_no": "SN-1"}]))
+        self.assertIsNone(rules.bundle_batch([]))
+        self.assertIsNone(rules.bundle_batch(None))
+
+
 class PlanReceiptTests(unittest.TestCase):
     rows = [row("r1", "A", 10), row("r2", "B", 5, batch_no="B-1"), row("r3", "C", 2)]
 
@@ -46,6 +55,7 @@ class PlanReceiptTests(unittest.TestCase):
         plan = rules.plan_receipt(self.rows, [{"row": "r1", "qty": 10}, {"row": "r2", "qty": 5}, {"row": "r3", "qty": 2}])
         self.assertEqual([], plan["differences"])
         self.assertEqual([], plan["removed"])
+        self.assertEqual([], plan["cleared"])
         self.assertEqual(17.0, plan["total_qty"])
         self.assertEqual({"qty": 5.0, "warehouse": "Stores - WM", "batch_no": "B-1"}, plan["updates"]["r2"])
 
@@ -82,6 +92,7 @@ class PlanReceiptTests(unittest.TestCase):
         plan = rules.plan_receipt(self.rows, [{"row": "r1", "qty": 1}, {"row": "r2", "qty": 0}], remove_unreceived=False)
         self.assertEqual(["r1"], list(plan["updates"]))
         self.assertEqual([], plan["removed"])
+        self.assertEqual(["r2"], plan["cleared"])  # sent as 0: its saved count is reset; r3 was not sent and stays
         self.assertEqual([{"row": "r1", "item_code": "A", "expected": 10.0, "counted": 1.0}], plan["differences"])
 
     def test_batch_tracked_rows_need_a_batch(self):

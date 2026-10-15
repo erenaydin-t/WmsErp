@@ -74,17 +74,29 @@ def choose_submit_action(transitions, state_docstatus) -> str | None:
     return candidates[0]
 
 
+def bundle_batch(entries) -> str | None:
+    """The one batch a Serial and Batch Bundle holds (its `Serial and Batch Entry` rows), or None
+    when it holds none or several: the app shows and scans a single batch per receipt row."""
+    batches = []
+    for entry in entries or []:
+        batch = _get(entry, "batch_no")
+        if batch and batch not in batches:
+            batches.append(batch)
+    return batches[0] if len(batches) == 1 else None
+
+
 def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
     """Decides what happens to each receipt row given what the warehouse counted.
 
     `rows`: the receipt rows ({name, item_code, qty, warehouse, batch_no, needs_batch}).
     `counted`: what the app sends ({row, qty, warehouse?, batch_no?}); quantities in the row UOM.
 
-    Returns {"updates": {row: {qty, warehouse, batch_no}}, "removed": [row...],
+    Returns {"updates": {row: {qty, warehouse, batch_no}}, "removed": [row...], "cleared": [row...],
              "differences": [{row, item_code, expected, counted}], "total_qty": float}.
     Rows the warehouse did not receive (missing or 0) are removed from the receipt when
     `remove_unreceived` (the Purchase Order stays open for them). Without it (saving the
-    progress of a count) they are left untouched: the warehouse comes back to them later.
+    progress of a count) they are left untouched - the warehouse comes back to them later -
+    except that a row sent explicitly with 0 is `cleared` (its saved count goes back to 0).
     """
     by_name = {_get(r, "name"): r for r in rows}
     counts = {}
@@ -99,7 +111,7 @@ def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
             raise ReceivingRuleError(f"Row {row} was sent twice")
         counts[row] = entry
 
-    updates, removed, differences, total = {}, [], [], 0.0
+    updates, removed, cleared, differences, total = {}, [], [], [], 0.0
     for row in rows:
         name = _get(row, "name")
         entry = counts.get(name)
@@ -107,6 +119,8 @@ def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
         expected = _num(_get(row, "qty"))
         if qty <= QTY_TOLERANCE:
             if not remove_unreceived:
+                if entry is not None:
+                    cleared.append(name)
                 continue
             removed.append(name)
             differences.append({"row": name, "item_code": _get(row, "item_code"), "expected": expected, "counted": 0.0})
@@ -121,7 +135,7 @@ def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
             differences.append({"row": name, "item_code": _get(row, "item_code"), "expected": expected, "counted": qty})
     if not updates:
         raise ReceivingRuleError("Nothing was received: count at least one row")
-    return {"updates": updates, "removed": removed, "differences": differences, "total_qty": total}
+    return {"updates": updates, "removed": removed, "cleared": cleared, "differences": differences, "total_qty": total}
 
 
 def _get(obj, key):

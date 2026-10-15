@@ -113,9 +113,7 @@ def get_my_pick_lists(limit=50):
     )
     if not parents:
         return []
-    filters = {"name": ["in", list(set(parents))], "docstatus": 1}
-    if frappe.get_meta(PICK_LIST).has_field("status"):
-        filters["status"] = "Open"
+    filters = {"name": ["in", list(set(parents))], "docstatus": 1, "status": "Open"}
     headers = frappe.get_list(
         PICK_LIST,
         filters=filters,
@@ -171,7 +169,7 @@ def get_picker_kpis(date=None, user=None):
         fields=["parent"],
     )
     open_parents = {row.parent for row in open_rows}
-    if open_parents and frappe.get_meta(PICK_LIST).has_field("status"):
+    if open_parents:
         open_parents = set(frappe.get_all(PICK_LIST, filters={"name": ["in", list(open_parents)], "status": "Open"}, pluck="name"))
         open_rows = [row for row in open_rows if row.parent in open_parents]
 
@@ -486,6 +484,7 @@ def find_generated_document(doc):
         if docstatus is not None and cint(docstatus) != 2:
             return {"doctype": doc.custom_generated_doctype, "name": doc.custom_generated_docname, "docstatus": cint(docstatus)}
 
+    # A Stock Entry links the pick list in its header; a Delivery Note only in its rows (pick_list_item).
     if frappe.get_meta(doctype).has_field("pick_list"):
         found = frappe.get_all(
             doctype,
@@ -499,7 +498,7 @@ def find_generated_document(doc):
 
     child_doctype = doctype + " Item" if doctype == rules.DELIVERY_NOTE else "Stock Entry Detail"
     row_names = [row.name for row in doc.get("locations") or []]
-    if row_names and frappe.get_meta(child_doctype).has_field("pick_list_item"):
+    if row_names:
         found = frappe.get_all(
             child_doctype,
             filters={"pick_list_item": ["in", row_names], "docstatus": ["!=", 2]},
@@ -523,32 +522,23 @@ def pickable_rows(doc):
     return rows
 
 
-def set_if_field(document, fieldname, value):
-    if document.meta.has_field(fieldname):
-        document.set(fieldname, value)
-
-
 def set_serial_batch(item, row):
+    """The picked batch / serial numbers go into the row fields; ERPNext builds the Serial and
+    Batch Bundle from them on submit (`use_serial_batch_fields`)."""
     if row.get("batch_no"):
         item.batch_no = row.batch_no
     if row.get("serial_no"):
         item.serial_no = row.serial_no
     if row.get("batch_no") or row.get("serial_no"):
-        set_if_field(item, "use_serial_batch_fields", 1)  # ERPNext v15 serial/batch bundles
+        item.use_serial_batch_fields = 1
 
 
 def delivery_note_skeleton(sales_order):
     """A Delivery Note mapped from the Sales Order header only (customer, addresses, taxes), without
-    item rows. The mapper's signature changed in ERPNext v15:
-    v14: make_delivery_note(source_name, target_doc=None, skip_item_mapping=False)
-    v15/v16: make_delivery_note(source_name, target_doc=None, kwargs=None)"""
-    import inspect
-
+    item rows."""
     from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note as make_dn_from_so
 
-    if "kwargs" in inspect.signature(make_dn_from_so).parameters:
-        return make_dn_from_so(sales_order, kwargs={"skip_item_mapping": True})
-    return make_dn_from_so(sales_order, skip_item_mapping=True)
+    return make_dn_from_so(sales_order, kwargs={"skip_item_mapping": True})
 
 
 def make_delivery_notes(pick_list, values=None):
@@ -583,7 +573,8 @@ def make_delivery_notes(pick_list, values=None):
                 dn_item = delivery_note.append("items", {"item_code": row.item_code, "against_sales_order": row.sales_order})
             fill_delivery_note_item(dn_item, row)
         prepare_delivery_note(delivery_note, pick_list)
-        prepared.append((delivery_note, [frappe.get_doc("Sales Order", so) for so in sales_orders]))
+        # Header fields only: the Sales Orders are a source of required-field values, not re-read documents.
+        prepared.append((delivery_note, [documents.source_values("Sales Order", so) for so in sales_orders]))
 
     unlinked = [row for row in rows if not row.get("sales_order")]
     if unlinked:
@@ -634,11 +625,11 @@ def fill_delivery_note_item(dn_item, row):
     dn_item.conversion_factor = conversion_factor
     dn_item.stock_qty = picked
     set_serial_batch(dn_item, row)
-    set_if_field(dn_item, "pick_list_item", row.name)
+    dn_item.pick_list_item = row.name
 
 
 def prepare_delivery_note(delivery_note, pick_list):
-    set_if_field(delivery_note, "pick_list", pick_list.name)
+    # A Delivery Note has no pick_list header field: the link is per row (pick_list_item).
     delivery_note.company = pick_list.company
     delivery_note.run_method("set_missing_values")
     delivery_note.run_method("set_po_nos")
@@ -650,11 +641,8 @@ def make_stock_entry(pick_list, purpose, values=None):
     stock_entry = frappe.new_doc("Stock Entry")
     stock_entry.company = pick_list.company
     stock_entry.purpose = purpose
-    if hasattr(stock_entry, "set_stock_entry_type"):
-        stock_entry.set_stock_entry_type()
-    else:
-        stock_entry.stock_entry_type = purpose
-    set_if_field(stock_entry, "pick_list", pick_list.name)
+    stock_entry.set_stock_entry_type()
+    stock_entry.pick_list = pick_list.name
     if purpose == rules.PURPOSE_MATERIAL_TRANSFER_FOR_MANUFACTURE and pick_list.get("work_order"):
         stock_entry.work_order = pick_list.work_order
 
@@ -686,15 +674,15 @@ def make_stock_entry(pick_list, purpose, values=None):
             },
         )
         set_serial_batch(item, row)
-        set_if_field(item, "pick_list_item", row.name)
+        item.pick_list_item = row.name
         if row.get("material_request"):
-            set_if_field(item, "material_request", row.material_request)
-            set_if_field(item, "material_request_item", row.get("material_request_item"))
+            item.material_request = row.material_request
+            item.material_request_item = row.get("material_request_item")
 
     stock_entry.run_method("set_missing_values")
     sources = [pick_list]
     if pick_list.get("material_request"):
-        sources.insert(0, frappe.get_doc("Material Request", pick_list.material_request))
+        sources.insert(0, documents.source_values("Material Request", pick_list.material_request))
     require_fields(rules.STOCK_ENTRY, [(stock_entry, sources)], values)
     stock_entry.insert()
     return stock_entry

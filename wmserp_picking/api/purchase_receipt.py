@@ -10,9 +10,15 @@ Intended flow
    is submitted - through the workflow action that submits it when a workflow is active, else
    directly. Only then does the stock enter the warehouse.
 
+Saving the progress of a count (`receive` with `submit=0`, `remove_unreceived=0`) stores what was
+counted so far in the row's *WMS Counted Qty* (`custom_wms_counted_qty`) and leaves `qty` - what
+purchasing expects - untouched, so the differences reported when the receipt is finally confirmed
+and the expected column of the app stay right.
+
 Which drafts are "at the warehouse stage": the states listed in *WMS Settings > Receipt Workflow
 States*, or, when that is empty, the draft states of the Purchase Receipt workflow in which one of
-the user's roles may edit. Without a workflow every draft the user may read is listed.
+the user's roles may edit. Without an active workflow every draft the user may read is listed (the
+configured states only apply to a workflow).
 
 Mandatory fields a site added (a *Department*...) that the receipt lacks are filled from the values
 the app sends, the user's defaults and the company's default accounting dimensions; what is still
@@ -29,6 +35,8 @@ from wmserp_picking.receiving import rules
 PURCHASE_RECEIPT = "Purchase Receipt"
 PURCHASE_RECEIPT_ITEM = "Purchase Receipt Item"
 WORKFLOW_STATE = "workflow_state"
+COUNTED_QTY = "custom_wms_counted_qty"
+BUNDLE = "serial_and_batch_bundle"
 
 HEADER_FIELDS = [
     "name",
@@ -57,10 +65,7 @@ ALWAYS_PRESENT = {"name", "docstatus", "owner", "modified"}
 @frappe.whitelist()
 def get_receivable(query=None, limit=50):
     """Draft Purchase Receipts waiting for the warehouse (see the module docstring)."""
-    filters = {"docstatus": 0}
-    meta = frappe.get_meta(PURCHASE_RECEIPT)
-    if meta.has_field("is_return"):
-        filters["is_return"] = 0
+    filters = {"docstatus": 0, "is_return": 0}
     states = receivable_states()
     if states is not None:
         if not states:
@@ -93,7 +98,8 @@ def get_receivable(query=None, limit=50):
 
 @frappe.whitelist()
 def get_receipt(name):
-    """One draft receipt with its rows (expected quantities, warehouses, batches, item barcodes)."""
+    """One draft receipt with its rows (expected quantities, counts so far, warehouses, batches,
+    item barcodes)."""
     doc = frappe.get_doc(PURCHASE_RECEIPT, name)
     doc.check_permission("read")
     return serialize_receipt(doc)
@@ -110,32 +116,42 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
 
     `rows`: `[{"row": <Purchase Receipt Item name>, "qty": <counted, row UOM>, "warehouse"?, "batch_no"?}]`.
     Rows missing from `rows` (or with 0) are removed when `remove_unreceived`; the app sends
-    `remove_unreceived=0` with `submit=0` to save the progress of a count without touching them.
+    `remove_unreceived=0` with `submit=0` to save the progress of a count: the counts then go to
+    *WMS Counted Qty* only and the expected `qty` of every row is kept.
     `values`: answers to required fields (`{"Purchase Receipt Item.department": "..."}`).
     """
     doc = frappe.get_doc(PURCHASE_RECEIPT, name)
     doc.check_permission("write")
     if doc.docstatus != 0:
         frappe.throw(_("Purchase Receipt {0} is already {1}.").format(name, _("submitted") if doc.docstatus == 1 else _("cancelled")))
-    if not can_receive(doc):
+    stage = workflow_stage()
+    if not can_receive(doc, stage):
         frappe.throw(
             _("Purchase Receipt {0} is not at the warehouse stage ({1}).").format(name, doc.get(WORKFLOW_STATE) or _("Draft")),
             frappe.PermissionError,
         )
 
+    progress = not cint(submit) and not cint(remove_unreceived)
+    if progress and not frappe.get_meta(PURCHASE_RECEIPT_ITEM).has_field(COUNTED_QTY):
+        frappe.throw(_("Purchase Receipt Item has no {0} field yet: run bench migrate for wmserp_picking before saving the progress of a count.").format("WMS Counted Qty"))
+    facts = row_facts(doc)
     counted = frappe.parse_json(rows) or []
     try:
-        plan = rules.plan_receipt(row_facts(doc), counted, remove_unreceived=cint(remove_unreceived) != 0)
+        plan = rules.plan_receipt(facts, counted, remove_unreceived=cint(remove_unreceived) != 0)
     except rules.ReceivingRuleError as exc:
         frappe.throw(_(str(exc)))
 
+    facts_by_row = {fact["name"]: fact for fact in facts}
+    stale_bundles = []
     for child in list(doc.get("items") or []):
         if child.name in plan["removed"]:
             doc.remove(child)
             continue
         update = plan["updates"].get(child.name)
         if update:
-            apply_count(child, update)
+            stale_bundles.extend(apply_count(child, update, facts_by_row[child.name], progress=progress))
+        elif child.name in plan["cleared"]:
+            child.set(COUNTED_QTY, 0)  # counted earlier, now sent as 0 while saving progress
 
     missing = documents.fill_required(doc, frappe.parse_json(values) or {}, company=doc.company)
     if missing:
@@ -145,45 +161,94 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
         doc.save()
         submitted = False
         if cint(submit):
-            doc = submit_receipt(doc)
+            doc = submit_receipt(doc, stage)
             submitted = doc.docstatus == 1
     except frappe.MandatoryError as exc:
         answer = documents.missing_fields_answer(PURCHASE_RECEIPT, exc)
         if answer:
             return answer
         raise
-    doc.add_comment("Info", _("Received through the WMS app ({0} row(s), {1} unit(s))").format(len(plan["updates"]), flt(plan["total_qty"])))
-    result = serialize_receipt(doc)
+    discard_bundles(stale_bundles)
+    if progress:
+        comment = _("Count saved through the WMS app ({0} row(s), {1} unit(s) counted so far)")
+    else:
+        comment = _("Received through the WMS app ({0} row(s), {1} unit(s))")
+    doc.add_comment("Info", comment.format(len(plan["updates"]), flt(plan["total_qty"])))
+    result = serialize_receipt(doc, facts=row_facts(doc), stage=stage)
     result.update({"created": True, "submitted": submitted, "differences": plan["differences"], "removed_rows": plan["removed"]})
     return result
 
 
-def apply_count(child, update):
-    conversion_factor = flt(child.get("conversion_factor")) or 1
+def apply_count(child, update, fact, progress=False) -> list:
+    """Writes one counted row.
+
+    While a count is in progress only *WMS Counted Qty*, the warehouse and the batch change: `qty`
+    keeps what purchasing expects. Confirming writes the counted quantity into the row (`qty`,
+    `received_qty`, `stock_qty`).
+
+    ERPNext keeps the batch of a draft row in a *Serial and Batch Bundle* when purchasing chose it
+    through the bundle dialog. A bundle whose batch or quantity no longer matches the row is
+    unlinked and the batch written into `batch_no` with `use_serial_batch_fields`, from which
+    ERPNext builds a fresh bundle on submit. Returns the unlinked bundles (deleted once the receipt
+    is saved)."""
     qty = flt(update["qty"])
+    stale = []
+    child.set(COUNTED_QTY, qty)
+    if update.get("warehouse"):
+        child.warehouse = update["warehouse"]
+
+    current_batch = child.get("batch_no") or fact.get("batch_no")
+    batch_no = update.get("batch_no") or current_batch
+    batch_changed = bool(batch_no) and batch_no != current_batch
+    qty_changed = abs(qty - flt(child.get("qty"))) > rules.QTY_TOLERANCE
+    bundle = child.get(BUNDLE)
+    if bundle and (batch_changed or (qty_changed and not progress)):
+        stale.append(bundle)
+        child.set(BUNDLE, None)
+        if child.get("rejected_serial_and_batch_bundle"):
+            stale.append(child.get("rejected_serial_and_batch_bundle"))
+            child.set("rejected_serial_and_batch_bundle", None)
+        if not batch_no:
+            frappe.throw(
+                _("Row {0} ({1}): its Serial and Batch Bundle holds several batches, so the quantity cannot be changed from the app. Adjust the bundle in ERPNext or scan the batch received.").format(
+                    child.idx, child.item_code
+                )
+            )
+    keeps_bundle = bool(bundle) and bundle not in stale
+    if batch_no and not keeps_bundle and (batch_changed or not child.get("batch_no")):
+        child.batch_no = batch_no
+        child.use_serial_batch_fields = 1  # ERPNext builds the Serial and Batch Bundle from this on submit
+
+    if progress:
+        return stale
+    conversion_factor = flt(child.get("conversion_factor")) or 1
     child.received_qty = qty
     child.qty = qty
     child.rejected_qty = 0
     child.stock_qty = qty * conversion_factor
-    if child.meta.has_field("received_stock_qty"):
-        child.received_stock_qty = qty * conversion_factor
-    if update.get("warehouse"):
-        child.warehouse = update["warehouse"]
-    if update.get("batch_no") and update["batch_no"] != child.get("batch_no"):
-        child.batch_no = update["batch_no"]
-        if child.meta.has_field("use_serial_batch_fields"):
-            child.use_serial_batch_fields = 1  # ERPNext v15+ builds the Serial and Batch Bundle from this
+    child.received_stock_qty = qty * conversion_factor
+    return stale
 
 
-def submit_receipt(doc):
+def discard_bundles(names):
+    """Deletes the draft Serial and Batch Bundles a receipt no longer references (best effort: an
+    orphaned draft bundle is harmless, ERPNext ignores it)."""
+    for name in names:
+        try:
+            if frappe.db.get_value("Serial and Batch Bundle", name, "docstatus") == 0:
+                frappe.delete_doc("Serial and Batch Bundle", name, ignore_permissions=True, force=True)
+        except Exception:
+            frappe.log_error(title=f"WMS receiving: could not delete bundle {name}", message=frappe.get_traceback())
+
+
+def submit_receipt(doc, stage=None):
     """Submits through the workflow (the user's action that leads to a submitted state) or directly."""
-    from frappe.model.workflow import apply_workflow, get_transitions, get_workflow_name
+    from frappe.model.workflow import apply_workflow, get_transitions
 
-    workflow_name = get_workflow_name(PURCHASE_RECEIPT)
-    if not workflow_name:
+    workflow = (stage or workflow_stage())["workflow"]
+    if not workflow:
         doc.submit()
         return doc
-    workflow = frappe.get_cached_doc("Workflow", workflow_name)
     docstatus = {state.state: str(state.doc_status) for state in workflow.states}
     action = rules.choose_submit_action(get_transitions(doc, workflow), docstatus)
     if not action:
@@ -201,18 +266,28 @@ def submit_receipt(doc):
 # --------------------------------------------------------------------------------------------
 
 
-def receivable_states():
-    """Workflow states a receipt must be in to appear in the app, or None when no workflow applies."""
+def workflow_stage() -> dict:
+    """`{"workflow": <active Purchase Receipt Workflow or None>, "states": <receivable states or None>}`,
+    computed once per request."""
+    workflow = active_workflow()
+    return {"workflow": workflow, "states": receivable_states(workflow)}
+
+
+def receivable_states(workflow=None):
+    """Workflow states a receipt must be in to appear in the app, or None when no workflow applies
+    (every draft is receivable then). The states configured in *WMS Settings* only mean something
+    while a Purchase Receipt workflow is active and the `workflow_state` field exists."""
+    if workflow is None:
+        workflow = active_workflow()
+    if not workflow or not frappe.get_meta(PURCHASE_RECEIPT).has_field(WORKFLOW_STATE):
+        return None
     configured = []
     try:
         configured = rules.parse_states(frappe.get_cached_doc("WMS Settings", "WMS Settings").get("receipt_workflow_states"))
     except Exception:
         configured = []
-    workflow = active_workflow()
     if configured:
         return configured
-    if not workflow:
-        return None
     return rules.editable_states([s.as_dict() for s in workflow.states], frappe.get_roles())
 
 
@@ -223,10 +298,10 @@ def active_workflow():
     return frappe.get_cached_doc("Workflow", name) if name else None
 
 
-def can_receive(doc) -> bool:
+def can_receive(doc, stage=None) -> bool:
     if doc.docstatus != 0:
         return False
-    states = receivable_states()
+    states = (stage or workflow_stage())["states"]
     if states is None:
         return True
     return (doc.get(WORKFLOW_STATE) or "") in states
@@ -264,75 +339,92 @@ def serialize_header(source, rows):
     }
 
 
+def bundle_batches(bundles) -> dict:
+    """{bundle name: its single batch or None} for the rows whose batch lives in a bundle."""
+    if not bundles:
+        return {}
+    entries = {}
+    for entry in frappe.get_all("Serial and Batch Entry", filters={"parent": ["in", list(bundles)]}, fields=["parent", "batch_no"]):
+        entries.setdefault(entry.parent, []).append(entry)
+    return {name: rules.bundle_batch(entries.get(name)) for name in bundles}
+
+
 def row_facts(doc):
-    """The row attributes the receiving rules need."""
-    items = {row.item_code for row in doc.get("items") or [] if row.item_code}
+    """The row attributes the receiving rules and the app need (one Item query, one bundle query)."""
+    rows = doc.get("items") or []
+    items = {row.item_code for row in rows if row.item_code}
     tracking = {}
     if items:
-        fields = ["name", "has_batch_no", "has_serial_no"]
-        if frappe.get_meta("Item").has_field("create_new_batch"):
-            fields.append("create_new_batch")
+        fields = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch"]
         for item in frappe.get_all("Item", filters={"name": ["in", list(items)]}, fields=fields):
             tracking[item.name] = item
+    batches = bundle_batches({row.get(BUNDLE) for row in rows if row.get(BUNDLE) and not row.get("batch_no")})
     facts = []
-    for row in doc.get("items") or []:
+    for row in rows:
         info = tracking.get(row.item_code) or frappe._dict()
+        has_batch_no = bool(cint(info.get("has_batch_no")))
+        bundle = row.get(BUNDLE)
+        batch_no = row.get("batch_no") or (batches.get(bundle) if bundle else None)
         facts.append(
             {
                 "name": row.name,
                 "item_code": row.item_code,
+                "item_name": info.get("item_name"),
                 "qty": flt(row.get("qty")),
+                "counted_qty": flt(row.get(COUNTED_QTY)),
                 "warehouse": row.get("warehouse"),
-                "batch_no": row.get("batch_no"),
-                "has_batch_no": bool(cint(info.get("has_batch_no"))),
+                "batch_no": batch_no,
+                "bundle": bundle,
+                "has_batch_no": has_batch_no,
                 "has_serial_no": bool(cint(info.get("has_serial_no"))),
-                # An existing batch must be chosen unless ERPNext creates one on submit.
-                "needs_batch": bool(cint(info.get("has_batch_no"))) and not row.get("batch_no") and not cint(info.get("create_new_batch")),
+                # An existing batch must be chosen unless the row already carries one (batch field
+                # or bundle) or ERPNext creates one on submit.
+                "needs_batch": has_batch_no and not batch_no and not bundle and not cint(info.get("create_new_batch")),
             }
         )
     return facts
 
 
-def serialize_receipt(doc):
+def serialize_receipt(doc, facts=None, stage=None):
     rows = doc.get("items") or []
-    facts = {f["name"]: f for f in row_facts(doc)}
+    facts = {f["name"]: f for f in (facts if facts is not None else row_facts(doc))}
+    stage = stage or workflow_stage()
     codes = list({row.item_code for row in rows if row.item_code})
     barcodes = {}
-    names = {}
     if codes:
         for entry in frappe.get_all("Item Barcode", filters={"parent": ["in", codes], "parenttype": "Item"}, fields=["parent", "barcode"]):
             barcodes.setdefault(entry.parent, []).append(entry.barcode)
-        for item in frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "item_name"]):
-            names[item.name] = item.item_name
     header = serialize_header(doc, [{"qty": r.get("qty")} for r in rows])
     header.update(
         {
-            "can_receive": can_receive(doc) and frappe.has_permission(PURCHASE_RECEIPT, "write", doc),
-            "has_workflow": active_workflow() is not None,
-            "items": [
-                {
-                    "name": row.name,
-                    "idx": row.idx,
-                    "item_code": row.item_code,
-                    "item_name": row.get("item_name") or names.get(row.item_code) or row.item_code,
-                    "description": row.get("description"),
-                    "qty": flt(row.get("qty")),
-                    "received_qty": flt(row.get("received_qty")),
-                    "rejected_qty": flt(row.get("rejected_qty")),
-                    "uom": row.get("uom"),
-                    "stock_uom": row.get("stock_uom"),
-                    "conversion_factor": flt(row.get("conversion_factor")) or 1,
-                    "warehouse": row.get("warehouse"),
-                    "batch_no": row.get("batch_no"),
-                    "has_batch_no": facts.get(row.name, {}).get("has_batch_no", False),
-                    "has_serial_no": facts.get(row.name, {}).get("has_serial_no", False),
-                    "needs_batch": facts.get(row.name, {}).get("needs_batch", False),
-                    "purchase_order": row.get("purchase_order"),
-                    "purchase_order_item": row.get("purchase_order_item"),
-                    "barcodes": barcodes.get(row.item_code, []),
-                }
-                for row in rows
-            ],
+            "can_receive": can_receive(doc, stage) and frappe.has_permission(PURCHASE_RECEIPT, "write", doc),
+            "has_workflow": stage["workflow"] is not None,
+            "items": [serialize_row(row, facts.get(row.name) or {}, barcodes) for row in rows],
         }
     )
     return header
+
+
+def serialize_row(row, fact, barcodes):
+    return {
+        "name": row.name,
+        "idx": row.idx,
+        "item_code": row.item_code,
+        "item_name": row.get("item_name") or fact.get("item_name") or row.item_code,
+        "description": row.get("description"),
+        "qty": flt(row.get("qty")),
+        "counted_qty": fact.get("counted_qty", 0.0),
+        "received_qty": flt(row.get("received_qty")),
+        "rejected_qty": flt(row.get("rejected_qty")),
+        "uom": row.get("uom"),
+        "stock_uom": row.get("stock_uom"),
+        "conversion_factor": flt(row.get("conversion_factor")) or 1,
+        "warehouse": row.get("warehouse"),
+        "batch_no": fact.get("batch_no") or row.get("batch_no"),
+        "has_batch_no": fact.get("has_batch_no", False),
+        "has_serial_no": fact.get("has_serial_no", False),
+        "needs_batch": fact.get("needs_batch", False),
+        "purchase_order": row.get("purchase_order"),
+        "purchase_order_item": row.get("purchase_order_item"),
+        "barcodes": barcodes.get(row.item_code, []),
+    }

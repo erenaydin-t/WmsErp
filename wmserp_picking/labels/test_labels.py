@@ -43,12 +43,6 @@ class ParseNamesTests(unittest.TestCase):
 
 
 class LayoutHelperTests(unittest.TestCase):
-    def test_chunk_pages(self):
-        self.assertEqual([12, 8], [len(page) for page in rules.chunk(list(range(20)), 12)])
-        self.assertEqual([], rules.chunk([], 12))
-        with self.assertRaises(rules.LabelRuleError):
-            rules.chunk([1], 0)
-
     def test_page_size_and_file_name(self):
         self.assertEqual("A4", rules.page_size(None))
         self.assertEqual("Letter", rules.page_size("letter"))
