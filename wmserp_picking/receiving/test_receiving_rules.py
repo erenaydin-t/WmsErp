@@ -39,6 +39,24 @@ class StateTests(unittest.TestCase):
         self.assertIsNone(rules.choose_submit_action([], docstatus))
 
 
+class FieldValueTests(unittest.TestCase):
+    def test_parse_field_values(self):
+        self.assertEqual({}, rules.parse_field_values(None))
+        self.assertEqual({}, rules.parse_field_values("  "))
+        self.assertEqual(
+            {"Purchase Receipt Item.department": "Warehouse - E", "cost_center": "Main - E"},
+            rules.parse_field_values('{"Purchase Receipt Item.department": "Warehouse - E", "cost_center": "Main - E", "project": "", "x": null}'),
+        )
+        with self.assertRaises(rules.ReceivingRuleError):
+            rules.parse_field_values("{not json")
+        with self.assertRaises(rules.ReceivingRuleError):
+            rules.parse_field_values("[1, 2]")
+
+    def test_split_field_key(self):
+        self.assertEqual(("Purchase Receipt Item", "department"), rules.split_field_key("Purchase Receipt Item.department"))
+        self.assertEqual((None, "department"), rules.split_field_key("department"))
+
+
 class BundleTests(unittest.TestCase):
     def test_bundle_batch_is_the_single_batch_of_the_entries(self):
         self.assertEqual("LOT-1", rules.bundle_batch([{"batch_no": "LOT-1", "qty": 4}, {"batch_no": "LOT-1", "qty": 6}]))
@@ -94,6 +112,12 @@ class PlanReceiptTests(unittest.TestCase):
         self.assertEqual([], plan["removed"])
         self.assertEqual(["r2"], plan["cleared"])  # sent as 0: its saved count is reset; r3 was not sent and stays
         self.assertEqual([{"row": "r1", "item_code": "A", "expected": 10.0, "counted": 1.0}], plan["differences"])
+
+    def test_resetting_every_row_is_still_a_progress_save(self):
+        plan = rules.plan_receipt(self.rows, [{"row": "r1", "qty": 0}], remove_unreceived=False)
+        self.assertEqual(({}, ["r1"], 0.0), (plan["updates"], plan["cleared"], plan["total_qty"]))
+        with self.assertRaises(rules.ReceivingRuleError):  # the final receive needs at least one row
+            rules.plan_receipt(self.rows, [{"row": "r1", "qty": 0}], remove_unreceived=True)
 
     def test_batch_tracked_rows_need_a_batch(self):
         rows = [row("r1", "A", 10, needs_batch=True)]

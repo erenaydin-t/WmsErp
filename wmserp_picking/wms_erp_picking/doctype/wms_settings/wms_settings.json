@@ -11,6 +11,7 @@
   "qr_help",
   "receiving_section",
   "receipt_workflow_states",
+  "receipt_field_values",
   "receiving_help"
  ],
  "fields": [
@@ -53,6 +54,13 @@
    "fieldtype": "Small Text",
    "label": "Receipt Workflow States",
    "description": "Optional. Workflow states (one per line) of draft Purchase Receipts that the warehouse may receive in the app. Leave empty to list the draft states in which one of the user's roles may edit (or every draft when Purchase Receipt has no workflow)."
+  },
+  {
+   "fieldname": "receipt_field_values",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Receipt Field Values",
+   "description": "Optional. JSON of values written onto a Purchase Receipt when the app confirms it: keys \"Purchase Receipt.<fieldname>\" for the header and \"Purchase Receipt Item.<fieldname>\" for every row, e.g. {\"Purchase Receipt Item.department\": \"Warehouse - E\"}. They overwrite what the draft carries, for site rules that require the warehouse's own values on submit."
   },
   {
    "fieldname": "receiving_help",

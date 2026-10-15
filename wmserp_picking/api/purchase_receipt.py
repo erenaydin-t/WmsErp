@@ -22,7 +22,9 @@ configured states only apply to a workflow).
 
 Mandatory fields a site added (a *Department*...) that the receipt lacks are filled from the values
 the app sends, the user's defaults and the company's default accounting dimensions; what is still
-empty comes back as `missing_fields` (HTTP 200) so the app asks once and calls again.
+empty comes back as `missing_fields` (HTTP 200) so the app asks once and calls again. Values a site
+requires on every confirmed receipt (*WMS Settings > Receipt Field Values*, e.g. the warehouse's
+department on each row) are written before the save, overwriting what the draft carries.
 """
 
 import frappe
@@ -153,12 +155,15 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
         elif child.name in plan["cleared"]:
             child.set(COUNTED_QTY, 0)  # counted earlier, now sent as 0 while saving progress
 
+    if not progress:
+        apply_field_values(doc, configured_field_values())
     missing = documents.fill_required(doc, frappe.parse_json(values) or {}, company=doc.company)
     if missing:
         return documents.MissingRequiredFields(PURCHASE_RECEIPT, missing).response()
 
     try:
         doc.save()
+        discard_bundles(stale_bundles)  # while the receipt is still a draft: a submitted voucher locks its bundles
         submitted = False
         if cint(submit):
             doc = submit_receipt(doc, stage)
@@ -168,7 +173,6 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
         if answer:
             return answer
         raise
-    discard_bundles(stale_bundles)
     if progress:
         comment = _("Count saved through the WMS app ({0} row(s), {1} unit(s) counted so far)")
     else:
@@ -190,7 +194,7 @@ def apply_count(child, update, fact, progress=False) -> list:
     through the bundle dialog. A bundle whose batch or quantity no longer matches the row is
     unlinked and the batch written into `batch_no` with `use_serial_batch_fields`, from which
     ERPNext builds a fresh bundle on submit. Returns the unlinked bundles (deleted once the receipt
-    is saved)."""
+    is saved, before it is submitted)."""
     qty = flt(update["qty"])
     stale = []
     child.set(COUNTED_QTY, qty)
@@ -228,6 +232,36 @@ def apply_count(child, update, fact, progress=False) -> list:
     child.stock_qty = qty * conversion_factor
     child.received_stock_qty = qty * conversion_factor
     return stale
+
+
+def configured_field_values() -> dict:
+    """*WMS Settings > Receipt Field Values*, parsed."""
+    try:
+        text = frappe.get_cached_doc("WMS Settings", "WMS Settings").get("receipt_field_values")
+    except Exception:
+        return {}
+    try:
+        return rules.parse_field_values(text)
+    except rules.ReceivingRuleError as exc:
+        frappe.throw(_(str(exc)))
+
+
+def apply_field_values(doc, values):
+    """Writes the configured values onto the receipt before it is confirmed: a key
+    `Purchase Receipt.<field>` sets the header, `Purchase Receipt Item.<field>` every row, a bare
+    fieldname whichever of the two has it (header first). Unknown fields are ignored. Sites whose
+    submit rules require the warehouse's own values (a *Department*...) configure them once here
+    instead of editing every draft by hand."""
+    header_meta, row_meta = frappe.get_meta(PURCHASE_RECEIPT), frappe.get_meta(PURCHASE_RECEIPT_ITEM)
+    for key, value in (values or {}).items():
+        doctype, fieldname = rules.split_field_key(key)
+        on_header = doctype in (None, PURCHASE_RECEIPT) and header_meta.has_field(fieldname)
+        on_rows = doctype == PURCHASE_RECEIPT_ITEM or (doctype is None and not on_header)
+        if on_header:
+            doc.set(fieldname, value)
+        if on_rows and row_meta.has_field(fieldname):
+            for row in doc.get("items") or []:
+                row.set(fieldname, value)
 
 
 def discard_bundles(names):
