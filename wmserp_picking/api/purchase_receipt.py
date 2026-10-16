@@ -57,10 +57,11 @@ ROW_COPY_SKIPPED = {
     "doctype", "batch_no", "serial_no", BUNDLE, "rejected_serial_and_batch_bundle", "use_serial_batch_fields",
     COUNTED_QTY, COUNTED_BATCHES, "custom_batch_expiry_date",
 }
-# The pricing block a split-off row must keep from its source row. ERPNext re-prices a row a user
-# adds at the price list rate when that user cannot read the Purchase Order (the rate lock from the
-# PO row needs read permission on it), which would value the second batch at list price.
-PRICING_FIELDS = ("price_list_rate", "discount_percentage", "discount_amount", "margin_type", "margin_rate_or_amount", "rate_with_margin", "rate")
+# The pricing block a split-off row must keep from its source row. Sites put these fields at a
+# permission level the warehouse role lacks; Frappe then resets them to their defaults on every row
+# that role adds (and to the stored values on rows it edits), so ERPNext re-prices the new row at
+# the price list rate. `restore_split_pricing` writes the source row's values to the stored row.
+PRICING_FIELDS = ("price_list_rate", "discount_percentage", "discount_amount", "margin_type", "margin_rate_or_amount", "rate_with_margin", "rate", "expense_account", "item_tax_rate")
 BATCH_ITEM_FIELDS = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch", "has_expiry_date", "shelf_life_in_days", "stock_uom"]
 
 HEADER_FIELDS = [
@@ -320,21 +321,27 @@ def pricing_differs(copy, source) -> bool:
 
 
 def restore_split_pricing(doc, splits):
-    """A row ERPNext re-priced while it was new takes its source row's pricing back and the receipt
-    is saved once more (an existing row keeps its rate). Refuses to go on when the rates still
-    differ: the second batch must never be valued at the list price."""
+    """Split-off rows that lost their source row's pricing on the first save (the warehouse role
+    lacks the permission level of the pricing fields, so Frappe reset them to defaults and ERPNext
+    priced the row at the price list rate) get the source values written to the stored row; the
+    receipt is then reloaded and saved again, which recomputes the amounts and totals from the
+    restored rates - stored values of a protected field are what Frappe keeps for an existing row.
+    Refuses to go on when the rates still differ: a batch row must never be valued at list price."""
     changed = [(source, copy) for source, copy in splits if pricing_differs(copy, source)]
     if not changed:
         return
     for source, copy in changed:
-        for field in PRICING_FIELDS:
-            copy.set(field, source.get(field))
+        values = {field: source.get(field) for field in PRICING_FIELDS if doc.meta.get_field("items") and frappe.get_meta(PURCHASE_RECEIPT_ITEM).has_field(field)}
+        frappe.db.set_value(PURCHASE_RECEIPT_ITEM, copy.name, values, update_modified=False)
+    doc.reload()
     doc.save()
+    rows = {row.name: row for row in doc.get("items") or []}
     for source, copy in changed:
-        if pricing_differs(copy, source):
+        row = rows.get(copy.name)
+        if row is None or pricing_differs(row, source):
             frappe.throw(
-                _("Row {0} ({1}): ERPNext priced the batch row at {2} instead of the Purchase Order rate {3}. Ask an administrator to let your role read Purchase Orders, then receive again.").format(
-                    copy.idx, copy.item_code, flt(copy.get("rate")), flt(source.get("rate"))
+                _("Row {0} ({1}): ERPNext priced the batch row at {2} instead of the Purchase Order rate {3}. Ask an administrator to give your role the permission level of the Purchase Receipt Item pricing fields, then receive again.").format(
+                    copy.idx, copy.item_code, flt((row or copy).get("rate")), flt(source.get("rate"))
                 )
             )
 
