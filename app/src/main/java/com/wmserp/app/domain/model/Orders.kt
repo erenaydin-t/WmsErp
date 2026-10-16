@@ -52,6 +52,10 @@ data class PurchaseReceiptItem(
     val countedBatches: List<BatchCount> = emptyList(),
     val hasBatchNo: Boolean = false,
     val hasSerialNo: Boolean = false,
+    /** The item holds stock: the row needs a warehouse and ERPNext writes a stock ledger entry. Fixed assets and services do not. */
+    val isStockItem: Boolean = true,
+    /** Fixed-asset item: counted like any row; the Asset record is the asset accountant's job (or ERPNext's, for auto-created assets). */
+    val isFixedAsset: Boolean = false,
     /** The item's batches carry an expiry date (defaulting to manufacturing date + [shelfLifeDays]). */
     val hasExpiryDate: Boolean = false,
     val shelfLifeDays: Int = 0,

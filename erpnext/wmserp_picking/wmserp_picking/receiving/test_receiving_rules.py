@@ -160,6 +160,13 @@ class PlanReceiptTests(unittest.TestCase):
         with self.assertRaises(rules.ReceivingRuleError):
             rules.plan_receipt(rows, [{"row": "r1", "batches": [{"batch_no": "L1", "qty": -2}]}])
 
+    def test_rows_of_non_stock_items_take_no_warehouse(self):
+        asset = dict(row("r1", "ASSET-1", 3, warehouse=None), is_stock_item=False)
+        plan = rules.plan_receipt([asset, row("r2", "B", 5)], [{"row": "r1", "qty": 3, "warehouse": "Stores - WM"}, {"row": "r2", "qty": 5, "warehouse": "Stores - WM"}])
+        self.assertIsNone(plan["updates"]["r1"]["warehouse"])
+        self.assertEqual("Stores - WM", plan["updates"]["r2"]["warehouse"])
+        self.assertEqual([], plan["differences"])
+
     def test_split_batches_of_a_row_without_batches(self):
         self.assertEqual(({"batch_no": None, "qty": 4.0}, []), rules.split_batches({"qty": 4.0, "batch_no": None, "batches": []}))
 

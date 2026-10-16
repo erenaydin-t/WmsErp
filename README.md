@@ -70,8 +70,9 @@ amounts, costs or values** (no field of the kind is requested from ERPNext).
    name or by the supplier's number) or creates it with its manufacturing and expiry dates, and one row may
    take several batches (the same item arriving under two batch numbers), each with its own quantity. A summary
    of every row and batch is confirmed before submitting; rows counted 0 are dropped and stay open on the
-   Purchase Order. *Save progress* stores the counts and batches without changing anything else (see
-   [Receiving workflow](#receiving-workflow-purchase-receipts)).
+   Purchase Order. Fixed-asset and service rows are counted like any other (no warehouse, no stock entry; the
+   Asset record stays with the asset accountant). *Save progress* stores the counts and batches without
+   changing anything else (see [Receiving workflow](#receiving-workflow-purchase-receipts)).
 7. **Orders → Pick** – the picker's tasks: open ERPNext *Pick Lists* with rows assigned to the signed-in user,
    picked row by row through strict JSON QR labels, with hidden timers and a context-aware "Create Delivery
    Note / Material Transfer / Material Issue" button for the last picker (see [Pick List workflow](#pick-list-workflow)).
@@ -140,6 +141,11 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
 3. The warehouse counts: scanning an item barcode / item code counts the row (quantity prompt or +1), the
    stepper allows any quantity. Scanning an item that has several rows on the receipt counts the first row that
    is still open.
+   **Fixed-asset rows** (`is_fixed_asset`) and rows of **non-stock items** (services) hold no stock: the card
+   shows *Fixed asset* / *Non-stock* instead of a warehouse, no warehouse is needed or sent, and ERPNext books
+   the amount on submit without a stock ledger entry. The Asset record is created by ERPNext only for items
+   with *Auto Create Assets on Purchase*; otherwise the asset accountant creates it from the submitted receipt,
+   as in the desk.
 4. **Batch tracked rows** (`has_batch_no` without *Automatically Create New Batch*, the raw materials of a
    pharmaceutical site) are counted **per batch**, because ERPNext needs an existing Batch before the receipt
    is submitted:

@@ -120,6 +120,19 @@ class ReceiveUseCasesTest {
     }
 
     @Test
+    fun `a fixed asset or service row is sent without a warehouse and needs none`() = runTest {
+        val counts = slot<List<ReceiptCount>>()
+        coEvery { repository.receive(any(), capture(counts), any(), true) } returns AppResult.Success(ReceiveResult(receipt, submitted = true))
+        val asset = receipt.items[1].copy(warehouse = null, isStockItem = false, isFixedAsset = true)
+        val mixed = receipt.copy(setWarehouse = null, items = listOf(receipt.items[1], asset.copy(rowName = "row3", itemCode = "ASSET-1")))
+
+        val result = useCase(mixed, listOf(ReceiveLine("row2", 5.0), ReceiveLine("row3", 3.0)), defaultWarehouse = "Picked - WM")
+
+        assertTrue(result is AppResult.Success)
+        assertEquals(listOf(ReceiptCount("row2", 5.0, "Stores - WM"), ReceiptCount("row3", 3.0, null)), counts.captured)
+    }
+
+    @Test
     fun `differences list every row whose count differs from the draft, zero meaning not received`() {
         val differences = ReceivePurchaseReceiptUseCase.differences(receipt, listOf(ReceiveLine("row2", 3.0)))
         assertEquals(

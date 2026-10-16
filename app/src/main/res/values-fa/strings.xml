@@ -164,6 +164,7 @@
     <string name="receive_no_items_title">کالایی وجود ندارد</string>
     <string name="receive_no_items_message">این رسید خرید ردیف کالایی ندارد.</string>
     <string name="receive_line_details">%1$s · مورد انتظار %2$s %3$s · %4$s</string>
+    <string name="receive_line_asset">دارایی ثابت</string>
     <string name="receive_now">دریافت فعلی</string>
     <string name="receive_qty_added">%1$s × %2$s شمارش شد</string>
     <string name="receive_already_counted">همه %1$s × %2$s قبلاً شمارش شده‌اند</string>

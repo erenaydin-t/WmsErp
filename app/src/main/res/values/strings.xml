@@ -164,6 +164,7 @@
     <string name="receive_no_items_title">No items</string>
     <string name="receive_no_items_message">This purchase receipt has no item rows.</string>
     <string name="receive_line_details">%1$s · expected %2$s %3$s · %4$s</string>
+    <string name="receive_line_asset">Fixed asset</string>
     <string name="receive_now">Receiving now</string>
     <string name="receive_qty_added">Counted %1$s × %2$s</string>
     <string name="receive_already_counted">All %1$s × %2$s already counted</string>

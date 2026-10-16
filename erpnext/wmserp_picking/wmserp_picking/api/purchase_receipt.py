@@ -30,6 +30,12 @@ the confirmation splits the row into one Purchase Receipt Item per batch (same P
 rate, UOM and warehouse), which is how ERPNext records one bundle and one stock ledger entry per
 batch - the same shape desk users give receipts of several batches.
 
+Rows of items that hold no stock - fixed assets (`is_fixed_asset`, the asset itself is created later
+by the asset accountant unless the item auto-creates assets) and non-stock items such as services -
+are counted like any other row: ERPNext books their amount on submit without a stock ledger entry.
+They carry no warehouse, so a warehouse the app sends is not written to them; `get_receipt` marks
+them with `is_stock_item` / `is_fixed_asset` so the app does not ask for one.
+
 Mandatory fields a site added (a *Department*...) that the receipt lacks are filled from the values
 the app sends, the user's defaults and the company's default accounting dimensions; what is still
 empty comes back as `missing_fields` (HTTP 200) so the app asks once and calls again. Values a site
@@ -62,7 +68,7 @@ ROW_COPY_SKIPPED = {
 # that role adds (and to the stored values on rows it edits), so ERPNext re-prices the new row at
 # the price list rate. `restore_split_pricing` writes the source row's values to the stored row.
 PRICING_FIELDS = ("price_list_rate", "discount_percentage", "discount_amount", "margin_type", "margin_rate_or_amount", "rate_with_margin", "rate", "expense_account", "item_tax_rate")
-BATCH_ITEM_FIELDS = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch", "has_expiry_date", "shelf_life_in_days", "stock_uom"]
+BATCH_ITEM_FIELDS = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch", "has_expiry_date", "shelf_life_in_days", "stock_uom", "is_stock_item", "is_fixed_asset"]
 
 HEADER_FIELDS = [
     "name",
@@ -238,8 +244,8 @@ def apply_count(child, update, fact, progress=False) -> list:
     if row_meta_has(COUNTED_BATCHES):
         # The per-batch counts survive a progress save; a confirmed row carries one batch only.
         child.set(COUNTED_BATCHES, rules.serialize_counted_batches(update.get("batches")) if progress else None)
-    if update.get("warehouse"):
-        child.warehouse = update["warehouse"]
+    if update.get("warehouse") and fact.get("is_stock_item", True):
+        child.warehouse = update["warehouse"]  # a fixed asset or service row holds no stock: no warehouse
 
     first, _more = rules.split_batches(update)
     if not progress:
@@ -715,6 +721,7 @@ def row_facts(doc):
     for row in rows:
         info = tracking.get(row.item_code) or frappe._dict()
         has_batch_no = bool(cint(info.get("has_batch_no")))
+        is_stock_item = bool(cint(info.get("is_stock_item"))) if info else True
         bundle = row.get(BUNDLE)
         batch_no = row.get("batch_no") or (batches.get(bundle) if bundle else None)
         counted_batches = rules.parse_counted_batches(row.get(COUNTED_BATCHES)) if has_counted_batches else []
@@ -731,6 +738,8 @@ def row_facts(doc):
                 "bundle": bundle,
                 "has_batch_no": has_batch_no,
                 "has_serial_no": bool(cint(info.get("has_serial_no"))),
+                "is_stock_item": is_stock_item,
+                "is_fixed_asset": bool(cint(info.get("is_fixed_asset")) or cint(row.get("is_fixed_asset"))),
                 "has_expiry_date": bool(cint(info.get("has_expiry_date"))),
                 "shelf_life_in_days": cint(info.get("shelf_life_in_days")),
                 "create_new_batch": bool(cint(info.get("create_new_batch"))),
@@ -802,6 +811,8 @@ def serialize_row(row, fact, barcodes):
         "counted_batches": fact.get("counted_batches", []),
         "has_batch_no": fact.get("has_batch_no", False),
         "has_serial_no": fact.get("has_serial_no", False),
+        "is_stock_item": fact.get("is_stock_item", True),
+        "is_fixed_asset": fact.get("is_fixed_asset", False),
         "has_expiry_date": fact.get("has_expiry_date", False),
         "shelf_life_in_days": fact.get("shelf_life_in_days", 0),
         "create_new_batch": fact.get("create_new_batch", False),

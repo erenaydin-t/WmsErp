@@ -70,7 +70,8 @@ class ReceivePurchaseReceiptUseCase @Inject constructor(
                 return AppResult.Failure(AppError.Validation("${row.itemCode}: quantity must be positive", ErrorCode.QTY_MUST_BE_POSITIVE))
             }
             if (line.qty <= QTY_TOLERANCE) continue
-            val warehouse = line.warehouse?.ifBlank { null } ?: row.warehouse ?: receipt.setWarehouse ?: defaultWarehouse?.ifBlank { null }
+            // A fixed asset or service row holds no stock and takes no warehouse.
+            val warehouse = if (!row.isStockItem) null else line.warehouse?.ifBlank { null } ?: row.warehouse ?: receipt.setWarehouse ?: defaultWarehouse?.ifBlank { null }
                 ?: return AppResult.Failure(AppError.Validation("${row.itemCode}: select a warehouse", ErrorCode.SELECT_WAREHOUSE_FOR_ITEM, listOf(row.itemCode)))
             val batches = line.batches.filter { it.batchNo.isNotBlank() && it.qty > QTY_TOLERANCE }
             if (batches.any { it.qty < 0.0 }) {

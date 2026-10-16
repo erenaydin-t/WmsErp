@@ -49,6 +49,8 @@ data class PurchaseReceiptItemDto(
     @SerialName("counted_batches") val countedBatches: List<BatchCountDto> = emptyList(),
     @SerialName("has_batch_no") val hasBatchNo: Boolean = false,
     @SerialName("has_serial_no") val hasSerialNo: Boolean = false,
+    @SerialName("is_stock_item") val isStockItem: Boolean = true,
+    @SerialName("is_fixed_asset") val isFixedAsset: Boolean = false,
     @SerialName("has_expiry_date") val hasExpiryDate: Boolean = false,
     @SerialName("shelf_life_in_days") val shelfLifeInDays: Int = 0,
     @SerialName("create_new_batch") val createNewBatch: Boolean = false,

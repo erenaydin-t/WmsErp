@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.PurchaseReceiptItem
 import com.wmserp.app.domain.model.ReceiptDifference
 import com.wmserp.app.domain.model.ReceiveResult
 import com.wmserp.app.domain.model.ScanSource
@@ -327,6 +328,14 @@ fun ReceiveScreen(state: ReceiveUiState, onBack: () -> Unit, actions: ReceiveAct
     }
 }
 
+/** Where the row goes: its warehouse, or what kind of non-stock row it is (a fixed asset, a service) since those take none. */
+@Composable
+private fun linePlace(item: PurchaseReceiptItem): String = when {
+    item.isFixedAsset -> stringResource(R.string.receive_line_asset)
+    !item.isStockItem -> stringResource(R.string.item_chip_non_stock)
+    else -> item.warehouse ?: "-"
+}
+
 @Composable
 private fun ReceiveLineCard(line: ReceiveLineState, editable: Boolean, actions: ReceiveActions) {
     val container = if (line.highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
@@ -335,7 +344,7 @@ private fun ReceiveLineCard(line: ReceiveLineState, editable: Boolean, actions: 
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(line.item.itemName, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                stringResource(R.string.receive_line_details, line.item.itemCode, Formatters.qty(line.item.qty), line.item.uom ?: "", line.item.warehouse ?: "-"),
+                stringResource(R.string.receive_line_details, line.item.itemCode, Formatters.qty(line.item.qty), line.item.uom ?: "", linePlace(line.item)),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -446,7 +455,7 @@ private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, ac
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(candidate.item.itemName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(
-                                stringResource(R.string.receive_line_details, candidate.item.itemCode, Formatters.qty(candidate.item.qty), candidate.item.uom ?: "", candidate.item.warehouse ?: "-"),
+                                stringResource(R.string.receive_line_details, candidate.item.itemCode, Formatters.qty(candidate.item.qty), candidate.item.uom ?: "", linePlace(candidate.item)),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

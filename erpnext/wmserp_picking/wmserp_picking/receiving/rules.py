@@ -122,7 +122,8 @@ def bundle_batch(entries) -> str | None:
 def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
     """Decides what happens to each receipt row given what the warehouse counted.
 
-    `rows`: the receipt rows ({name, item_code, qty, warehouse, batch_no, needs_batch, has_batch_no}).
+    `rows`: the receipt rows ({name, item_code, qty, warehouse, batch_no, needs_batch, has_batch_no,
+    is_stock_item}); a row of an item that holds no stock (fixed asset, service) takes no warehouse.
     `counted`: what the app sends ({row, qty, warehouse?, batch_no?, batches?}); quantities in the
     row UOM. `batches` is `[{batch_no, qty}, ...]` for a batch tracked row received in several
     batches (one shipment may bring the same item under two supplier batch numbers): the row's
@@ -171,6 +172,8 @@ def plan_receipt(rows, counted, remove_unreceived=True) -> dict:
             differences.append({"row": name, "item_code": item_code, "expected": expected, "counted": 0.0})
             continue
         warehouse = (_get(entry, "warehouse") or "").strip() or _get(row, "warehouse")
+        if _get(row, "is_stock_item") is False:
+            warehouse = None
         if not batches:
             batch_no = (_get(entry, "batch_no") or "").strip() or _get(row, "batch_no")
             if batch_no:
