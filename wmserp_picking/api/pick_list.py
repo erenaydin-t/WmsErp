@@ -97,7 +97,7 @@ def get_settings():
         "qr_batch_key": keys["qr_batch_key"],
         "app_version": __version__,
         # What this backend offers beyond picking, so the app can tell an old backend from a broken one.
-        "features": ["stocktaking", "purchase_receipt_receiving", "label_sheets", "required_field_values"],
+        "features": ["stocktaking", "purchase_receipt_receiving", "label_sheets", "required_field_values", "batch_receiving"],
     }
 
 

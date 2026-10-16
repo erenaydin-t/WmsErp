@@ -20,6 +20,16 @@ States*, or, when that is empty, the draft states of the Purchase Receipt workfl
 the user's roles may edit. Without an active workflow every draft the user may read is listed (the
 configured states only apply to a workflow).
 
+Batch tracked items (`has_batch_no` without `create_new_batch`): the Batch must exist before the
+receipt is submitted. The app reads the supplier's batch number off the material, `find_batch`
+looks it up (by Batch ID or by the site's batch number field, spaces and case ignored) and
+`create_batch` creates it when it is new, named after *WMS Settings > Batch ID Pattern*. One
+shipment may bring the same item under several batch numbers: the app counts each batch under the
+row (`rows[].batches`), the progress save keeps the per-batch counts in *WMS Counted Batches*, and
+the confirmation splits the row into one Purchase Receipt Item per batch (same Purchase Order row,
+rate, UOM and warehouse), which is how ERPNext records one bundle and one stock ledger entry per
+batch - the same shape desk users give receipts of several batches.
+
 Mandatory fields a site added (a *Department*...) that the receipt lacks are filled from the values
 the app sends, the user's defaults and the company's default accounting dimensions; what is still
 empty comes back as `missing_fields` (HTTP 200) so the app asks once and calls again. Values a site
@@ -38,7 +48,16 @@ PURCHASE_RECEIPT = "Purchase Receipt"
 PURCHASE_RECEIPT_ITEM = "Purchase Receipt Item"
 WORKFLOW_STATE = "workflow_state"
 COUNTED_QTY = "custom_wms_counted_qty"
+COUNTED_BATCHES = "custom_wms_counted_batches"
 BUNDLE = "serial_and_batch_bundle"
+BATCH = "Batch"
+# Fields of a Purchase Receipt Item that a copy made for a further batch must not take over.
+ROW_COPY_SKIPPED = {
+    "name", "idx", "owner", "creation", "modified", "modified_by", "docstatus", "parent", "parentfield", "parenttype",
+    "doctype", "batch_no", "serial_no", BUNDLE, "rejected_serial_and_batch_bundle", "use_serial_batch_fields",
+    COUNTED_QTY, COUNTED_BATCHES, "custom_batch_expiry_date",
+}
+BATCH_ITEM_FIELDS = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch", "has_expiry_date", "shelf_life_in_days", "stock_uom"]
 
 HEADER_FIELDS = [
     "name",
@@ -116,7 +135,9 @@ def get_receipt(name):
 def receive(name, rows, values=None, submit=1, remove_unreceived=1):
     """Writes the counted quantities into the draft and submits it.
 
-    `rows`: `[{"row": <Purchase Receipt Item name>, "qty": <counted, row UOM>, "warehouse"?, "batch_no"?}]`.
+    `rows`: `[{"row": <Purchase Receipt Item name>, "qty": <counted, row UOM>, "warehouse"?, "batch_no"?,
+    "batches"?: [{"batch_no", "qty"}, ...]}]`; with `batches` the row's quantity is their sum and a
+    confirmed row is split into one Purchase Receipt Item per batch.
     Rows missing from `rows` (or with 0) are removed when `remove_unreceived`; the app sends
     `remove_unreceived=0` with `submit=0` to save the progress of a count: the counts then go to
     *WMS Counted Qty* only and the expected `qty` of every row is kept.
@@ -145,6 +166,7 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
 
     facts_by_row = {fact["name"]: fact for fact in facts}
     stale_bundles = []
+    extras = []  # (source row, further batches) to split off once the loop is done
     for child in list(doc.get("items") or []):
         if child.name in plan["removed"]:
             doc.remove(child)
@@ -152,8 +174,16 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
         update = plan["updates"].get(child.name)
         if update:
             stale_bundles.extend(apply_count(child, update, facts_by_row[child.name], progress=progress))
+            if not progress:
+                _first, more = rules.split_batches(update)
+                if more:
+                    extras.append((child, more))
         elif child.name in plan["cleared"]:
             child.set(COUNTED_QTY, 0)  # counted earlier, now sent as 0 while saving progress
+            if row_meta_has(COUNTED_BATCHES):
+                child.set(COUNTED_BATCHES, None)
+    for child, more in extras:
+        split_row(doc, child, more)
 
     if not progress:
         apply_field_values(doc, configured_field_values())
@@ -198,11 +228,18 @@ def apply_count(child, update, fact, progress=False) -> list:
     qty = flt(update["qty"])
     stale = []
     child.set(COUNTED_QTY, qty)
+    if row_meta_has(COUNTED_BATCHES):
+        # The per-batch counts survive a progress save; a confirmed row carries one batch only.
+        child.set(COUNTED_BATCHES, rules.serialize_counted_batches(update.get("batches")) if progress else None)
     if update.get("warehouse"):
         child.warehouse = update["warehouse"]
 
+    first, _more = rules.split_batches(update)
+    if not progress:
+        qty = flt(first["qty"])  # the first batch stays on this row; the others get their own rows
+        child.set(COUNTED_QTY, qty)
     current_batch = child.get("batch_no") or fact.get("batch_no")
-    batch_no = update.get("batch_no") or current_batch
+    batch_no = first.get("batch_no") or current_batch
     batch_changed = bool(batch_no) and batch_no != current_batch
     qty_changed = abs(qty - flt(child.get("qty"))) > rules.QTY_TOLERANCE
     bundle = child.get(BUNDLE)
@@ -232,6 +269,40 @@ def apply_count(child, update, fact, progress=False) -> list:
     child.stock_qty = qty * conversion_factor
     child.received_stock_qty = qty * conversion_factor
     return stale
+
+
+def split_row(doc, source, batches):
+    """Appends one copy of `source` per further batch, right after it: same item, Purchase Order
+    row, rate, UOM, conversion factor, warehouse and site fields; its own batch and quantity.
+    ERPNext's over-receipt check sums every row of a Purchase Order row, so the split cannot
+    receive more than a single row could."""
+    items = doc.get("items") or []
+    position = items.index(source)
+    conversion_factor = flt(source.get("conversion_factor")) or 1
+    template = {k: v for k, v in source.as_dict().items() if k not in ROW_COPY_SKIPPED and not str(k).startswith("__")}
+    copies = []
+    for batch in batches:
+        qty = flt(batch["qty"])
+        copy = doc.append("items", dict(template))
+        copy.batch_no = batch["batch_no"]
+        copy.use_serial_batch_fields = 1
+        copy.qty = qty
+        copy.received_qty = qty
+        copy.rejected_qty = 0
+        copy.stock_qty = qty * conversion_factor
+        copy.received_stock_qty = qty * conversion_factor
+        copy.set(COUNTED_QTY, qty)
+        copies.append(copy)
+    # `append` adds at the end: move the copies behind their source and renumber.
+    rows = [row for row in doc.get("items") if row not in copies]
+    rows[position + 1 : position + 1] = copies
+    for index, row in enumerate(rows, start=1):
+        row.idx = index
+    doc.set("items", rows)
+
+
+def row_meta_has(fieldname) -> bool:
+    return frappe.get_meta(PURCHASE_RECEIPT_ITEM).has_field(fieldname)
 
 
 def configured_field_values() -> dict:
@@ -293,6 +364,208 @@ def submit_receipt(doc, stage=None):
             frappe.PermissionError,
         )
     return apply_workflow(doc, action)
+
+
+# --------------------------------------------------------------------------------------------
+# Batches
+# --------------------------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def find_batch(code, item_code=None, receipt=None):
+    """The existing Batches a scanned or typed batch number stands for.
+
+    `code` is matched against the Batch ID / name and, on sites that keep the supplier's batch
+    number in its own field (*WMS Settings > Batch No Field*, `custom_batch_no` by default when it
+    exists), against that field with spaces and case ignored. The search is limited to `item_code`
+    or to the items of draft receipt `receipt`, so a bare supplier number cannot land on another
+    item. Several batches can share one supplier number (a site that keeps a QC number per batch
+    creates one Batch per QC run): the app lets the warehouse pick one. Returns
+    `{"code", "found", "batches": [...], "item": <item facts, when item_code was given>}`.
+    """
+    code = (code or "").strip()
+    if not code:
+        frappe.throw(_("Scan or enter a batch number."))
+    items = []
+    if item_code:
+        items = [item_code]
+    elif receipt:
+        doc = frappe.get_doc(PURCHASE_RECEIPT, receipt)
+        doc.check_permission("read")
+        items = list({row.item_code for row in doc.get("items") or [] if row.item_code})
+    frappe.has_permission(BATCH, "read", throw=True)
+    matches = search_batches(code, items)
+    item = batch_item_facts(item_code) if item_code else None
+    return {"code": code, "found": bool(matches), "batches": [serialize_batch(b) for b in matches], "item": item}
+
+
+def search_batches(code, items) -> list:
+    """Batches named `code` (name / Batch ID) or carrying it as supplier number, among `items`
+    (every item when empty). The supplier number is compared with spaces and case ignored, the way
+    `rules.batch_key` does it."""
+    field = batch_no_field()
+    fields = ["name", "batch_id", "item", "item_name", "expiry_date", "manufacturing_date", "disabled", "supplier"] + ([field] if field else [])
+    filters = {"item": ["in", items]} if items else {}
+    out = list(frappe.get_all(BATCH, filters={**filters, "name": code}, fields=fields))
+    seen = {b.name for b in out}
+    for batch in frappe.get_all(BATCH, filters={**filters, "batch_id": code}, fields=fields):
+        if batch.name not in seen:
+            out.append(batch)
+            seen.add(batch.name)
+    key = rules.batch_key(code)
+    if field and key:
+        columns = ", ".join(f"`{f}`" for f in fields)
+        conditions = ["lower(regexp_replace(ifnull(`{0}`, ''), '[[:space:]]', '')) = %(key)s".format(field)]
+        values = {"key": key}
+        if items:
+            conditions.append("`item` in %(items)s")
+            values["items"] = tuple(items)
+        for batch in frappe.db.sql(f"select {columns} from `tabBatch` where {' and '.join(conditions)} order by creation desc limit 50", values, as_dict=True):
+            if batch.name not in seen:
+                out.append(batch)
+                seen.add(batch.name)
+    return out
+
+
+@frappe.whitelist()
+def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None, supplier=None, receipt=None, manufacturer=None):
+    """Creates the Batch of a batch number the supplier printed on the material, for an item that
+    needs its batches created by hand (`has_batch_no` without `create_new_batch`).
+
+    The Batch ID follows *WMS Settings > Batch ID Pattern* (`{counter}-{item}-{batch_no}` on
+    sites with a batch number field, else the batch number itself); `{counter}` continues the
+    numeric prefix of the last batch created, assigned under a lock and retried when another user
+    took it meanwhile. The expiry date defaults to the manufacturing date plus the item's shelf
+    life (ERPNext does that itself); items with an expiry date and no shelf life need it sent.
+    When a Batch with that number already exists for the item it is returned as is
+    (`created: false`) instead of creating a duplicate.
+    """
+    item_code = (item_code or "").strip()
+    batch_no = (batch_no or "").strip()
+    if not item_code or not batch_no:
+        frappe.throw(_("Item and batch number are required."))
+    facts = batch_item_facts(item_code)
+    if not facts:
+        frappe.throw(_("Item {0} does not exist.").format(item_code), frappe.DoesNotExistError)
+    if not facts["has_batch_no"]:
+        frappe.throw(_("Item {0} is not batch tracked.").format(item_code))
+    frappe.has_permission(BATCH, "create", throw=True)
+    existing = search_batches(batch_no, [item_code])
+    if existing:
+        return {"created": False, "batch": serialize_batch(existing[0]), "item": facts}
+
+    pattern = batch_id_pattern()
+    field = batch_no_field()
+    values = {
+        "doctype": BATCH,
+        "item": item_code,
+        "manufacturing_date": manufacturing_date or None,
+        "expiry_date": expiry_date or None,
+        "supplier": supplier or None,
+    }
+    if field:
+        values[field] = batch_no
+    if manufacturer and frappe.get_meta(BATCH).has_field("custom_manufacturer"):
+        values["custom_manufacturer"] = manufacturer
+    if receipt:
+        values["reference_doctype"] = PURCHASE_RECEIPT
+        values["reference_name"] = receipt
+        if not supplier:
+            values["supplier"] = frappe.db.get_value(PURCHASE_RECEIPT, receipt, "supplier")
+
+    attempts = 5 if rules.needs_counter(pattern) else 1
+    for attempt in range(attempts):
+        counter = next_batch_counter() if rules.needs_counter(pattern) else None
+        try:
+            batch_id = rules.render_batch_id(pattern, item_code, batch_no, counter)
+        except rules.ReceivingRuleError as exc:
+            frappe.throw(_(str(exc)))
+        if not batch_id:
+            frappe.throw(_("WMS Settings > Batch ID Pattern produced an empty Batch ID."))
+        if frappe.db.exists(BATCH, batch_id):
+            if attempt < attempts - 1:
+                continue
+            frappe.throw(_("Batch {0} already exists.").format(batch_id), frappe.DuplicateEntryError)
+        doc = frappe.get_doc({**values, "batch_id": batch_id})
+        try:
+            doc.insert()
+        except frappe.DuplicateEntryError:
+            if attempt < attempts - 1:
+                frappe.db.rollback()
+                continue
+            raise
+        break
+    if receipt:
+        doc.add_comment("Info", _("Created through the WMS app while receiving {0}").format(receipt))
+    return {"created": True, "batch": serialize_batch(doc), "item": facts}
+
+
+def next_batch_counter() -> int:
+    """The next `{counter}`: numeric prefix of the last Batch created plus one, past any id that
+    is already taken. The row lock serializes two receivers creating batches at the same moment."""
+    last = frappe.db.sql(
+        "select batch_id from `tabBatch` where ifnull(batch_id, '') != '' order by creation desc limit 1 for update",
+        as_dict=True,
+    )
+    counter = rules.next_counter(last[0].batch_id if last else None)
+    while frappe.db.exists(BATCH, {"batch_id": ["like", f"{counter}-%"]}):
+        counter += 1
+    return counter
+
+
+def batch_item_facts(item_code):
+    item = frappe.db.get_value("Item", item_code, BATCH_ITEM_FIELDS, as_dict=True)
+    if not item:
+        return None
+    return {
+        "item_code": item.name,
+        "item_name": item.item_name,
+        "stock_uom": item.stock_uom,
+        "has_batch_no": bool(cint(item.has_batch_no)),
+        "has_serial_no": bool(cint(item.has_serial_no)),
+        "has_expiry_date": bool(cint(item.has_expiry_date)),
+        "shelf_life_in_days": cint(item.shelf_life_in_days),
+        "create_new_batch": bool(cint(item.create_new_batch)),
+    }
+
+
+def serialize_batch(batch) -> dict:
+    field = batch_no_field()
+    label = (batch.get(field) if field else None) or batch.get("batch_id") or batch.get("name")
+    return {
+        "name": batch.get("name"),
+        "batch_no": label,
+        "item": batch.get("item"),
+        "item_name": batch.get("item_name"),
+        "expiry_date": str_or_none(batch.get("expiry_date")),
+        "manufacturing_date": str_or_none(batch.get("manufacturing_date")),
+        "supplier": batch.get("supplier"),
+        "disabled": bool(cint(batch.get("disabled"))),
+    }
+
+
+def wms_settings():
+    try:
+        return frappe.get_cached_doc("WMS Settings", "WMS Settings")
+    except Exception:
+        return frappe._dict()
+
+
+def batch_no_field():
+    """The Batch field that holds the supplier's batch number: *WMS Settings > Batch No Field*,
+    else `custom_batch_no` when the site has it, else None (the Batch ID is the number)."""
+    configured = (wms_settings().get("batch_no_field") or "").strip()
+    meta = frappe.get_meta(BATCH)
+    if configured:
+        if not meta.has_field(configured):
+            frappe.throw(_("WMS Settings > Batch No Field: Batch has no field {0}.").format(configured))
+        return configured
+    return "custom_batch_no" if meta.has_field("custom_batch_no") else None
+
+
+def batch_id_pattern() -> str:
+    configured = (wms_settings().get("batch_id_pattern") or "").strip()
+    return configured or rules.default_batch_id_pattern(bool(batch_no_field()))
 
 
 # --------------------------------------------------------------------------------------------
@@ -389,16 +662,17 @@ def row_facts(doc):
     items = {row.item_code for row in rows if row.item_code}
     tracking = {}
     if items:
-        fields = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch"]
-        for item in frappe.get_all("Item", filters={"name": ["in", list(items)]}, fields=fields):
+        for item in frappe.get_all("Item", filters={"name": ["in", list(items)]}, fields=BATCH_ITEM_FIELDS):
             tracking[item.name] = item
     batches = bundle_batches({row.get(BUNDLE) for row in rows if row.get(BUNDLE) and not row.get("batch_no")})
+    has_counted_batches = row_meta_has(COUNTED_BATCHES)
     facts = []
     for row in rows:
         info = tracking.get(row.item_code) or frappe._dict()
         has_batch_no = bool(cint(info.get("has_batch_no")))
         bundle = row.get(BUNDLE)
         batch_no = row.get("batch_no") or (batches.get(bundle) if bundle else None)
+        counted_batches = rules.parse_counted_batches(row.get(COUNTED_BATCHES)) if has_counted_batches else []
         facts.append(
             {
                 "name": row.name,
@@ -406,17 +680,41 @@ def row_facts(doc):
                 "item_name": info.get("item_name"),
                 "qty": flt(row.get("qty")),
                 "counted_qty": flt(row.get(COUNTED_QTY)),
+                "counted_batches": counted_batches,
                 "warehouse": row.get("warehouse"),
                 "batch_no": batch_no,
                 "bundle": bundle,
                 "has_batch_no": has_batch_no,
                 "has_serial_no": bool(cint(info.get("has_serial_no"))),
+                "has_expiry_date": bool(cint(info.get("has_expiry_date"))),
+                "shelf_life_in_days": cint(info.get("shelf_life_in_days")),
+                "create_new_batch": bool(cint(info.get("create_new_batch"))),
                 # An existing batch must be chosen unless the row already carries one (batch field
                 # or bundle) or ERPNext creates one on submit.
                 "needs_batch": has_batch_no and not batch_no and not bundle and not cint(info.get("create_new_batch")),
             }
         )
+    names = {f["batch_no"] for f in facts if f["batch_no"]} | {b["batch_no"] for f in facts for b in f["counted_batches"]}
+    labels = batch_labels(names)
+    for fact in facts:
+        fact["batch_label"] = labels.get(fact["batch_no"]) if fact["batch_no"] else None
+        for batch in fact["counted_batches"]:
+            batch["batch_label"] = labels.get(batch["batch_no"])
     return facts
+
+
+def batch_labels(names) -> dict:
+    """{batch name: the supplier's batch number} for sites with a batch number field, else the name."""
+    names = [n for n in names if n]
+    if not names:
+        return {}
+    field = batch_no_field()
+    if not field:
+        return {name: name for name in names}
+    out = {}
+    for row in frappe.get_all(BATCH, filters={"name": ["in", names]}, fields=["name", field]):
+        out[row.name] = row.get(field) or row.name
+    return out
 
 
 def serialize_receipt(doc, facts=None, stage=None):
@@ -455,8 +753,13 @@ def serialize_row(row, fact, barcodes):
         "conversion_factor": flt(row.get("conversion_factor")) or 1,
         "warehouse": row.get("warehouse"),
         "batch_no": fact.get("batch_no") or row.get("batch_no"),
+        "batch_label": fact.get("batch_label") or fact.get("batch_no") or row.get("batch_no"),
+        "counted_batches": fact.get("counted_batches", []),
         "has_batch_no": fact.get("has_batch_no", False),
         "has_serial_no": fact.get("has_serial_no", False),
+        "has_expiry_date": fact.get("has_expiry_date", False),
+        "shelf_life_in_days": fact.get("shelf_life_in_days", 0),
+        "create_new_batch": fact.get("create_new_batch", False),
         "needs_batch": fact.get("needs_batch", False),
         "purchase_order": row.get("purchase_order"),
         "purchase_order_item": row.get("purchase_order_item"),

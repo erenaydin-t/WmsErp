@@ -12,7 +12,11 @@
   "receiving_section",
   "receipt_workflow_states",
   "receipt_field_values",
-  "receiving_help"
+  "receiving_help",
+  "batch_section",
+  "batch_no_field",
+  "batch_id_pattern",
+  "batch_help"
  ],
  "fields": [
   {
@@ -67,12 +71,35 @@
    "fieldtype": "HTML",
    "label": "Help",
    "options": "<p>The app's <b>Orders &gt; Receive</b> lists <i>draft</i> Purchase Receipts at the warehouse stage. The warehouse counts the goods against the rows; confirming writes the counted quantities, drops rows that were not received (the Purchase Order stays open for them) and submits the receipt through the workflow action that submits it (or directly without a workflow).</p>"
+  },
+  {
+   "fieldname": "batch_section",
+   "fieldtype": "Section Break",
+   "label": "Batches created while receiving"
+  },
+  {
+   "fieldname": "batch_no_field",
+   "fieldtype": "Data",
+   "label": "Batch No Field",
+   "description": "Optional. Fieldname of the Batch field that holds the supplier's batch number as printed on the material (the app looks batches up by it, spaces and case ignored). Empty: custom_batch_no when the site has it, else the Batch ID is the batch number."
+  },
+  {
+   "fieldname": "batch_id_pattern",
+   "fieldtype": "Data",
+   "label": "Batch ID Pattern",
+   "description": "Optional. How the app names a Batch it creates while receiving: placeholders {batch_no}, {item} and {counter} (numeric prefix of the last batch + 1). Empty: {counter}-{item}-{batch_no} when a Batch No Field exists, else {batch_no}."
+  },
+  {
+   "fieldname": "batch_help",
+   "fieldtype": "HTML",
+   "label": "Help",
+   "options": "<p>Batch tracked items whose batches ERPNext does not create itself (<i>Has Batch No</i> without <i>Automatically Create New Batch</i>) need a Batch before the receipt is submitted. The app reads the batch number off the material, finds the Batch or creates it (<code>find_batch</code> / <code>create_batch</code>, Stock User needs <i>create</i> on Batch), and counts each batch under its row; a row received in several batches is split into one Purchase Receipt Item per batch when the receipt is confirmed. The expiry date defaults to the manufacturing date plus the item's shelf life.</p>"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-05 08:00:00.000000",
+ "modified": "2026-10-16 08:00:00.000000",
  "modified_by": "Administrator",
  "module": "WMS ERP Picking",
  "name": "WMS Settings",
