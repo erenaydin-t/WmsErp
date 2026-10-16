@@ -195,9 +195,9 @@ class AnalyticsRepositoryImpl(
         }
 
         fun bucketize(delays: List<DeliveryDelay>): List<DelayBucket> {
-            val ranges = listOf("1-3 days" to 1..3, "4-7 days" to 4..7, "8-14 days" to 8..14)
-            val buckets = ranges.map { (label, range) -> DelayBucket(label, delays.count { it.daysLate in range }) }
-            return buckets + DelayBucket("15+ days", delays.count { it.daysLate >= 15 })
+            val ranges = listOf(1..3, 4..7, 8..14)
+            val buckets = ranges.map { range -> DelayBucket(range.first, range.last, delays.count { it.daysLate in range }) }
+            return buckets + DelayBucket(15, null, delays.count { it.daysLate >= 15 })
         }
 
         fun buildHeatmap(entries: List<StockLedgerEntryDto>, start: LocalDate, days: Int): ActivityHeatmap {
@@ -213,7 +213,8 @@ class AnalyticsRepositoryImpl(
             }
             val dayLabels = (0 until days).map { start.plusDays(it.toLong()).dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()) }
             val blockLabels = (0 until blocks).map { String.format(Locale.US, "%02d", it * HOURS_PER_BLOCK) }
-            return ActivityHeatmap(dayLabels = dayLabels, blockLabels = blockLabels, cells = cells)
+            val dates = (0 until days).map { start.plusDays(it.toLong()).toString() }
+            return ActivityHeatmap(dayLabels = dayLabels, blockLabels = blockLabels, cells = cells, dates = dates)
         }
 
         fun parseHour(time: String): Int? {

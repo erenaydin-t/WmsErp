@@ -196,7 +196,12 @@ private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?, on
             if (report.orders.isEmpty()) {
                 Text(stringResource(R.string.delays_none), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                BarChart(entries = report.buckets.map { BarEntry(it.label, it.count.toDouble()) })
+                BarChart(
+                    entries = report.buckets.map { bucket ->
+                        val label = bucket.maxDays?.let { stringResource(R.string.delays_bucket_range, bucket.minDays, it) } ?: stringResource(R.string.delays_bucket_open, bucket.minDays)
+                        BarEntry(label, bucket.count.toDouble())
+                    }
+                )
             }
         }
     }
@@ -242,13 +247,13 @@ private fun LazyListScope.heatmapContent(heatmap: ActivityHeatmap?) {
             title = stringResource(R.string.heatmap_chart_title),
             subtitle = stringResource(R.string.heatmap_chart_subtitle, heatmap.total),
         ) {
-            HeatmapGrid(dayLabels = heatmap.dayLabels, blockLabels = heatmap.blockLabels, cells = heatmap.cells)
+            HeatmapGrid(dayLabels = weekdayLabels(heatmap), blockLabels = heatmap.blockLabels, cells = heatmap.cells)
         }
     }
     item {
         val busiest = heatmap.cells.withIndex().maxByOrNull { it.value.sum() }
         if (busiest != null && busiest.value.sum() > 0) {
-            InfoBanner(stringResource(R.string.heatmap_busiest, heatmap.dayLabels.getOrNull(busiest.index) ?: "-", busiest.value.sum()))
+            InfoBanner(stringResource(R.string.heatmap_busiest, weekdayLabels(heatmap).getOrNull(busiest.index) ?: "-", busiest.value.sum()))
         }
     }
 }
@@ -297,6 +302,16 @@ private fun LazyListScope.stockAgingContent(report: StockAgingReport?, onOpenIte
                 )
             }
         }
+    }
+}
+
+/** Weekday names in the language of the UI (the repository's labels were made in the locale at load time). */
+@Composable
+private fun weekdayLabels(heatmap: ActivityHeatmap): List<String> {
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    if (heatmap.dates.size != heatmap.cells.size) return heatmap.dayLabels
+    return heatmap.dates.map { iso ->
+        runCatching { java.time.LocalDate.parse(iso).dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, locale) }.getOrDefault(iso)
     }
 }
 

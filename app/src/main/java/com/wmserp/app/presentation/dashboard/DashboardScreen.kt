@@ -181,6 +181,8 @@ fun DashboardScreen(
 
             state.data?.let { data ->
                 val kpis = data.kpis
+                // Formatted here, not when loaded, so it follows the calendar of the current UI language.
+                val period = kpis.periodStart.takeIf { it.isNotBlank() }?.let { runCatching { Formatters.monthYear(java.time.LocalDate.parse(it)) }.getOrNull() } ?: kpis.periodLabel
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -216,7 +218,7 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("kpi_receipts"),
-                                subtitle = stringResource(R.string.kpi_receipts_sub, kpis.periodLabel),
+                                subtitle = stringResource(R.string.kpi_receipts_sub, period),
                                 onClick = { onOpenBrowse(BrowseKind.RECEIPTS, kpis.periodStart.ifBlank { null }) },
                             )
                             KpiCard(
@@ -227,7 +229,7 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("kpi_dispatched"),
-                                subtitle = stringResource(R.string.kpi_dispatched_sub, kpis.periodLabel),
+                                subtitle = stringResource(R.string.kpi_dispatched_sub, period),
                                 onClick = { onOpenBrowse(BrowseKind.DISPATCHED, kpis.periodStart.ifBlank { null }) },
                             )
                         }

@@ -571,4 +571,6 @@
     <string name="item_stock_title">Stock per warehouse</string>
     <string name="item_label_reserved">Reserved</string>
     <string name="item_label_available">Available</string>
+    <string name="delays_bucket_range">%1$d–%2$d days</string>
+    <string name="delays_bucket_open">%1$d+ days</string>
 </resources>

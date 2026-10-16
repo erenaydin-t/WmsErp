@@ -17,6 +17,8 @@ import com.wmserp.app.domain.model.PickerKpis
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
 import com.wmserp.app.domain.usecase.GetMyStocktakingSessionsUseCase
 import com.wmserp.app.domain.usecase.GetPickerKpisUseCase
+import com.wmserp.app.domain.usecase.ObserveAppLanguageUseCase
+import com.wmserp.app.domain.model.AppLanguage
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.testutil.MainDispatcherRule
 import com.wmserp.app.testutil.TestFixtures
@@ -50,6 +52,8 @@ class DashboardViewModelTest {
         every { events } returns emptyFlow()
     }
 
+    private val observeAppLanguage: ObserveAppLanguageUseCase = mockk { every { this@mockk.invoke() } returns flowOf(AppLanguage.SYSTEM) }
+
     private val updateRepository: AppUpdateRepository = mockk {
         coEvery { getLatestRelease() } returns AppResult.Success(null)
     }
@@ -71,7 +75,7 @@ class DashboardViewModelTest {
     fun `loads kpis and greets the user by first name`() = runTest {
         coEvery { getDashboard() } returns AppResult.Success(data)
 
-        val vm = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager)
+        val vm = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager, observeAppLanguage)
 
         val state = vm.uiState.value
         assertFalse(state.isLoading)
@@ -86,7 +90,7 @@ class DashboardViewModelTest {
     fun `surfaces errors and recovers on refresh`() = runTest {
         coEvery { getDashboard() } returns AppResult.Failure(AppError.Network("offline")) andThen AppResult.Success(data)
 
-        val vm = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager)
+        val vm = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager, observeAppLanguage)
         assertEquals(UiText.Res(R.string.error_network_unreachable), vm.uiState.value.error)
         assertNull(vm.uiState.value.data)
 
@@ -102,12 +106,12 @@ class DashboardViewModelTest {
         coEvery { getDashboard() } returns AppResult.Success(data)
         coEvery { getPickerKpis() } returns AppResult.Success(PickerKpis(date = "2026-09-28", rowsPicked = 7, avgSecondsPerRow = 95.0))
 
-        val vm = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager)
+        val vm = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager, observeAppLanguage)
 
         assertEquals(7, vm.uiState.value.pickerKpis?.rowsPicked)
 
         coEvery { getPickerKpis() } returns AppResult.Failure(AppError.NotFound("gone"))
-        val without = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager)
+        val without = DashboardViewModel(getDashboard, getPickerKpis, getMyStocktaking, authRepository, updateManager, observeAppLanguage)
         assertNull(without.uiState.value.pickerKpis)
     }
 }

@@ -12,6 +12,7 @@ import com.wmserp.app.domain.usecase.DashboardData
 import com.wmserp.app.domain.usecase.GetDashboardUseCase
 import com.wmserp.app.domain.usecase.GetMyStocktakingSessionsUseCase
 import com.wmserp.app.domain.usecase.GetPickerKpisUseCase
+import com.wmserp.app.domain.usecase.ObserveAppLanguageUseCase
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -20,6 +21,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -43,6 +46,7 @@ class DashboardViewModel @Inject constructor(
     private val getMyStocktaking: GetMyStocktakingSessionsUseCase,
     authRepository: AuthRepository,
     private val updateManager: AppUpdateManager,
+    observeAppLanguage: ObserveAppLanguageUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardUiState())
@@ -61,6 +65,8 @@ class DashboardViewModel @Inject constructor(
             }
         }
         load()
+        // "This month" is the Jalali month in Persian and the Gregorian one otherwise: recount on a switch.
+        viewModelScope.launch { observeAppLanguage().distinctUntilChanged().drop(1).collect { load(refresh = true) } }
     }
 
     fun load(refresh: Boolean = false) {

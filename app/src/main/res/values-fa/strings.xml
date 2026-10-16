@@ -571,4 +571,6 @@
     <string name="item_stock_title">موجودی به تفکیک انبار</string>
     <string name="item_label_reserved">رزرو شده</string>
     <string name="item_label_available">در دسترس</string>
+    <string name="delays_bucket_range">%1$d تا %2$d روز</string>
+    <string name="delays_bucket_open">بیش از %1$d روز</string>
 </resources>

@@ -43,7 +43,8 @@ data class DeliveryDelay(
     val status: String,
 )
 
-data class DelayBucket(val label: String, val count: Int)
+/** Overdue orders late between [minDays] and [maxDays] days (null: open ended); the UI labels it. */
+data class DelayBucket(val minDays: Int, val maxDays: Int?, val count: Int)
 
 data class DeliveryDelayReport(
     val buckets: List<DelayBucket>,
@@ -58,6 +59,8 @@ data class ActivityHeatmap(
     val dayLabels: List<String>,
     val blockLabels: List<String>,
     val cells: List<List<Int>>,
+    /** ISO date of each row, so the UI can name the weekdays in its own language. */
+    val dates: List<String> = emptyList(),
 ) {
     val maxValue: Int get() = cells.maxOfOrNull { row -> row.maxOrNull() ?: 0 } ?: 0
     val total: Int get() = cells.sumOf { it.sum() }

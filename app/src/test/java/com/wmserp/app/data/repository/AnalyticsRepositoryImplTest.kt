@@ -38,7 +38,9 @@ class AnalyticsRepositoryImplTest {
         val delays = listOf(1, 3, 4, 9, 15, 40).map { DeliveryDelay("SO-$it", "C", "2026-09-01", it, "To Deliver") }
         val buckets = AnalyticsRepositoryImpl.bucketize(delays)
         assertEquals(listOf(2, 1, 1, 2), buckets.map { it.count })
-        assertEquals("15+ days", buckets.last().label)
+        assertEquals(15, buckets.last().minDays)
+        assertEquals(null, buckets.last().maxDays)
+        assertEquals(listOf(1 to 3, 4 to 7, 8 to 14), buckets.dropLast(1).map { it.minDays to it.maxDays })
     }
 
     @Test
