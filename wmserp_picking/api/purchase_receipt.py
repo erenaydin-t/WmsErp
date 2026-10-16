@@ -57,6 +57,10 @@ ROW_COPY_SKIPPED = {
     "doctype", "batch_no", "serial_no", BUNDLE, "rejected_serial_and_batch_bundle", "use_serial_batch_fields",
     COUNTED_QTY, COUNTED_BATCHES, "custom_batch_expiry_date",
 }
+# The pricing block a split-off row must keep from its source row. ERPNext re-prices a row a user
+# adds at the price list rate when that user cannot read the Purchase Order (the rate lock from the
+# PO row needs read permission on it), which would value the second batch at list price.
+PRICING_FIELDS = ("price_list_rate", "discount_percentage", "discount_amount", "margin_type", "margin_rate_or_amount", "rate_with_margin", "rate")
 BATCH_ITEM_FIELDS = ["name", "item_name", "has_batch_no", "has_serial_no", "create_new_batch", "has_expiry_date", "shelf_life_in_days", "stock_uom"]
 
 HEADER_FIELDS = [
@@ -167,6 +171,7 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
     facts_by_row = {fact["name"]: fact for fact in facts}
     stale_bundles = []
     extras = []  # (source row, further batches) to split off once the loop is done
+    splits = []  # (source row, its copy) to re-check after the save
     for child in list(doc.get("items") or []):
         if child.name in plan["removed"]:
             doc.remove(child)
@@ -183,7 +188,7 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
             if row_meta_has(COUNTED_BATCHES):
                 child.set(COUNTED_BATCHES, None)
     for child, more in extras:
-        split_row(doc, child, more)
+        splits.extend((child, copy) for copy in split_row(doc, child, more))
 
     if not progress:
         apply_field_values(doc, configured_field_values())
@@ -193,6 +198,7 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
 
     try:
         doc.save()
+        restore_split_pricing(doc, splits)
         discard_bundles(stale_bundles)  # while the receipt is still a draft: a submitted voucher locks its bundles
         submitted = False
         if cint(submit):
@@ -299,6 +305,38 @@ def split_row(doc, source, batches):
     for index, row in enumerate(rows, start=1):
         row.idx = index
     doc.set("items", rows)
+    return copies
+
+
+def pricing_differs(copy, source) -> bool:
+    for field in PRICING_FIELDS:
+        a, b = copy.get(field), source.get(field)
+        if isinstance(a, str) or isinstance(b, str):
+            if (a or "") != (b or ""):
+                return True
+        elif abs(flt(a) - flt(b)) > 1e-6:
+            return True
+    return False
+
+
+def restore_split_pricing(doc, splits):
+    """A row ERPNext re-priced while it was new takes its source row's pricing back and the receipt
+    is saved once more (an existing row keeps its rate). Refuses to go on when the rates still
+    differ: the second batch must never be valued at the list price."""
+    changed = [(source, copy) for source, copy in splits if pricing_differs(copy, source)]
+    if not changed:
+        return
+    for source, copy in changed:
+        for field in PRICING_FIELDS:
+            copy.set(field, source.get(field))
+    doc.save()
+    for source, copy in changed:
+        if pricing_differs(copy, source):
+            frappe.throw(
+                _("Row {0} ({1}): ERPNext priced the batch row at {2} instead of the Purchase Order rate {3}. Ask an administrator to let your role read Purchase Orders, then receive again.").format(
+                    copy.idx, copy.item_code, flt(copy.get("rate")), flt(source.get("rate"))
+                )
+            )
 
 
 def row_meta_has(fieldname) -> bool:
