@@ -2,6 +2,8 @@ package com.wmserp.app.data.repository
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.BatchCount
+import com.wmserp.app.domain.model.NewBatch
 import com.wmserp.app.domain.model.ReceiptCount
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -29,7 +31,8 @@ class ReceiptRepositoryImplTest {
          "item_count":2,"total_qty":15,"can_receive":true,"has_workflow":true,
          "items":[
            {"name":"row1","idx":1,"item_code":"ITEM-001","item_name":"Steel Bolt M8","qty":10,"received_qty":10,"uom":"Nos","stock_uom":"Nos","conversion_factor":1,
-            "warehouse":"Stores - WM","batch_no":null,"has_batch_no":true,"has_serial_no":false,"needs_batch":true,"purchase_order":"PUR-ORD-2026-00001","barcodes":["8690000000017"]},
+            "warehouse":"Stores - WM","batch_no":null,"has_batch_no":true,"has_serial_no":false,"has_expiry_date":true,"shelf_life_in_days":730,"needs_batch":true,
+            "counted_batches":[{"batch_no":"12-ITEM-001-L1","qty":4,"batch_label":"L1"}],"purchase_order":"PUR-ORD-2026-00001","barcodes":["8690000000017"]},
            {"name":"row2","idx":2,"item_code":"ITEM-002","item_name":"Steel Nut M8","qty":5,"received_qty":5,"uom":"Nos","stock_uom":"Nos","conversion_factor":1.0,
             "warehouse":"Stores - WM","batch_no":null,"has_batch_no":false,"has_serial_no":false,"needs_batch":false,"purchase_order":"PUR-ORD-2026-00001","barcodes":[]}
          ]}
@@ -77,7 +80,57 @@ class ReceiptRepositoryImplTest {
         assertTrue(bolt.needsBatch)
         assertEquals(listOf("8690000000017"), bolt.barcodes)
         assertTrue(bolt.matches("8690000000017"))
+        assertTrue(bolt.hasExpiryDate)
+        assertEquals(730, bolt.shelfLifeDays)
+        assertEquals(listOf(BatchCount("12-ITEM-001-L1", 4.0, "L1")), bolt.countedBatches)
         assertNull(missing)
+    }
+
+    @Test
+    fun `batches of a row are posted with their quantities`() = runTest {
+        harness.server.enqueue(MockResponse().setBody("""{"message":${receiptJson.trimEnd('}')},"created":true,"submitted":true,"docstatus":1,"differences":[],"removed_rows":[]}}"""))
+
+        repository.receive("MAT-PRE-2026-00001", listOf(ReceiptCount("row1", 10.0, batchNo = "1-A", batches = listOf(BatchCount("1-A", 6.0, "A"), BatchCount("2-B", 4.0, "B")))))
+
+        val body = Json.parseToJsonElement(harness.server.takeRequest().body.readUtf8()).jsonObject
+        val row = body["rows"]!!.jsonArray[0].jsonObject
+        assertEquals("1-A", row["batch_no"]!!.jsonPrimitive.content)
+        val batches = row["batches"]!!.jsonArray
+        assertEquals(2, batches.size)
+        assertEquals("2-B", batches[1].jsonObject["batch_no"]!!.jsonPrimitive.content)
+        assertEquals("4.0", batches[1].jsonObject["qty"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `find_batch and create_batch map the batches with the supplier's number as label`() = runTest {
+        harness.server.enqueue(
+            MockResponse().setBody(
+                """{"message":{"code":"LOT-1","found":true,"batches":[{"name":"12-ITEM-001-LOT-1","batch_no":"LOT-1","item":"ITEM-001","item_name":"Steel Bolt M8","expiry_date":"2028-09-30","manufacturing_date":"2026-10-01","disabled":false}],
+                   "item":{"item_code":"ITEM-001","has_batch_no":true,"has_expiry_date":true,"shelf_life_in_days":730}}}"""
+            )
+        )
+        harness.server.enqueue(MockResponse().setBody("""{"message":{"created":true,"batch":{"name":"13-ITEM-001-LOT-2","batch_no":"LOT-2","item":"ITEM-001","expiry_date":"2028-09-30"}}}"""))
+
+        val lookup = (repository.findBatch("LOT-1", itemCode = "ITEM-001") as AppResult.Success).data
+        val created = (repository.createBatch(NewBatch("ITEM-001", "LOT-2", "2026-10-01", null, "SUP-001", "MAT-PRE-2026-00001")) as AppResult.Success).data
+
+        assertTrue(lookup.found)
+        assertEquals("12-ITEM-001-LOT-1", lookup.batches.single().name)
+        assertEquals("LOT-1", lookup.batches.single().label)
+        assertEquals(730, lookup.item!!.shelfLifeDays)
+        assertTrue(created.created)
+        assertEquals("LOT-2", created.batch.label)
+        assertEquals("2028-09-30", created.batch.expiryDate)
+
+        val find = URLDecoder.decode(harness.server.takeRequest().path, "UTF-8")
+        assertTrue(find.startsWith("/api/method/wmserp_picking.api.purchase_receipt.find_batch?"))
+        assertTrue(find.contains("code=LOT-1") && find.contains("item_code=ITEM-001"))
+        val create = harness.server.takeRequest()
+        assertEquals("/api/method/wmserp_picking.api.purchase_receipt.create_batch", create.path)
+        val body = Json.parseToJsonElement(create.body.readUtf8()).jsonObject
+        assertEquals("LOT-2", body["batch_no"]!!.jsonPrimitive.content)
+        assertEquals("MAT-PRE-2026-00001", body["receipt"]!!.jsonPrimitive.content)
+        assertNull(body["expiry_date"])
     }
 
     @Test

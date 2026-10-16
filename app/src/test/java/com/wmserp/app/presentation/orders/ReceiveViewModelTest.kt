@@ -4,6 +4,11 @@ import androidx.lifecycle.SavedStateHandle
 import com.wmserp.app.R
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.BatchCount
+import com.wmserp.app.domain.model.BatchItemFacts
+import com.wmserp.app.domain.model.BatchLookup
+import com.wmserp.app.domain.model.CreatedBatch
+import com.wmserp.app.domain.model.NewBatch
 import com.wmserp.app.domain.model.ReceiptDifference
 import com.wmserp.app.domain.model.ReceiveResult
 import com.wmserp.app.domain.model.RequiredField
@@ -12,6 +17,8 @@ import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.ScannerSettings
+import com.wmserp.app.domain.usecase.CreateBatchUseCase
+import com.wmserp.app.domain.usecase.FindBatchUseCase
 import com.wmserp.app.domain.usecase.GetPurchaseReceiptUseCase
 import com.wmserp.app.domain.usecase.LookupScanUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
@@ -52,6 +59,9 @@ class ReceiveViewModelTest {
     private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase = mockk()
     private val lookupScan: LookupScanUseCase = mockk()
     private val searchWarehouses: SearchWarehousesUseCase = mockk()
+    /** Unless a test says otherwise, no batch carries the scanned number. */
+    private val findBatch: FindBatchUseCase = mockk { coEvery { this@mockk.invoke(any(), any(), any()) } returns AppResult.Success(BatchLookup("", emptyList())) }
+    private val createBatch: CreateBatchUseCase = mockk()
     /** Legacy "+1 per scan" mode by default; the prompt test switches [settings] before creating the view model. */
     private var settings = ScannerSettings(askQuantityOnScan = false)
     private val observeSettings: ObserveScannerSettingsUseCase = mockk { every { this@mockk.invoke() } answers { flowOf(settings) } }
@@ -64,7 +74,7 @@ class ReceiveViewModelTest {
         coEvery { getReceipt(receipt.name) } returns AppResult.Success(initial)
         coEvery { searchWarehouses("") } returns AppResult.Success(emptyList())
         return ReceiveViewModel(
-            getReceipt, receive, searchLinkValues, saveFieldDefaults, lookupScan, searchWarehouses, observeSettings, scanner,
+            getReceipt, receive, searchLinkValues, saveFieldDefaults, lookupScan, searchWarehouses, findBatch, createBatch, observeSettings, scanner,
             SavedStateHandle(mapOf(ReceiveViewModel.ARG_RECEIPT_NAME to receipt.name)),
         )
     }
@@ -97,15 +107,19 @@ class ReceiveViewModelTest {
     fun `scanning an item code or one of its barcodes counts the row without a server round trip`() = runTest {
         val vm = createViewModel()
 
-        repeat(6) { vm.onScanned(ScannedCode("item-002", ScanSource.HARDWARE_KEYBOARD)) }
-        vm.onScanned(ScannedCode("8690000000017", ScanSource.HARDWARE_KEYBOARD))
+        repeat(5) { vm.onScanned(ScannedCode("item-002", ScanSource.HARDWARE_KEYBOARD)) }
 
         assertEquals("5", vm.line("ITEM-002").qtyText)
-        assertEquals("1", vm.line("ITEM-001").qtyText)
         val message = vm.uiState.value.message as UiText.Res
         assertEquals(R.string.receive_qty_added, message.id)
-        assertEquals(7, scanner.feedbackCalls.size)
+        assertEquals(5, scanner.feedbackCalls.size)
         coVerify(exactly = 0) { lookupScan(any(), any()) }
+
+        // The barcode of a batch tracked row without a batch yet: the quantity has to go under a batch, so the sheet opens.
+        vm.onScanned(ScannedCode("8690000000017", ScanSource.HARDWARE_KEYBOARD))
+        assertEquals("0", vm.line("ITEM-001").qtyText)
+        assertEquals("row1", vm.uiState.value.batchSheet?.rowName)
+        coVerify(exactly = 0) { findBatch(any(), any(), any()) }
     }
 
     @Test
@@ -152,8 +166,31 @@ class ReceiveViewModelTest {
     }
 
     @Test
-    fun `scanning a batch label fills the batch of the batch tracked row and counts it`() = runTest {
+    fun `scanning the supplier's batch number finds the batch among the receipt's items and counts it under its row`() = runTest {
+        val batch = TestFixtures.batch.copy(name = "12-ITEM-001-LOT-9", batchNo = "LOT-9")
+        coEvery { findBatch("LOT-9", null, receipt.name) } returns AppResult.Success(BatchLookup("LOT-9", listOf(batch)))
+        val vm = createViewModel()
+
+        vm.onScanned(ScannedCode("LOT-9", ScanSource.CAMERA))
+
+        val line = vm.line("ITEM-001")
+        assertEquals("12-ITEM-001-LOT-9", line.batchNo)
+        assertEquals(listOf("LOT-9"), line.batches.map { it.label })
+        assertEquals(1.0, line.qty, 0.0)
+        assertFalse(line.batchMissing)
+        assertTrue(line.countsByBatch)
+        coVerify(exactly = 0) { lookupScan(any(), any()) }
+
+        // A second scan of the same number counts the same batch line again.
+        vm.onScanned(ScannedCode("LOT-9", ScanSource.CAMERA))
+        assertEquals(2.0, vm.line("ITEM-001").qty, 0.0)
+        assertEquals(1, vm.line("ITEM-001").batches.size)
+    }
+
+    @Test
+    fun `a WMS QR batch label resolved by the scan lookup also lands under the row`() = runTest {
         val batch = TestFixtures.batch.copy(name = "LOT-9")
+        coEvery { findBatch(any(), null, receipt.name) } returns AppResult.Success(BatchLookup("x", emptyList()))
         coEvery { lookupScan("LOT-9", ScanTarget.ITEM) } returns AppResult.Success(ScanLookup.BatchFound("LOT-9", batch, TestFixtures.item, TestFixtures.batchStock))
         val vm = createViewModel()
 
@@ -161,8 +198,111 @@ class ReceiveViewModelTest {
 
         val line = vm.line("ITEM-001")
         assertEquals("LOT-9", line.batchNo)
-        assertEquals("1", line.qtyText)
-        assertFalse(line.batchMissing)
+        assertEquals(1.0, line.qty, 0.0)
+    }
+
+    @Test
+    fun `a number no batch has opens the sheet for the only batch tracked row and creating the batch counts it`() = runTest {
+        coEvery { findBatch("NEW-7", null, receipt.name) } returns AppResult.Success(BatchLookup("NEW-7", emptyList()))
+        coEvery { lookupScan("NEW-7", ScanTarget.ITEM) } returns AppResult.Success(ScanLookup.NotFound("NEW-7", ScanTarget.ITEM))
+        val expiring = receipt.copy(items = receipt.items.map { if (it.rowName == "row1") it.copy(hasExpiryDate = true, shelfLifeDays = 730) else it })
+        val vm = createViewModel(expiring)
+
+        vm.onScanned(ScannedCode("NEW-7", ScanSource.HARDWARE_KEYBOARD))
+
+        val sheet = vm.uiState.value.batchSheet
+        assertNotNull(sheet)
+        assertEquals("row1", sheet!!.rowName)
+        assertEquals("NEW-7", sheet.code)
+        assertTrue(sheet.isNew)
+        assertEquals(java.time.LocalDate.now().toString(), sheet.manufacturingDate)
+        assertEquals(java.time.LocalDate.now().plusDays(730).toString(), sheet.expiryDate)
+
+        vm.setBatchManufacturingDate("2026-10-01")
+        assertEquals("2028-09-30", vm.uiState.value.batchSheet!!.expiryDate)
+
+        val request = slot<NewBatch>()
+        val created = TestFixtures.batch.copy(name = "13-ITEM-001-NEW-7", batchNo = "NEW-7", expiryDate = "2028-09-30")
+        coEvery { createBatch(capture(request)) } returns AppResult.Success(CreatedBatch(created, created = true))
+        vm.createBatchFromSheet()
+
+        assertNull(vm.uiState.value.batchSheet)
+        assertEquals(NewBatch("ITEM-001", "NEW-7", "2026-10-01", "2028-09-30", "SUP-001", receipt.name), request.captured)
+        val line = vm.line("ITEM-001")
+        assertEquals(listOf("13-ITEM-001-NEW-7"), line.batches.map { it.batchNo })
+        assertTrue(line.batches.single().isNew)
+        assertEquals(1.0, line.qty, 0.0)
+    }
+
+    @Test
+    fun `the batch sheet looks a typed number up for its row and several matches are offered`() = runTest {
+        val a = TestFixtures.batch.copy(name = "1-ITEM-001-LOT-5", batchNo = "LOT-5")
+        val b = TestFixtures.batch.copy(name = "2-ITEM-001-LOT-5", batchNo = "LOT-5")
+        coEvery { findBatch("LOT-5", "ITEM-001", null) } returns AppResult.Success(BatchLookup("LOT-5", listOf(a, b), BatchItemFacts("ITEM-001", hasBatchNo = true)))
+        val vm = createViewModel()
+
+        vm.openBatchSheet("row1")
+        vm.setBatchCode("LOT-5")
+        vm.lookupBatch()
+
+        val sheet = vm.uiState.value.batchSheet!!
+        assertEquals(listOf(a, b), sheet.matches)
+        assertFalse(sheet.isNew)
+
+        vm.selectFoundBatch(b)
+
+        assertNull(vm.uiState.value.batchSheet)
+        assertEquals("2-ITEM-001-LOT-5", vm.line("ITEM-001").batchNo)
+        assertEquals(1.0, vm.line("ITEM-001").qty, 0.0)
+    }
+
+    @Test
+    fun `one row received in two batches sends both with their quantities and the row total`() = runTest {
+        val a = TestFixtures.batch.copy(name = "1-ITEM-001-A", batchNo = "A")
+        val b = TestFixtures.batch.copy(name = "2-ITEM-001-B", batchNo = "B")
+        coEvery { findBatch("A", null, receipt.name) } returns AppResult.Success(BatchLookup("A", listOf(a)))
+        coEvery { findBatch("B", null, receipt.name) } returns AppResult.Success(BatchLookup("B", listOf(b)))
+        val lines = slot<List<ReceiveLine>>()
+        coEvery { receive(receipt, capture(lines), "Stores - WM", true) } returns AppResult.Success(submitted)
+        val vm = createViewModel()
+
+        repeat(6) { vm.onScanned(ScannedCode("A", ScanSource.HARDWARE_KEYBOARD)) }
+        repeat(3) { vm.onScanned(ScannedCode("B", ScanSource.HARDWARE_KEYBOARD)) }
+        vm.setBatchQty("row1", "2-ITEM-001-B", "4")
+        vm.setQty("row2", "5")
+
+        assertEquals(10.0, vm.line("ITEM-001").qty, 0.0)
+        vm.onScanned(ScannedCode("A", ScanSource.HARDWARE_KEYBOARD)) // the row is complete
+        assertEquals(UiText.Res(R.string.receive_already_counted, listOf("10", "ITEM-001")), vm.uiState.value.message)
+
+        vm.submit(asDraft = false)
+        val confirmation = vm.uiState.value.confirmation!!
+        assertTrue(confirmation.differences.isEmpty())
+        assertEquals(listOf(BatchCount("1-ITEM-001-A", 6.0, "A"), BatchCount("2-ITEM-001-B", 4.0, "B")), confirmation.summary.first().batches)
+        vm.confirmDifferences()
+
+        assertEquals(submitted, vm.uiState.value.completed)
+        val row1 = lines.captured.first { it.rowName == "row1" }
+        assertEquals(10.0, row1.qty, 0.0)
+        assertEquals("1-ITEM-001-A", row1.batchNo)
+        assertEquals(listOf(BatchCount("1-ITEM-001-A", 6.0, "A"), BatchCount("2-ITEM-001-B", 4.0, "B")), row1.batches)
+
+        vm.removeBatch("row1", "2-ITEM-001-B")
+    }
+
+    @Test
+    fun `a saved count with batches continues per batch`() = runTest {
+        val resumed = receipt.copy(items = receipt.items.map {
+            if (it.rowName == "row1") it.copy(countedQty = 7.0, countedBatches = listOf(BatchCount("1-ITEM-001-A", 4.0, "A"), BatchCount("2-ITEM-001-B", 3.0, "B"))) else it
+        })
+        val vm = createViewModel(resumed)
+
+        val line = vm.line("ITEM-001")
+        assertEquals(listOf("4", "3"), line.batches.map { it.qtyText })
+        assertEquals(7.0, line.qty, 0.0)
+        assertEquals(3.0, line.remaining, 0.0)
+        vm.incrementBatch("row1", "2-ITEM-001-B")
+        assertEquals(8.0, vm.line("ITEM-001").qty, 0.0)
     }
 
     @Test
@@ -177,20 +317,30 @@ class ReceiveViewModelTest {
     }
 
     @Test
-    fun `confirming a receipt counted as drafted submits it straight away`() = runTest {
+    fun `confirming a receipt counted as drafted shows the summary without differences and then submits`() = runTest {
         val lines = slot<List<ReceiveLine>>()
-        coEvery { receive(receipt, capture(lines), "Stores - WM", true) } returns AppResult.Success(submitted)
-        val vm = createViewModel()
+        val drafted = receipt.copy(items = receipt.items.map { if (it.rowName == "row1") it.copy(batchNo = "LOT-1", batchLabel = "L1", needsBatch = false) else it })
+        coEvery { receive(drafted, capture(lines), "Stores - WM", true) } returns AppResult.Success(submitted)
+        val vm = createViewModel(drafted)
         vm.receiveAll()
-        vm.setBatch("row1", "LOT-1")
         assertEquals(15.0, vm.uiState.value.totalQty, 0.0)
 
         vm.submit(asDraft = false)
 
-        assertNull(vm.uiState.value.confirmation)
+        val confirmation = vm.uiState.value.confirmation
+        assertNotNull(confirmation)
+        assertTrue(confirmation!!.differences.isEmpty())
+        assertEquals(listOf("ITEM-001", "ITEM-002"), confirmation.summary.map { it.itemCode })
+        assertNull(vm.uiState.value.completed)
+
+        vm.confirmDifferences()
+
         assertEquals(submitted, vm.uiState.value.completed)
         assertEquals(UiText.Res(R.string.receive_submitted, listOf(receipt.name)), vm.uiState.value.message)
-        assertEquals(listOf(ReceiveLine("row1", 10.0, "Stores - WM", "LOT-1"), ReceiveLine("row2", 5.0, "Stores - WM", null)), lines.captured)
+        assertEquals(
+            listOf(ReceiveLine("row1", 10.0, "Stores - WM", "LOT-1", listOf(BatchCount("LOT-1", 10.0, "L1"))), ReceiveLine("row2", 5.0, "Stores - WM", null)),
+            lines.captured,
+        )
     }
 
     @Test
@@ -236,6 +386,7 @@ class ReceiveViewModelTest {
         vm.receiveAll()
 
         vm.submit(asDraft = false)
+        vm.confirmDifferences()
 
         assertEquals(UiText.Res(R.string.receive_pending_approval, listOf(receipt.name)), vm.uiState.value.message)
     }
@@ -250,6 +401,7 @@ class ReceiveViewModelTest {
         vm.receiveAll()
 
         vm.submit(asDraft = false)
+        vm.confirmDifferences()
 
         assertEquals(listOf(department), vm.uiState.value.requiredFields)
         assertEquals(listOf("Sales - WM", "Warehouse - WM"), vm.uiState.value.linkOptions[department.key])
@@ -273,6 +425,7 @@ class ReceiveViewModelTest {
         vm.receiveAll()
 
         vm.submit(asDraft = false)
+        vm.confirmDifferences()
 
         assertEquals(UiText.Res(R.string.error_batch_required, listOf("ITEM-001")), vm.uiState.value.error)
         assertNull(vm.uiState.value.completed)
@@ -312,14 +465,14 @@ class ReceiveViewModelTest {
 
     @Test
     fun `the stepper allows over-receipt which the differences confirmation then shows`() = runTest {
-        val vm = createViewModel()
+        val vm = createViewModel(receipt.copy(items = receipt.items.map { if (it.rowName == "row1") it.copy(batchNo = "LOT-1", needsBatch = false) else it }))
         vm.receiveAll()
 
         vm.increment("row2")
-        vm.decrement("row1")
+        vm.decrementBatch("row1", "LOT-1")
 
         assertEquals("6", vm.line("ITEM-002").qtyText)
-        assertEquals("9", vm.line("ITEM-001").qtyText)
+        assertEquals(9.0, vm.line("ITEM-001").qty, 0.0)
         vm.submit(asDraft = false)
         assertEquals(
             listOf(ReceiptDifference("row1", "ITEM-001", 10.0, 9.0), ReceiptDifference("row2", "ITEM-002", 5.0, 6.0)),

@@ -61,6 +61,8 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.SELECT_WAREHOUSE_FOR_ITEM -> R.string.error_select_warehouse
     ErrorCode.NOTHING_TO_RECEIVE -> R.string.error_nothing_to_receive
     ErrorCode.BATCH_REQUIRED_FOR_ITEM -> R.string.error_batch_required
+    ErrorCode.INVALID_DATE -> R.string.error_invalid_date
+    ErrorCode.EXPIRY_BEFORE_MANUFACTURING -> R.string.error_expiry_before_manufacturing
     ErrorCode.PURCHASE_RECEIPT_NOT_FOUND -> R.string.error_pr_not_found
     ErrorCode.RECEIPT_NOT_RECEIVABLE -> R.string.error_receipt_not_receivable
     ErrorCode.MISSING_REQUIRED_FIELDS -> R.string.error_missing_required_fields

@@ -6,11 +6,16 @@ import com.wmserp.app.data.mapper.toReceiveResult
 import com.wmserp.app.data.remote.ApiCaller
 import com.wmserp.app.data.remote.ErpNextDataSource
 import com.wmserp.app.data.remote.Filter
+import com.wmserp.app.data.remote.dto.BatchLookupDto
+import com.wmserp.app.data.remote.dto.CreatedBatchDto
 import com.wmserp.app.data.remote.dto.LinkNameDto
 import com.wmserp.app.data.remote.dto.PurchaseReceiptDto
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.BatchLookup
+import com.wmserp.app.domain.model.CreatedBatch
+import com.wmserp.app.domain.model.NewBatch
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.ReceiptCount
 import com.wmserp.app.domain.model.ReceiveResult
@@ -63,6 +68,11 @@ class ReceiptRepositoryImpl(
                             put("qty", count.qty)
                             count.warehouse?.takeIf { it.isNotBlank() }?.let { put("warehouse", it) }
                             count.batchNo?.takeIf { it.isNotBlank() }?.let { put("batch_no", it) }
+                            if (count.batches.isNotEmpty()) {
+                                put("batches", buildJsonArray {
+                                    count.batches.forEach { batch -> add(buildJsonObject { put("batch_no", batch.batchNo); put("qty", batch.qty) }) }
+                                })
+                            }
                         }
                     )
                 }
@@ -72,6 +82,27 @@ class ReceiptRepositoryImpl(
         val message = dataSource.postRaw(method("receive"), body)
         message.missingRequiredFieldsOrNull(dataSource.json)?.let { throw AppException(it) }
         dataSource.decode(PurchaseReceiptDto.serializer(), message, method("receive")).toReceiveResult()
+    }
+
+    override suspend fun findBatch(code: String, itemCode: String?, receipt: String?): AppResult<BatchLookup> = apiCaller.call {
+        val params = buildMap {
+            put("code", code)
+            itemCode?.takeIf { it.isNotBlank() }?.let { put("item_code", it) }
+            receipt?.takeIf { it.isNotBlank() }?.let { put("receipt", it) }
+        }
+        dataSource.getMethod<BatchLookupDto>(method("find_batch"), params).toDomain()
+    }
+
+    override suspend fun createBatch(batch: NewBatch): AppResult<CreatedBatch> = apiCaller.call {
+        val body = buildJsonObject {
+            put("item_code", batch.itemCode)
+            put("batch_no", batch.batchNo)
+            batch.manufacturingDate?.takeIf { it.isNotBlank() }?.let { put("manufacturing_date", it) }
+            batch.expiryDate?.takeIf { it.isNotBlank() }?.let { put("expiry_date", it) }
+            batch.supplier?.takeIf { it.isNotBlank() }?.let { put("supplier", it) }
+            batch.receipt?.takeIf { it.isNotBlank() }?.let { put("receipt", it) }
+        }
+        dataSource.postMethod<CreatedBatchDto>(method("create_batch"), body).toDomain()
     }
 
     override suspend fun searchLinkValues(doctype: String, query: String, company: String?, limit: Int): AppResult<List<String>> = apiCaller.call {

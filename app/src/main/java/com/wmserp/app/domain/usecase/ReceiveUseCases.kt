@@ -3,6 +3,10 @@ package com.wmserp.app.domain.usecase
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.model.BatchCount
+import com.wmserp.app.domain.model.BatchLookup
+import com.wmserp.app.domain.model.CreatedBatch
+import com.wmserp.app.domain.model.NewBatch
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.ReceiptCount
 import com.wmserp.app.domain.model.ReceiptDifference
@@ -27,8 +31,18 @@ class GetPurchaseReceiptUseCase @Inject constructor(private val repository: Rece
         }
 }
 
-/** Quantity the warehouse counted for one receipt row (row UOM), with its optional overrides. */
-data class ReceiveLine(val rowName: String, val qty: Double, val warehouse: String? = null, val batchNo: String? = null)
+/**
+ * Quantity the warehouse counted for one receipt row (row UOM), with its optional overrides. A batch
+ * tracked row received in one or more batches sends [batches] (each with its own quantity); [qty]
+ * is then their sum.
+ */
+data class ReceiveLine(
+    val rowName: String,
+    val qty: Double,
+    val warehouse: String? = null,
+    val batchNo: String? = null,
+    val batches: List<BatchCount> = emptyList(),
+)
 
 /**
  * Confirms a draft Purchase Receipt with the counted quantities: rows counted 0 are dropped (the
@@ -58,11 +72,16 @@ class ReceivePurchaseReceiptUseCase @Inject constructor(
             if (line.qty <= QTY_TOLERANCE) continue
             val warehouse = line.warehouse?.ifBlank { null } ?: row.warehouse ?: receipt.setWarehouse ?: defaultWarehouse?.ifBlank { null }
                 ?: return AppResult.Failure(AppError.Validation("${row.itemCode}: select a warehouse", ErrorCode.SELECT_WAREHOUSE_FOR_ITEM, listOf(row.itemCode)))
-            val batch = line.batchNo?.trim()?.ifBlank { null } ?: row.batchNo
+            val batches = line.batches.filter { it.batchNo.isNotBlank() && it.qty > QTY_TOLERANCE }
+            if (batches.any { it.qty < 0.0 }) {
+                return AppResult.Failure(AppError.Validation("${row.itemCode}: quantity must be positive", ErrorCode.QTY_MUST_BE_POSITIVE))
+            }
+            val batch = batches.firstOrNull()?.batchNo ?: line.batchNo?.trim()?.ifBlank { null } ?: row.batchNo
             if (row.needsBatch && batch == null) {
                 return AppResult.Failure(AppError.Validation("${row.itemCode}: scan or enter the batch", ErrorCode.BATCH_REQUIRED_FOR_ITEM, listOf(row.itemCode)))
             }
-            counts += ReceiptCount(rowName = row.rowName, qty = line.qty, warehouse = warehouse, batchNo = batch)
+            val qty = if (batches.isNotEmpty()) batches.sumOf { it.qty } else line.qty
+            counts += ReceiptCount(rowName = row.rowName, qty = qty, warehouse = warehouse, batchNo = batch, batches = batches)
         }
         if (counts.isEmpty()) return AppResult.Failure(AppError.Validation("Count at least one row to receive", ErrorCode.NOTHING_TO_RECEIVE))
         return repository.receive(
@@ -84,6 +103,42 @@ class ReceivePurchaseReceiptUseCase @Inject constructor(
                 if (kotlin.math.abs(qty - row.qty) <= QTY_TOLERANCE) null else ReceiptDifference(row.rowName, row.itemCode, row.qty, qty)
             }
         }
+    }
+}
+
+/**
+ * The batches a scanned or typed batch number stands for: by ERPNext name or by the number the
+ * supplier printed (spaces and case ignored), among the item's batches or those of the receipt's items.
+ */
+class FindBatchUseCase @Inject constructor(private val repository: ReceiptRepository) {
+    suspend operator fun invoke(code: String, itemCode: String? = null, receipt: String? = null): AppResult<BatchLookup> {
+        val trimmed = code.trim()
+        if (trimmed.isEmpty()) return AppResult.Failure(AppError.Validation("Scan or enter a batch number", ErrorCode.BATCH_REQUIRED_FOR_ITEM, listOf(itemCode.orEmpty())))
+        return repository.findBatch(trimmed, itemCode?.trim()?.ifBlank { null }, receipt?.trim()?.ifBlank { null })
+    }
+}
+
+/**
+ * Creates the batch of a supplier number for an item whose batches ERPNext does not create itself.
+ * Dates are ISO `yyyy-MM-dd`; an expiry left empty is taken from the item's shelf life by ERPNext.
+ */
+class CreateBatchUseCase @Inject constructor(private val repository: ReceiptRepository) {
+    suspend operator fun invoke(batch: NewBatch): AppResult<CreatedBatch> {
+        val batchNo = batch.batchNo.trim()
+        if (batchNo.isEmpty()) return AppResult.Failure(AppError.Validation("Scan or enter a batch number", ErrorCode.BATCH_REQUIRED_FOR_ITEM, listOf(batch.itemCode)))
+        for (date in listOfNotNull(batch.manufacturingDate, batch.expiryDate).filter { it.isNotBlank() }) {
+            if (!ISO_DATE.matches(date.trim())) return AppResult.Failure(AppError.Validation("$date is not a date (yyyy-MM-dd)", ErrorCode.INVALID_DATE, listOf(date)))
+        }
+        val mfg = batch.manufacturingDate?.trim()?.ifBlank { null }
+        val expiry = batch.expiryDate?.trim()?.ifBlank { null }
+        if (mfg != null && expiry != null && expiry < mfg) {
+            return AppResult.Failure(AppError.Validation("Expiry $expiry is before manufacturing date $mfg", ErrorCode.EXPIRY_BEFORE_MANUFACTURING, listOf(expiry, mfg)))
+        }
+        return repository.createBatch(batch.copy(batchNo = batchNo, manufacturingDate = mfg, expiryDate = expiry))
+    }
+
+    companion object {
+        private val ISO_DATE = Regex("""\d{4}-\d{2}-\d{2}""")
     }
 }
 

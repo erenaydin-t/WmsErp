@@ -1,6 +1,9 @@
 package com.wmserp.app.domain.repository
 
 import com.wmserp.app.domain.common.AppResult
+import com.wmserp.app.domain.model.BatchLookup
+import com.wmserp.app.domain.model.CreatedBatch
+import com.wmserp.app.domain.model.NewBatch
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.ReceiptCount
 import com.wmserp.app.domain.model.ReceiveResult
@@ -26,6 +29,16 @@ interface ReceiptRepository {
         fieldValues: Map<String, String> = emptyMap(),
         submit: Boolean = true,
     ): AppResult<ReceiveResult>
+
+    /**
+     * The existing batches a scanned or typed batch number stands for: by ERPNext name or by the
+     * supplier's number (spaces and case ignored), among the batches of [itemCode] or of the items
+     * on draft [receipt]. Several can match when the site keeps one batch per QC run.
+     */
+    suspend fun findBatch(code: String, itemCode: String? = null, receipt: String? = null): AppResult<BatchLookup>
+
+    /** Creates the batch of a supplier number (named by the site's pattern); returns the existing one when there already is one. */
+    suspend fun createBatch(batch: NewBatch): AppResult<CreatedBatch>
 
     /** Names of [doctype] documents matching [query] (for Link fields), limited to [company] when the DocType has one. */
     suspend fun searchLinkValues(doctype: String, query: String = "", company: String? = null, limit: Int = 100): AppResult<List<String>>

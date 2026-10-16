@@ -42,7 +42,12 @@ data class Batch(
     val stockUom: String? = null,
     val supplier: String? = null,
     val description: String? = null,
+    /** The supplier's batch number as printed on the material, on sites that keep it in its own Batch field. */
+    val batchNo: String? = null,
 ) {
+    /** What a label shows: the supplier's number when the site keeps one, else the ERPNext name. */
+    val label: String get() = batchNo?.takeIf { it.isNotBlank() } ?: name
+
     /** Expired strictly before [today] (ISO date). */
     fun isExpiredOn(today: String): Boolean = expiryDate != null && expiryDate < today
 }

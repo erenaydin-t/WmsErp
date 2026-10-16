@@ -139,6 +139,15 @@ def get_custom_fields():
                 default="0",
                 description="Quantity counted so far through the WMS app (row UOM) while the draft is being received; Received Qty / Qty stay what purchasing expects until the receipt is confirmed.",
             ),
+            dict(
+                fieldname="custom_wms_counted_batches",
+                fieldtype="Small Text",
+                label="WMS Counted Batches",
+                insert_after="custom_wms_counted_qty",
+                read_only=1,
+                no_copy=1,
+                description='Per-batch counts saved by the WMS app while a batch tracked row is being received, e.g. [{"batch_no": "12-ITEM-LOT1", "qty": 4}]; the confirmation splits the row into one row per batch and clears this.',
+            ),
         ],
         "Pick List Item": [
             dict(

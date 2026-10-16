@@ -44,9 +44,19 @@ data class PurchaseReceiptItem(
     val stockUom: String? = null,
     val conversionFactor: Double = 1.0,
     val warehouse: String? = null,
+    /** ERPNext name of the batch purchasing put on the row, if any. */
     val batchNo: String? = null,
+    /** The supplier's batch number of [batchNo] as printed on the material (the name itself on sites without that field). */
+    val batchLabel: String? = batchNo,
+    /** Per-batch counts saved as progress from the app; the count continues from here. */
+    val countedBatches: List<BatchCount> = emptyList(),
     val hasBatchNo: Boolean = false,
     val hasSerialNo: Boolean = false,
+    /** The item's batches carry an expiry date (defaulting to manufacturing date + [shelfLifeDays]). */
+    val hasExpiryDate: Boolean = false,
+    val shelfLifeDays: Int = 0,
+    /** ERPNext creates the batch itself on submit; the row may be counted without one. */
+    val createNewBatch: Boolean = false,
     /** Batch tracked item without a batch that ERPNext will not create on submit: one must be scanned or entered. */
     val needsBatch: Boolean = false,
     val purchaseOrder: String? = null,
@@ -57,13 +67,56 @@ data class PurchaseReceiptItem(
         itemCode.equals(code, ignoreCase = true) || barcodes.any { it.equals(code, ignoreCase = true) }
 }
 
-/** What the warehouse counted for one row (row UOM). */
+/** One batch counted under a batch tracked row (row UOM). [batchNo] is the ERPNext name, [batchLabel] what the label says. */
+data class BatchCount(
+    val batchNo: String,
+    val qty: Double,
+    val batchLabel: String? = null,
+) {
+    val label: String get() = batchLabel?.takeIf { it.isNotBlank() } ?: batchNo
+}
+
+/** What the warehouse counted for one row (row UOM); [batches] when a batch tracked row came in one or more batches. */
 data class ReceiptCount(
     val rowName: String,
     val qty: Double,
     val warehouse: String? = null,
     val batchNo: String? = null,
+    val batches: List<BatchCount> = emptyList(),
 )
+
+/** What `find_batch` knows about an item whose batch is being looked up or created. */
+data class BatchItemFacts(
+    val itemCode: String,
+    val itemName: String? = null,
+    val hasBatchNo: Boolean = false,
+    val hasExpiryDate: Boolean = false,
+    val shelfLifeDays: Int = 0,
+    val createNewBatch: Boolean = false,
+)
+
+/** The batches a scanned or typed batch number stands for (by ERPNext name or by the supplier's number). */
+data class BatchLookup(
+    val code: String,
+    val batches: List<Batch>,
+    val item: BatchItemFacts? = null,
+) {
+    val found: Boolean get() = batches.isNotEmpty()
+}
+
+/** A batch to create for a batch number the supplier printed on the material. Dates are ISO `yyyy-MM-dd`. */
+data class NewBatch(
+    val itemCode: String,
+    val batchNo: String,
+    val manufacturingDate: String? = null,
+    val expiryDate: String? = null,
+    val supplier: String? = null,
+    /** Draft Purchase Receipt the batch is created for (becomes its reference document). */
+    val receipt: String? = null,
+)
+
+/** Result of `create_batch`: the batch, new or already existing for that number. */
+data class CreatedBatch(val batch: Batch, val created: Boolean)
 
 /** A row whose counted quantity differs from the draft (0 means the row was not received and is dropped). */
 data class ReceiptDifference(

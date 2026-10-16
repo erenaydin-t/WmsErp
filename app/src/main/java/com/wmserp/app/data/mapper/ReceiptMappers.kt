@@ -1,11 +1,21 @@
 package com.wmserp.app.data.mapper
 
+import com.wmserp.app.data.remote.dto.BatchCountDto
+import com.wmserp.app.data.remote.dto.BatchItemFactsDto
+import com.wmserp.app.data.remote.dto.BatchLookupDto
+import com.wmserp.app.data.remote.dto.CreatedBatchDto
+import com.wmserp.app.data.remote.dto.FoundBatchDto
 import com.wmserp.app.data.remote.dto.MissingFieldsDto
 import com.wmserp.app.data.remote.dto.PurchaseReceiptDto
 import com.wmserp.app.data.remote.dto.PurchaseReceiptItemDto
 import com.wmserp.app.data.remote.dto.ReceiptDifferenceDto
 import com.wmserp.app.data.remote.dto.SalesOrderDto
 import com.wmserp.app.domain.common.AppError
+import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.BatchCount
+import com.wmserp.app.domain.model.BatchItemFacts
+import com.wmserp.app.domain.model.BatchLookup
+import com.wmserp.app.domain.model.CreatedBatch
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.PurchaseReceiptItem
 import com.wmserp.app.domain.model.ReceiptDifference
@@ -48,12 +58,43 @@ fun PurchaseReceiptItemDto.toDomain(): PurchaseReceiptItem = PurchaseReceiptItem
     conversionFactor = conversionFactor.takeIf { it > 0.0 } ?: 1.0,
     warehouse = warehouse,
     batchNo = batchNo,
+    batchLabel = batchLabel?.takeIf { it.isNotBlank() } ?: batchNo,
+    countedBatches = countedBatches.map { it.toDomain() },
     hasBatchNo = hasBatchNo,
     hasSerialNo = hasSerialNo,
+    hasExpiryDate = hasExpiryDate,
+    shelfLifeDays = shelfLifeInDays,
+    createNewBatch = createNewBatch,
     needsBatch = needsBatch,
     purchaseOrder = purchaseOrder,
     barcodes = barcodes,
 )
+
+fun BatchCountDto.toDomain(): BatchCount = BatchCount(batchNo = batchNo, qty = qty, batchLabel = batchLabel?.takeIf { it.isNotBlank() })
+
+fun FoundBatchDto.toDomain(): Batch = Batch(
+    name = name,
+    itemCode = item.orEmpty(),
+    itemName = itemName,
+    expiryDate = expiryDate,
+    manufacturingDate = manufacturingDate,
+    disabled = disabled,
+    supplier = supplier,
+    batchNo = batchNo?.takeIf { it.isNotBlank() },
+)
+
+fun BatchItemFactsDto.toDomain(): BatchItemFacts = BatchItemFacts(
+    itemCode = itemCode,
+    itemName = itemName,
+    hasBatchNo = hasBatchNo,
+    hasExpiryDate = hasExpiryDate,
+    shelfLifeDays = shelfLifeInDays,
+    createNewBatch = createNewBatch,
+)
+
+fun BatchLookupDto.toDomain(): BatchLookup = BatchLookup(code = code, batches = batches.map { it.toDomain() }, item = item?.toDomain())
+
+fun CreatedBatchDto.toDomain(): CreatedBatch = CreatedBatch(batch = batch.toDomain(), created = created)
 
 fun ReceiptDifferenceDto.toDomain(): ReceiptDifference = ReceiptDifference(rowName = row, itemCode = itemCode.orEmpty(), expected = expected, counted = counted)
 

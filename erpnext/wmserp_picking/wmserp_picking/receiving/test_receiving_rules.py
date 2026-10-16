@@ -5,8 +5,16 @@ import unittest
 from wmserp_picking.receiving import rules
 
 
-def row(name, item, qty, warehouse="Stores - WM", batch_no=None, needs_batch=False):
-    return {"name": name, "item_code": item, "qty": qty, "warehouse": warehouse, "batch_no": batch_no, "needs_batch": needs_batch}
+def row(name, item, qty, warehouse="Stores - WM", batch_no=None, needs_batch=False, has_batch_no=None):
+    return {
+        "name": name,
+        "item_code": item,
+        "qty": qty,
+        "warehouse": warehouse,
+        "batch_no": batch_no,
+        "needs_batch": needs_batch,
+        "has_batch_no": has_batch_no if has_batch_no is not None else bool(batch_no or needs_batch),
+    }
 
 
 class StateTests(unittest.TestCase):
@@ -75,11 +83,11 @@ class PlanReceiptTests(unittest.TestCase):
         self.assertEqual([], plan["removed"])
         self.assertEqual([], plan["cleared"])
         self.assertEqual(17.0, plan["total_qty"])
-        self.assertEqual({"qty": 5.0, "warehouse": "Stores - WM", "batch_no": "B-1"}, plan["updates"]["r2"])
+        self.assertEqual({"qty": 5.0, "warehouse": "Stores - WM", "batch_no": "B-1", "batches": [{"batch_no": "B-1", "qty": 5.0}]}, plan["updates"]["r2"])
 
     def test_partial_receipt_updates_removes_and_reports(self):
         plan = rules.plan_receipt(self.rows, [{"row": "r1", "qty": "8", "warehouse": "Quarantine - WM"}, {"row": "r2", "qty": 0}])
-        self.assertEqual({"qty": 8.0, "warehouse": "Quarantine - WM", "batch_no": None}, plan["updates"]["r1"])
+        self.assertEqual({"qty": 8.0, "warehouse": "Quarantine - WM", "batch_no": None, "batches": []}, plan["updates"]["r1"])
         self.assertEqual(["r2", "r3"], plan["removed"])
         self.assertEqual(
             [
@@ -125,6 +133,66 @@ class PlanReceiptTests(unittest.TestCase):
             rules.plan_receipt(rows, [{"row": "r1", "qty": 10}])
         plan = rules.plan_receipt(rows, [{"row": "r1", "qty": 10, "batch_no": " LOT-7 "}])
         self.assertEqual("LOT-7", plan["updates"]["r1"]["batch_no"])
+        self.assertEqual([{"batch_no": "LOT-7", "qty": 10.0}], plan["updates"]["r1"]["batches"])
+
+    def test_a_row_received_in_several_batches_sums_them_and_keeps_each(self):
+        rows = [row("r1", "A", 10, needs_batch=True)]
+        counted = [{"row": "r1", "qty": 999, "batches": [{"batch_no": " 12-A-LOT1 ", "qty": "6"}, {"batch_no": "13-A-LOT2", "qty": 3}, {"batch_no": "14-A-LOT3", "qty": 0}, {"batch_no": "", "qty": 0}]}]
+        plan = rules.plan_receipt(rows, counted)
+        update = plan["updates"]["r1"]
+        self.assertEqual(9.0, update["qty"])  # the sum of the batches, not the row's own qty
+        self.assertEqual("12-A-LOT1", update["batch_no"])
+        self.assertEqual([{"batch_no": "12-A-LOT1", "qty": 6.0}, {"batch_no": "13-A-LOT2", "qty": 3.0}], update["batches"])
+        self.assertEqual([{"row": "r1", "item_code": "A", "expected": 10.0, "counted": 9.0}], plan["differences"])
+        self.assertEqual(({"batch_no": "12-A-LOT1", "qty": 6.0}, [{"batch_no": "13-A-LOT2", "qty": 3.0}]), rules.split_batches(update))
+        # Only zero batches: the row counts as not received.
+        plan = rules.plan_receipt(rows, [{"row": "r1", "batches": [{"batch_no": "12-A-LOT1", "qty": 0}]}], remove_unreceived=False)
+        self.assertEqual(["r1"], plan["cleared"])
+
+    def test_batch_refusals(self):
+        rows = [row("r1", "A", 10, needs_batch=True), row("r2", "B", 5)]
+        with self.assertRaises(rules.ReceivingRuleError):  # same batch twice on one row
+            rules.plan_receipt(rows, [{"row": "r1", "batches": [{"batch_no": "L1", "qty": 1}, {"batch_no": "L1", "qty": 2}]}])
+        with self.assertRaises(rules.ReceivingRuleError):  # a quantity without a batch number
+            rules.plan_receipt(rows, [{"row": "r1", "batches": [{"batch_no": "", "qty": 2}]}])
+        with self.assertRaises(rules.ReceivingRuleError):  # batches on a plain item
+            rules.plan_receipt(rows, [{"row": "r2", "batches": [{"batch_no": "L1", "qty": 2}]}])
+        with self.assertRaises(rules.ReceivingRuleError):
+            rules.plan_receipt(rows, [{"row": "r1", "batches": [{"batch_no": "L1", "qty": -2}]}])
+
+    def test_split_batches_of_a_row_without_batches(self):
+        self.assertEqual(({"batch_no": None, "qty": 4.0}, []), rules.split_batches({"qty": 4.0, "batch_no": None, "batches": []}))
+
+
+class BatchNamingTests(unittest.TestCase):
+    def test_batch_key_ignores_spaces_and_case(self):
+        self.assertEqual(rules.batch_key(" SPH 405000439-001 "), rules.batch_key("sph405000439-001"))
+        self.assertEqual("", rules.batch_key(None))
+
+    def test_patterns(self):
+        self.assertEqual("{counter}-{item}-{batch_no}", rules.default_batch_id_pattern(True))
+        self.assertEqual("{batch_no}", rules.default_batch_id_pattern(False))
+        self.assertEqual("7582-13100074-SPH-1", rules.render_batch_id("{counter}-{item}-{batch_no}", "13100074", "SPH-1", 7582))
+        self.assertEqual("SPH-1", rules.render_batch_id("", "13100074", "SPH-1"))
+        self.assertEqual("SPH-1", rules.render_batch_id(None, "13100074", "SPH-1", 3))
+        self.assertTrue(rules.needs_counter("{counter}-{batch_no}"))
+        self.assertFalse(rules.needs_counter("{batch_no}"))
+        with self.assertRaises(rules.ReceivingRuleError):
+            rules.render_batch_id("{supplier}-{batch_no}", "A", "B", 1)
+
+    def test_next_counter_continues_the_numeric_prefix(self):
+        self.assertEqual(506037, rules.next_counter("506036-20100067-MY262838A11"))
+        self.assertEqual(1, rules.next_counter(None))
+        self.assertEqual(1, rules.next_counter("LOT-7"))
+
+    def test_counted_batches_round_trip(self):
+        text = rules.serialize_counted_batches([{"batch_no": "12-A-L1", "qty": 4.0}, {"batch_no": "", "qty": 2}])
+        self.assertEqual('[{"batch_no": "12-A-L1", "qty": 4.0}]', text)
+        self.assertEqual([{"batch_no": "12-A-L1", "qty": 4.0}], rules.parse_counted_batches(text))
+        self.assertIsNone(rules.serialize_counted_batches([]))
+        self.assertEqual([], rules.parse_counted_batches(None))
+        self.assertEqual([], rules.parse_counted_batches("{not json"))
+        self.assertEqual([], rules.parse_counted_batches('[{"batch_no": "x", "qty": 0}, 5]'))
 
 
 if __name__ == "__main__":

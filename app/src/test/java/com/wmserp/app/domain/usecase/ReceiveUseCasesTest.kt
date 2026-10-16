@@ -3,6 +3,9 @@ package com.wmserp.app.domain.usecase
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.model.BatchCount
+import com.wmserp.app.domain.model.CreatedBatch
+import com.wmserp.app.domain.model.NewBatch
 import com.wmserp.app.domain.model.ReceiptCount
 import com.wmserp.app.domain.model.ReceiptDifference
 import com.wmserp.app.domain.model.ReceiveResult
@@ -52,6 +55,37 @@ class ReceiveUseCasesTest {
         assertTrue(result is AppResult.Success)
         assertEquals(listOf(ReceiptCount("row1", 10.0, "Stores - WM", "LOT-1")), counts.captured)
         assertEquals(mapOf("Purchase Receipt.department" to "Warehouse - WM", "Purchase Receipt.cost_center" to "Main - WM"), values.captured)
+    }
+
+    @Test
+    fun `a row received in several batches sends them with the summed quantity and zero batches dropped`() = runTest {
+        val counts = slot<List<ReceiptCount>>()
+        coEvery { repository.receive(receipt.name, capture(counts), any(), true) } returns AppResult.Success(ReceiveResult(receipt, submitted = true))
+
+        useCase(receipt, listOf(ReceiveLine("row1", 99.0, batches = listOf(BatchCount("1-A", 6.0, "A"), BatchCount("2-B", 0.0), BatchCount("3-C", 3.0)))))
+
+        val count = counts.captured.single()
+        assertEquals(9.0, count.qty, 0.0)
+        assertEquals("1-A", count.batchNo)
+        assertEquals(listOf(BatchCount("1-A", 6.0, "A"), BatchCount("3-C", 3.0)), count.batches)
+    }
+
+    @Test
+    fun `creating a batch validates the number and the dates before calling the server`() = runTest {
+        val create = CreateBatchUseCase(repository)
+        val created = CreatedBatch(TestFixtures.batch, created = true)
+        coEvery { repository.createBatch(NewBatch("ITEM-001", "LOT-1", "2026-10-01", "2028-09-30", receipt = "MAT-PRE-2026-00001")) } returns AppResult.Success(created)
+
+        assertEquals(created, (create(NewBatch("ITEM-001", " LOT-1 ", "2026-10-01", " 2028-09-30 ", receipt = "MAT-PRE-2026-00001")) as AppResult.Success).data)
+        assertEquals(ErrorCode.BATCH_REQUIRED_FOR_ITEM, (create(NewBatch("ITEM-001", " ")) as AppResult.Failure).error.code)
+        assertEquals(ErrorCode.INVALID_DATE, (create(NewBatch("ITEM-001", "LOT-1", "1/10/2026")) as AppResult.Failure).error.code)
+        assertEquals(ErrorCode.EXPIRY_BEFORE_MANUFACTURING, (create(NewBatch("ITEM-001", "LOT-1", "2026-10-01", "2026-09-30")) as AppResult.Failure).error.code)
+    }
+
+    @Test
+    fun `finding a batch needs a number`() = runTest {
+        val find = FindBatchUseCase(repository)
+        assertEquals(ErrorCode.BATCH_REQUIRED_FOR_ITEM, (find("  ") as AppResult.Failure).error.code)
     }
 
     @Test
