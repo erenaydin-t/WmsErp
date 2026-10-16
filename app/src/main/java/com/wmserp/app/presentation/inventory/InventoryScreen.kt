@@ -43,10 +43,16 @@ import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.ActivityHeatmap
 import com.wmserp.app.domain.model.DeliveryDelayReport
 import com.wmserp.app.domain.model.InventoryAnalytics
+import com.wmserp.app.domain.model.OrderDoctype
 import com.wmserp.app.domain.model.StockAgingReport
+import com.wmserp.app.presentation.browse.BrowseKind
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.titleRes
 import com.wmserp.app.presentation.common.toUiText
+import com.wmserp.app.presentation.details.DocumentDetailSheet
+import com.wmserp.app.presentation.details.DocumentDetailViewModel
+import com.wmserp.app.presentation.details.ItemDetailSheet
+import com.wmserp.app.presentation.details.ItemDetailViewModel
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
@@ -63,9 +69,25 @@ import com.wmserp.app.presentation.theme.WmsTheme
 import java.util.Locale
 
 @Composable
-fun InventoryRoute(viewModel: InventoryViewModel = hiltViewModel()) {
+fun InventoryRoute(
+    onOpenBrowse: (BrowseKind, String?) -> Unit = { _, _ -> },
+    onOpenPickList: (String) -> Unit = {},
+    viewModel: InventoryViewModel = hiltViewModel(),
+    itemDetail: ItemDetailViewModel = hiltViewModel(),
+    documentDetail: DocumentDetailViewModel = hiltViewModel(),
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    InventoryScreen(state = state, onSelectTab = viewModel::selectTab, onRefresh = viewModel::refresh, onRetry = { viewModel.load() })
+    InventoryScreen(
+        state = state,
+        onSelectTab = viewModel::selectTab,
+        onRefresh = viewModel::refresh,
+        onRetry = { viewModel.load() },
+        onOpenBrowse = onOpenBrowse,
+        onOpenSalesOrder = { documentDetail.open(OrderDoctype.SALES_ORDER, it) },
+        onOpenItem = itemDetail::open,
+    )
+    DocumentDetailSheet(documentDetail, onOpenItem = itemDetail::open, onOpenPickList = onOpenPickList)
+    ItemDetailSheet(itemDetail)
 }
 
 @Composable
@@ -74,6 +96,12 @@ fun InventoryScreen(
     onSelectTab: (AnalyticsTab) -> Unit,
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
+    /** A KPI card was tapped: open the list behind it. */
+    onOpenBrowse: (BrowseKind, String?) -> Unit = { _, _ -> },
+    /** A delayed Sales Order was tapped: open its popup. */
+    onOpenSalesOrder: (String) -> Unit = {},
+    /** A stock aging row was tapped: open the item popup. */
+    onOpenItem: (String) -> Unit = {},
 ) {
     val colors = WmsTheme.colors
     PullToRefreshBox(
@@ -103,9 +131,21 @@ fun InventoryScreen(
             state.analytics?.let { analytics ->
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        KpiCard(stringResource(R.string.kpi_pending_deliveries), Formatters.int(analytics.kpis.pendingDeliveries), Icons.Outlined.LocalShipping, colors.kpiBlue, Modifier.weight(1f).testTag("kpi_pending_deliveries"))
-                        KpiCard(stringResource(R.string.kpi_receipts_7d), Formatters.int(analytics.kpis.receipts), Icons.Outlined.MoveToInbox, colors.kpiTeal, Modifier.weight(1f).testTag("kpi_receipts"))
-                        KpiCard(stringResource(R.string.kpi_picklists), Formatters.int(analytics.kpis.pickLists), Icons.Outlined.Checklist, colors.kpiPurple, Modifier.weight(1f).testTag("kpi_picklists"))
+                        KpiCard(
+                            stringResource(R.string.kpi_pending_deliveries), Formatters.int(analytics.kpis.pendingDeliveries), Icons.Outlined.LocalShipping, colors.kpiBlue,
+                            Modifier.weight(1f).testTag("kpi_pending_deliveries"),
+                            onClick = { onOpenBrowse(BrowseKind.PENDING_DELIVERIES, null) },
+                        )
+                        KpiCard(
+                            stringResource(R.string.kpi_receipts_7d), Formatters.int(analytics.kpis.receipts), Icons.Outlined.MoveToInbox, colors.kpiTeal,
+                            Modifier.weight(1f).testTag("kpi_receipts"),
+                            onClick = { onOpenBrowse(BrowseKind.RECEIPTS, analytics.kpis.receiptsSince.ifBlank { null }) },
+                        )
+                        KpiCard(
+                            stringResource(R.string.kpi_picklists), Formatters.int(analytics.kpis.pickLists), Icons.Outlined.Checklist, colors.kpiPurple,
+                            Modifier.weight(1f).testTag("kpi_picklists"),
+                            onClick = { onOpenBrowse(BrowseKind.PICK_LISTS, null) },
+                        )
                     }
                 }
                 if (analytics.errors.isNotEmpty()) {
@@ -128,9 +168,9 @@ fun InventoryScreen(
                     }
                 }
                 when (state.selectedTab) {
-                    AnalyticsTab.DELIVERY_DELAYS -> deliveryDelaysContent(analytics.delays)
+                    AnalyticsTab.DELIVERY_DELAYS -> deliveryDelaysContent(analytics.delays, onOpenSalesOrder)
                     AnalyticsTab.ACTIVITY_HEATMAP -> heatmapContent(analytics.heatmap)
-                    AnalyticsTab.STOCK_AGING -> stockAgingContent(analytics.aging)
+                    AnalyticsTab.STOCK_AGING -> stockAgingContent(analytics.aging, onOpenItem)
                 }
             }
         }
@@ -143,7 +183,7 @@ private fun PartialErrors(analytics: InventoryAnalytics) {
     InfoBanner(lines.joinToString("\n"), container = WmsTheme.colors.warningContainer, content = MaterialTheme.colorScheme.onSurface)
 }
 
-private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?) {
+private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?, onOpenSalesOrder: (String) -> Unit) {
     if (report == null) {
         item { EmptyState(Icons.Outlined.Schedule, stringResource(R.string.delays_unavailable_title), stringResource(R.string.delays_unavailable_message)) }
         return
@@ -163,10 +203,11 @@ private fun LazyListScope.deliveryDelaysContent(report: DeliveryDelayReport?) {
     items(report.orders.take(10), key = { it.orderName }) { delay ->
         val colors = WmsTheme.colors
         Card(
+            onClick = { onOpenSalesOrder(delay.orderName) },
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = MaterialTheme.shapes.medium,
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("delay_${delay.orderName}"),
         ) {
             Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -212,7 +253,7 @@ private fun LazyListScope.heatmapContent(heatmap: ActivityHeatmap?) {
     }
 }
 
-private fun LazyListScope.stockAgingContent(report: StockAgingReport?) {
+private fun LazyListScope.stockAgingContent(report: StockAgingReport?, onOpenItem: (String) -> Unit) {
     if (report == null) {
         item { EmptyState(Icons.Outlined.Schedule, stringResource(R.string.aging_unavailable_title), stringResource(R.string.aging_unavailable_message)) }
         return
@@ -235,10 +276,11 @@ private fun LazyListScope.stockAgingContent(report: StockAgingReport?) {
     val maxAge = report.rows.maxOfOrNull { it.averageAge }?.takeIf { it > 0 } ?: 1.0
     items(report.rows.take(10), key = { "${it.itemCode}-${it.warehouse}" }) { row ->
         Card(
+            onClick = { onOpenItem(row.itemCode) },
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = MaterialTheme.shapes.medium,
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("aging_${row.itemCode}"),
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 ProgressRow(

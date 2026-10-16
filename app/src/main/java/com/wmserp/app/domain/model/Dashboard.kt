@@ -9,6 +9,8 @@ data class DashboardKpis(
     /** Delivery Notes submitted this month. */
     val dispatched: Int,
     val periodLabel: String,
+    /** ISO first day of the period the receipts / dispatched figures cover. */
+    val periodStart: String = "",
 )
 
 /** One row of the recent stock activity feed (ERPNext `Stock Ledger Entry`). */
@@ -29,6 +31,8 @@ data class InventoryKpis(
     val pendingDeliveries: Int,
     val receipts: Int,
     val pickLists: Int,
+    /** ISO first day the receipts figure counts from. */
+    val receiptsSince: String = "",
 )
 
 data class DeliveryDelay(

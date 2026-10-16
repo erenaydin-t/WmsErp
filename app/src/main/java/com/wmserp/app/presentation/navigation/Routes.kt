@@ -2,6 +2,7 @@ package com.wmserp.app.presentation.navigation
 
 import android.net.Uri
 import com.wmserp.app.domain.model.ScanTarget
+import com.wmserp.app.presentation.browse.BrowseKind
 import com.wmserp.app.presentation.orders.OrdersTab
 
 object Routes {
@@ -15,18 +16,22 @@ object Routes {
     const val RECEIVE_DETAIL = "receive"
     const val PICK_LIST_DETAIL = "picklist"
     const val STOCKTAKING_DETAIL = "stocktaking"
+    const val BROWSE = "browse"
 
     const val ARG_TARGET = "target"
     const val ARG_TAB = "tab"
     const val ARG_RECEIPT_NAME = "receiptName"
     const val ARG_PICK_LIST_NAME = "pickListName"
     const val ARG_SESSION_NAME = "sessionName"
+    const val ARG_KIND = "kind"
+    const val ARG_SINCE = "since"
 
     const val SCAN_PATTERN = "$SCAN?$ARG_TARGET={$ARG_TARGET}"
     const val ORDERS_PATTERN = "$ORDERS?$ARG_TAB={$ARG_TAB}"
     const val RECEIVE_PATTERN = "$RECEIVE_DETAIL/{$ARG_RECEIPT_NAME}"
     const val PICK_LIST_PATTERN = "$PICK_LIST_DETAIL/{$ARG_PICK_LIST_NAME}"
     const val STOCKTAKING_PATTERN = "$STOCKTAKING_DETAIL/{$ARG_SESSION_NAME}"
+    const val BROWSE_PATTERN = "$BROWSE/{$ARG_KIND}?$ARG_SINCE={$ARG_SINCE}"
 
     /** Destinations that show the bottom navigation bar. */
     val topLevel: Set<String> = setOf(DASHBOARD, INVENTORY, SCAN, ORDERS, PROFILE)
@@ -37,6 +42,8 @@ object Routes {
     fun receive(receiptName: String): String = "$RECEIVE_DETAIL/${Uri.encode(receiptName)}"
     fun pickList(name: String): String = "$PICK_LIST_DETAIL/${Uri.encode(name)}"
     fun stocktaking(name: String): String = "$STOCKTAKING_DETAIL/${Uri.encode(name)}"
+    /** The filtered list behind a dashboard / inventory card; [since] is an ISO date for period cards. */
+    fun browse(kind: BrowseKind, since: String? = null): String = if (since == null) "$BROWSE/${kind.name}" else "$BROWSE/${kind.name}?$ARG_SINCE=$since"
 
     /** Strips query parameters so "scan?target={target}" compares equal to "scan". */
     fun base(route: String?): String? = route?.substringBefore('?')?.substringBefore('/')

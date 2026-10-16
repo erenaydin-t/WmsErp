@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
 
@@ -15,6 +16,10 @@ object Formatters {
     // Month names follow the app language (see LocaleDefaults); digits stay ASCII so they match ERPNext.
     private val dateOut get() = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
     private val dateTimeOut get() = DateTimeFormatter.ofPattern("dd MMM, HH:mm", Locale.getDefault())
+    private val timeOut = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
+
+    /** Persian UI shows the Jalali (Shamsi) calendar; everything else the Gregorian one. */
+    val usesJalali: Boolean get() = Locale.getDefault().language == PERSIAN
 
     fun qty(value: Double): String = qtyFormat.format(value)
 
@@ -39,19 +44,38 @@ object Formatters {
         }
     }
 
+    /** `2026-10-16` -> "16 Oct 2026", or "24 مهر 1405" in the Persian UI. */
     fun date(iso: String?): String {
         if (iso.isNullOrBlank()) return "-"
-        return runCatching { LocalDate.parse(iso.take(10)).format(dateOut) }.getOrDefault(iso)
+        return runCatching { date(LocalDate.parse(iso.take(10))) }.getOrDefault(iso)
     }
 
+    fun date(value: LocalDate): String =
+        if (usesJalali) PersianCalendar.fromGregorian(value).let { "${it.day} ${PersianCalendar.monthName(it.month)} ${it.year}" } else value.format(dateOut)
+
+    /** "16 Oct, 14:05" or "24 مهر، 14:05". */
     fun dateTime(isoDate: String?, time: String?): String {
         if (isoDate.isNullOrBlank()) return "-"
         return runCatching {
             val d = LocalDate.parse(isoDate.take(10))
             val t = time?.takeIf { it.isNotBlank() }?.let { LocalTime.parse(it.take(8).padEnd(8, '0').let { s -> if (s.length == 5) "$s:00" else s }) } ?: LocalTime.MIDNIGHT
-            LocalDateTime.of(d, t).format(dateTimeOut)
+            if (usesJalali) {
+                val j = PersianCalendar.fromGregorian(d)
+                "${j.day} ${PersianCalendar.monthName(j.month)}، ${t.format(timeOut)}"
+            } else {
+                LocalDateTime.of(d, t).format(dateTimeOut)
+            }
         }.getOrDefault(isoDate)
     }
+
+    /** "Oct 2026" or "مهر 1405": the month a dashboard figure covers. */
+    fun monthYear(value: LocalDate): String =
+        if (usesJalali) PersianCalendar.fromGregorian(value).let { "${PersianCalendar.monthName(it.month)} ${it.year}" }
+        else value.month.getDisplayName(TextStyle.SHORT, Locale.getDefault()) + " " + value.year
+
+    /** The first day of the month [value] belongs to in the calendar the UI shows. */
+    fun startOfMonth(value: LocalDate): LocalDate =
+        if (usesJalali) PersianCalendar.fromGregorian(value).let { PersianCalendar.toGregorian(it.year, it.month, 1) } else value.withDayOfMonth(1)
 
     fun percent(value: Double): String = "${value.coerceIn(0.0, 100.0).toInt()}%"
 
@@ -72,4 +96,6 @@ object Formatters {
         val s = String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')
         return s
     }
+
+    private const val PERSIAN = "fa"
 }

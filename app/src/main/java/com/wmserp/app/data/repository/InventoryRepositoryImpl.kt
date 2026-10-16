@@ -50,20 +50,33 @@ class InventoryRepositoryImpl(
     }
 
     override suspend fun searchItems(query: String, limit: Int): AppResult<List<Item>> = apiCaller.call {
-        val orFilters = if (query.isBlank()) emptyList() else listOf(
-            Filter.like("item_code", query),
-            Filter.like("item_name", query),
-            Filter("barcode", "like", "%$query%", doctype = ITEM_BARCODE),
-        )
         dataSource.getList<ItemDto>(
             doctype = ITEM,
             fields = ITEM_LIST_FIELDS,
             filters = listOf(Filter.eq("disabled", 0)),
-            orFilters = orFilters,
+            orFilters = itemSearchFilters(query),
             orderBy = if (query.isBlank()) "modified desc" else "item_name asc",
             limit = limit,
         ).map { it.toDomain(baseUrl) }
     }
+
+    override suspend fun listItems(query: String, limit: Int, start: Int): AppResult<List<Item>> = apiCaller.call {
+        dataSource.getList<ItemDto>(
+            doctype = ITEM,
+            fields = ITEM_LIST_FIELDS,
+            filters = listOf(Filter.eq("disabled", 0)),
+            orFilters = itemSearchFilters(query),
+            orderBy = "item_name asc, name asc",
+            limit = limit,
+            start = start,
+        ).map { it.toDomain(baseUrl) }
+    }
+
+    private fun itemSearchFilters(query: String): List<Filter> = if (query.isBlank()) emptyList() else listOf(
+        Filter.like("item_code", query),
+        Filter.like("item_name", query),
+        Filter("barcode", "like", "%$query%", doctype = ITEM_BARCODE),
+    )
 
     override suspend fun getStockLevels(itemCode: String): AppResult<List<StockLevel>> = apiCaller.call {
         dataSource.getList<BinDto>(

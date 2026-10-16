@@ -1,5 +1,6 @@
 package com.wmserp.app.data.repository
 
+import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.data.mapper.toDomain
 import com.wmserp.app.data.remote.ApiCaller
 import com.wmserp.app.data.remote.ErpNextDataSource
@@ -46,7 +47,8 @@ class AnalyticsRepositoryImpl(
 
     override suspend fun getDashboardKpis(): AppResult<DashboardKpis> = coroutineScope {
         val today = dateProvider.today()
-        val monthStart = today.withDayOfMonth(1)
+        // "This month" in the calendar the user sees: Jalali in the Persian UI, Gregorian otherwise.
+        val monthStart = Formatters.startOfMonth(today)
 
         val items = async { apiCaller.call { dataSource.getCount("Item", listOf(Filter.eq("disabled", 0))) } }
         val pendingPo = async {
@@ -80,7 +82,8 @@ class AnalyticsRepositoryImpl(
                 pendingOrders = (pendingPo.await().getOrNull() ?: 0) + (pendingSo.await().getOrNull() ?: 0),
                 receipts = receipts.await().getOrNull() ?: 0,
                 dispatched = dispatched.await().getOrNull() ?: 0,
-                periodLabel = today.month.getDisplayName(TextStyle.SHORT, Locale.getDefault()) + " " + today.year,
+                periodLabel = Formatters.monthYear(today),
+                periodStart = monthStart.toString(),
             )
         )
     }
@@ -95,7 +98,7 @@ class AnalyticsRepositoryImpl(
             apiCaller.call { dataSource.getCount("Purchase Receipt", listOf(Filter.eq("docstatus", 1), Filter.gte("posting_date", weekAgo.toString()))) }
         }
         val pickLists = async {
-            apiCaller.call { dataSource.getCount("Pick List", listOf(Filter.lt("docstatus", 2), Filter.inList("status", listOf("Draft", "Open")))) }
+            apiCaller.call { dataSource.getCount("Pick List", listOf(Filter.lt("docstatus", 2), Filter.inList("status", PICK_LIST_OPEN_STATUSES))) }
         }
         val results = listOf(deliveries.await(), receipts.await(), pickLists.await())
         results.firstOrNull { it is AppResult.Failure && it.error is AppError.Unauthorized }?.let {
@@ -109,6 +112,7 @@ class AnalyticsRepositoryImpl(
                 pendingDeliveries = deliveries.await().getOrNull() ?: 0,
                 receipts = receipts.await().getOrNull() ?: 0,
                 pickLists = pickLists.await().getOrNull() ?: 0,
+                receiptsSince = weekAgo.toString(),
             )
         )
     }
@@ -179,6 +183,7 @@ class AnalyticsRepositoryImpl(
 
         val PO_OPEN_STATUSES = listOf("To Receive and Bill", "To Receive")
         val SO_OPEN_STATUSES = listOf("To Deliver and Bill", "To Deliver")
+        val PICK_LIST_OPEN_STATUSES = listOf("Draft", "Open")
         val SO_LIST_FIELDS = listOf("name", "customer", "customer_name", "status", "transaction_date", "delivery_date", "per_delivered", "company", "docstatus")
 
         /** Filters of the ERPNext 16 *Stock Ageing* report: one `range` string with the day boundaries. */

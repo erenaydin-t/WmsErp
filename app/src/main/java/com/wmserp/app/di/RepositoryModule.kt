@@ -13,6 +13,7 @@ import com.wmserp.app.data.remote.interceptor.SessionCookieJar
 import com.wmserp.app.data.repository.AnalyticsRepositoryImpl
 import com.wmserp.app.data.repository.AndroidSettingsRepository
 import com.wmserp.app.data.repository.AuthRepositoryImpl
+import com.wmserp.app.data.repository.DocumentRepositoryImpl
 import com.wmserp.app.data.repository.InventoryRepositoryImpl
 import com.wmserp.app.data.repository.PickListRepositoryImpl
 import com.wmserp.app.data.repository.ProfileRepositoryImpl
@@ -22,6 +23,7 @@ import com.wmserp.app.data.util.DateProvider
 import com.wmserp.app.data.util.SystemDateProvider
 import com.wmserp.app.domain.repository.AnalyticsRepository
 import com.wmserp.app.domain.repository.AuthRepository
+import com.wmserp.app.domain.repository.DocumentRepository
 import com.wmserp.app.domain.repository.InventoryRepository
 import com.wmserp.app.domain.repository.PickListRepository
 import com.wmserp.app.domain.repository.ProfileRepository
@@ -76,6 +78,11 @@ object RepositoryModule {
     @Singleton
     fun providePickListRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): PickListRepository =
         PickListRepositoryImpl(dataSource, apiCaller)
+
+    @Provides
+    @Singleton
+    fun provideDocumentRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): DocumentRepository =
+        DocumentRepositoryImpl(dataSource, apiCaller)
 
     @Provides
     @Singleton

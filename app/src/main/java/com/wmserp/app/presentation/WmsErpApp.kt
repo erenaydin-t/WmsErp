@@ -31,6 +31,7 @@ import com.wmserp.app.presentation.common.LocaleDefaults
 import com.wmserp.app.presentation.common.LocalizedContent
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.components.BottomNavItem
+import com.wmserp.app.presentation.browse.BrowseRoute
 import com.wmserp.app.presentation.components.WmsBottomBar
 import com.wmserp.app.presentation.dashboard.DashboardRoute
 import com.wmserp.app.presentation.inventory.InventoryRoute
@@ -142,10 +143,30 @@ fun WmsNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
                 onPick = { navController.navigateToTab(Routes.orders(OrdersTab.PICK)) },
                 onReport = { navController.navigateToTab(Routes.INVENTORY) },
                 onOpenStocktaking = { navController.navigate(Routes.stocktaking(it)) },
+                onOpenBrowse = { kind, since -> navController.navigate(Routes.browse(kind, since)) },
             )
         }
 
-        composable(Routes.INVENTORY) { InventoryRoute() }
+        composable(Routes.INVENTORY) {
+            InventoryRoute(
+                onOpenBrowse = { kind, since -> navController.navigate(Routes.browse(kind, since)) },
+                onOpenPickList = { navController.navigate(Routes.pickList(it)) },
+            )
+        }
+
+        composable(
+            route = Routes.BROWSE_PATTERN,
+            arguments = listOf(
+                navArgument(Routes.ARG_KIND) { type = NavType.StringType },
+                navArgument(Routes.ARG_SINCE) { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
+        ) {
+            BrowseRoute(
+                onBack = { navController.popBackStack() },
+                onOpenPickList = { navController.navigate(Routes.pickList(it)) },
+                onReceive = { navController.navigate(Routes.receive(it)) },
+            )
+        }
 
         composable(
             route = Routes.SCAN_PATTERN,

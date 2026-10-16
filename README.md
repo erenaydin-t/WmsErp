@@ -49,9 +49,12 @@ amounts, costs or values** (no field of the kind is requested from ERPNext).
 2. **Dashboard** – greeting, KPI cards (Total Items, Pending Orders, Receipts, Dispatched; counts only), the
    picker's *My picking today* KPIs (rows picked, average time per row, open rows, cards completed), quick actions
    (Scan, Receive, Pick, Report), the counter's *Stocktaking in progress* sessions, recent stock ledger activity.
-3. **Inventory / Analytics** – KPI cards (Pending Deliveries, Receipts, Picklists) and tabs:
-   Delivery Delays (bar chart, order / customer / due date / status), Activity Heatmap (7 days × 3h blocks),
-   Stock Aging (ERPNext *Stock Ageing* report; quantities per age range, the value columns are ignored).
+   **Every KPI card opens the list behind its number** (see *Lists and popups* below); an activity row opens the
+   item popup.
+3. **Inventory / Analytics** – KPI cards (Pending Deliveries, Receipts, Picklists; each opens its list) and tabs:
+   Delivery Delays (bar chart, order / customer / due date / status; a delayed order opens the Sales Order popup),
+   Activity Heatmap (7 days × 3h blocks), Stock Aging (ERPNext *Stock Ageing* report; quantities per age range,
+   the value columns are ignored; a row opens the item popup).
 4. **Scan** – *Item / Batch*, *Warehouse* and *Receipt* targets, viewfinder with status text, manual entry,
    result cards, stock transfer (Material Transfer Stock Entry). Scanning a **batch** label (the JSON QR of a
    batch, or a plain batch number) shows the batch: item, expiry, manufacturing date, supplier and the stock
@@ -72,6 +75,21 @@ amounts, costs or values** (no field of the kind is requested from ERPNext).
 8. **Orders → Count** – the counter's open *Stocktaking Sessions*: scan-to-count with batch and expiry, the ERP
    quantity (unless the session is blind), an immediate verdict (accepted / second count needed / manager review),
    counts saved locally first and synced in the background (see [Stocktaking workflow](#stocktaking-workflow)).
+
+**Lists and popups.** A KPI card is a button: *Total Items* lists every active item, *Pending Orders* the
+submitted Sales and Purchase Orders still waiting for stock to move (with an All / Sales / Purchase switch),
+*Receipts* and *Dispatched* the Purchase Receipts / Delivery Notes submitted since the first day of the
+period shown on the card, *Pending Deliveries* the open Sales Orders and *Picklists* the open Pick Lists of
+everyone. The lists use **exactly the filters the cards count with** (`DocumentRepositoryImpl.filters` shares
+the status lists of `AnalyticsRepositoryImpl`), so the number on the card and the entries in the list agree.
+They are searchable (number or party name; code, name or barcode for items), a hardware scan fills the search
+box, and they page as the user scrolls. Tapping an entry opens a **bottom-sheet popup** instead of leaving the
+screen: the *item popup* (`ItemDetailSheet`: code, name, group, brand, UOM, batch / serial tracking, barcodes,
+description, stock per warehouse with reserved and available quantities) or the *document popup*
+(`DocumentDetailSheet`: party, stage, dates, warehouse, reference, delivered / received progress and every
+row with its quantity, done quantity, warehouse and batch; a row opens the item popup, a Pick List offers
+*Open pick list*, a draft Purchase Receipt *Receive this receipt*). The popups are backed by their own
+ViewModels (`ItemDetailViewModel`, `DocumentDetailViewModel`) so any screen can show them.
 
 **Mandatory fields a site added** (a *Department*, a *Cost Center*, a custom field…) on the documents the app
 creates or submits (Purchase Receipt, Delivery Note, Stock Entry, Stock Reconciliation) are filled server-side
@@ -308,8 +326,8 @@ the app to people outside your warehouse, and never upload such an APK to Google
 ### Versioning
 
 CI builds are versioned `<base>.<workflow run number>` (`versionName`) with the run number as `versionCode`;
-the base (`1.1`) lives in `app/build.gradle.kts` (`baseVersion`) and `.github/workflows/android.yml`
-(`BASE_VERSION`). Local builds are `1.2.0-dev` / `versionCode 1` and therefore always accept an update.
+the base (`1.3`) lives in `app/build.gradle.kts` (`baseVersion`) and `.github/workflows/android.yml`
+(`BASE_VERSION`). Local builds are `1.3.0-dev` / `versionCode 1` and therefore always accept an update.
 
 ## CI / CD (GitHub Actions)
 
@@ -375,6 +393,13 @@ The app ships in English and Persian (Farsi) with full right-to-left support.
 * `android:supportsRtl="true"` mirrors layouts, and directional icons (back arrow, orders icon) use the
   `AutoMirrored` Material icon variants. Numbers keep ASCII digits so barcodes, quantities and document
   names match ERPNext exactly.
+* **Dates in the Persian UI use the Jalali (Shamsi) calendar**: `Formatters.date` / `dateTime` / `monthYear`
+  render `24 مهر 1405`, `24 مهر، 14:05`, `مهر 1405` whenever the app language (or, under *System*, the
+  device locale) is Persian, through `PersianCalendar` (a dependency-free port of the jalaali-js /
+  Borkowski algorithm, exact for 1178–3177 AP, round-trip tested day by day). The dashboard's *this month*
+  figures (Receipts, Dispatched) count from the first day of the **Jalali** month in the Persian UI
+  (`Formatters.startOfMonth`). Dates still travel to and from ERPNext as ISO `yyyy-MM-dd`; only the display
+  converts, and digits stay ASCII for the same reason as above.
 
 To add another language, copy `values/strings.xml` to `values-<lang>/strings.xml`, translate the values,
 add the locale to `locales_config.xml` and a case to `AppLanguage` (with its label in `UiText.kt`).
@@ -415,7 +440,9 @@ python3 tools/erpnext_smoke_test.py --url https://erp.example.com --key API_KEY 
 
 * **Unit tests** (`app/src/test`): use cases, URL normaliser, ERPNext error parser, query builder, session store,
   repositories against a real Retrofit/OkHttp stack with MockWebServer, keyboard-wedge decoder, intent parser,
-  AES/GCM cipher, formatters, the strict QR label parser and scan validation, the picking use cases and
+  AES/GCM cipher, formatters and the Jalali calendar (known dates and a day-by-day round trip 1990–2060), the
+  document repository behind the KPI lists (filters, fields, paging, row mapping), the browse / item / document
+  popup ViewModels, the strict QR label parser and scan validation, the picking use cases and
   repository, the stocktaking use cases (paged download with cache fallback, scan resolution, the device-side
   count evaluator, the offline count queue), the file-backed stocktaking store and repository, and ViewModels
   (Login, Dashboard, Scan, Receive against a draft Purchase Receipt with the differences confirmation and the

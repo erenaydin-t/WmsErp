@@ -54,8 +54,11 @@ import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.ActivityEntry
 import com.wmserp.app.domain.model.UpdateState
+import com.wmserp.app.presentation.browse.BrowseKind
 import com.wmserp.app.presentation.common.asString
 import com.wmserp.app.presentation.common.toUiText
+import com.wmserp.app.presentation.details.ItemDetailSheet
+import com.wmserp.app.presentation.details.ItemDetailViewModel
 import com.wmserp.app.presentation.components.EmptyState
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.KpiCard
@@ -74,7 +77,9 @@ fun DashboardRoute(
     onPick: () -> Unit,
     onReport: () -> Unit,
     onOpenStocktaking: (String) -> Unit = {},
+    onOpenBrowse: (BrowseKind, String?) -> Unit = { _, _ -> },
     viewModel: DashboardViewModel = hiltViewModel(),
+    itemDetail: ItemDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
@@ -87,10 +92,13 @@ fun DashboardRoute(
         onPick = onPick,
         onReport = onReport,
         onOpenStocktaking = onOpenStocktaking,
+        onOpenBrowse = onOpenBrowse,
+        onOpenItem = itemDetail::open,
         updateState = updateState,
         onDownloadUpdate = viewModel::downloadUpdate,
         onDismissUpdate = viewModel::dismissUpdate,
     )
+    ItemDetailSheet(itemDetail)
 }
 
 @Composable
@@ -103,6 +111,10 @@ fun DashboardScreen(
     onPick: () -> Unit,
     onReport: () -> Unit,
     onOpenStocktaking: (String) -> Unit = {},
+    /** A KPI card was tapped: open the list behind it (kind, ISO start date of a period card). */
+    onOpenBrowse: (BrowseKind, String?) -> Unit = { _, _ -> },
+    /** An activity row was tapped: open the item popup. */
+    onOpenItem: (String) -> Unit = {},
     updateState: UpdateState = UpdateState.Idle,
     onDownloadUpdate: () -> Unit = {},
     onDismissUpdate: () -> Unit = {},
@@ -181,6 +193,7 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .testTag("kpi_total_items"),
                                 subtitle = stringResource(R.string.kpi_total_items_sub),
+                                onClick = { onOpenBrowse(BrowseKind.ITEMS, null) },
                             )
                             KpiCard(
                                 title = stringResource(R.string.kpi_pending_orders),
@@ -191,6 +204,7 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .testTag("kpi_pending_orders"),
                                 subtitle = stringResource(R.string.kpi_pending_orders_sub),
+                                onClick = { onOpenBrowse(BrowseKind.PENDING_ORDERS, null) },
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -203,6 +217,7 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .testTag("kpi_receipts"),
                                 subtitle = stringResource(R.string.kpi_receipts_sub, kpis.periodLabel),
+                                onClick = { onOpenBrowse(BrowseKind.RECEIPTS, kpis.periodStart.ifBlank { null }) },
                             )
                             KpiCard(
                                 title = stringResource(R.string.kpi_dispatched),
@@ -213,6 +228,7 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .testTag("kpi_dispatched"),
                                 subtitle = stringResource(R.string.kpi_dispatched_sub, kpis.periodLabel),
+                                onClick = { onOpenBrowse(BrowseKind.DISPATCHED, kpis.periodStart.ifBlank { null }) },
                             )
                         }
                     }
@@ -256,6 +272,7 @@ fun DashboardScreen(
                                 accent = colors.kpiAmber,
                                 modifier = Modifier.weight(1f).testTag("kpi_open_rows"),
                                 subtitle = stringResource(R.string.kpi_open_rows_sub, kpis.openPickLists),
+                                onClick = onPick,
                             )
                             KpiCard(
                                 title = stringResource(R.string.kpi_cards_completed),
@@ -292,7 +309,7 @@ fun DashboardScreen(
                         )
                     }
                 } else {
-                    items(data.recentActivity, key = { it.id }) { entry -> ActivityRow(entry) }
+                    items(data.recentActivity, key = { it.id }) { entry -> ActivityRow(entry) { onOpenItem(entry.itemCode) } }
                 }
             }
         }
@@ -300,11 +317,12 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun ActivityRow(entry: ActivityEntry) {
+private fun ActivityRow(entry: ActivityEntry, onClick: () -> Unit) {
     val colors = WmsTheme.colors
     val positive = entry.qtyChange >= 0
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().testTag("activity_${entry.id}"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.medium,
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),

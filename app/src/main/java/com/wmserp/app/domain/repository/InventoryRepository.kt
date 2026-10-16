@@ -14,6 +14,9 @@ interface InventoryRepository {
     suspend fun findItemByBarcode(code: String): AppResult<Item?>
     suspend fun getItem(itemCode: String): AppResult<Item>
     suspend fun searchItems(query: String, limit: Int = 20): AppResult<List<Item>>
+
+    /** The active items, alphabetically, pageable from [start]; [query] matches code, name or barcode. */
+    suspend fun listItems(query: String = "", limit: Int = 30, start: Int = 0): AppResult<List<Item>>
     suspend fun getStockLevels(itemCode: String): AppResult<List<StockLevel>>
 
     /** A batch by its name (`Batch.name`) or its printed id (`Batch.batch_id`); null when unknown. */
