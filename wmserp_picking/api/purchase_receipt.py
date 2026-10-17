@@ -491,9 +491,9 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     took it meanwhile. The expiry date defaults to the manufacturing date plus the item's shelf
     life (ERPNext does that itself); items with an expiry date and no shelf life need it sent.
     Sites that keep a quality-control number per batch (*WMS Settings > QC No Field*, `custom_qc_no`
-    by default) send it as `qc_no`: the same supplier number under another QC number is another
-    Batch there. A Batch that already carries the number - and the QC number, when one was sent -
-    is returned as is (`created: false`) instead of creating a duplicate.
+    by default) must send it as `qc_no` (refused otherwise): the same supplier number under
+    another QC number is another Batch there. A Batch that already carries the number and the QC
+    number is returned as is (`created: false`) instead of creating a duplicate.
     """
     item_code = (item_code or "").strip()
     batch_no = (batch_no or "").strip()
@@ -509,6 +509,8 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     qc_field = qc_no_field()
     if qc_no and not qc_field:
         frappe.throw(_("Batch has no field for a QC number: configure WMS Settings > QC No Field."))
+    if qc_field and not qc_no:
+        frappe.throw(_("Enter the QC number of this delivery: every batch created here carries one."), frappe.MandatoryError)
     existing = same_batch(search_batches(batch_no, [item_code]), qc_no, qc_field)
     if existing:
         return {"created": False, "batch": serialize_batch(existing), "item": facts}
@@ -562,9 +564,9 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
 
 
 def same_batch(candidates, qc_no, qc_field):
-    """The existing Batch `create_batch` must return instead of creating one: with a QC number the
-    one carrying the same number (spaces and case ignored); without one the batch without a QC
-    number, else the most recent one - the site then fills its QC number by hand, as it does today."""
+    """The existing Batch `create_batch` must return instead of creating one: on sites with a QC
+    number field the one carrying the same QC number (spaces and case ignored), elsewhere the most
+    recent batch of the number."""
     if not candidates:
         return None
     if not qc_field:
@@ -824,6 +826,8 @@ def serialize_receipt(doc, facts=None, stage=None):
         {
             "can_receive": can_receive(doc, stage) and frappe.has_permission(PURCHASE_RECEIPT, "write", doc),
             "has_workflow": stage["workflow"] is not None,
+            # Every batch created from the app needs the delivery's QC number on sites that keep one.
+            "batch_qc_required": bool(qc_no_field()),
             "items": [serialize_row(row, facts.get(row.name) or {}, barcodes) for row in rows],
         }
     )

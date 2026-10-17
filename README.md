@@ -50,7 +50,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.5.4     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.5.5     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -61,17 +61,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.5.4                              # or pin a version
+# git checkout wmserp_picking-v0.5.5                              # or pin a version
 cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format, creates the stocktaking DocTypes
 bench restart                    # no `bench build` needed: the form / list / report scripts are served from the app folder
-bench version                    # should list wmserp_picking 0.5.4
+bench version                    # should list wmserp_picking 0.5.5
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.5.5 | `wmserp_picking-v0.5.5` | The QC number is required: on sites with a QC No Field `create_batch` refuses an empty `qc_no`, and `get_receipt` says so with `batch_qc_required` so the app asks before calling. |
 | 0.5.4 | `wmserp_picking-v0.5.4` | QC numbers on batches: *WMS Settings > QC No Field* (`custom_qc_no` by default), `create_batch` takes `qc_no` and returns the existing batch only when it carries the same number (the same supplier number under another QC number is another Batch), `find_batch` / `create_batch` batches carry `qc_no`. |
 | 0.5.3 | `wmserp_picking-v0.5.3` | Fixed-asset and non-stock rows (services) on a receipt: `get_receipt` rows carry `is_stock_item` and `is_fixed_asset`, and `receive` never writes a warehouse to a row whose item holds no stock (the asset itself stays the asset accountant's job unless the item auto-creates assets; ERPNext books the amount without a stock ledger entry). |
 | 0.5.2 | `wmserp_picking-v0.5.2` | Split batch rows keep the Purchase Order pricing on sites whose Purchase Receipt Item pricing fields sit at a permission level the warehouse role lacks (Frappe resets such fields to defaults on rows that role adds, so ERPNext priced the second batch at list price): `receive` writes the source row's price list rate, discount, margin, rate, expense account and tax rate to the stored split-off rows, reloads, saves again (amounts and totals recomputed) and refuses to submit if the rates still differ. 0.5.1 restored them in memory only, which the same reset undid. |
@@ -216,9 +217,9 @@ Purchase Order, and the site's *Purchase Receipt* workflow (if any) carries the 
 | Method | Parameters | Effect |
 | --- | --- | --- |
 | `get_receivable` | `query?`, `limit?=50` | Draft, non-return Purchase Receipts the caller may receive: with an active Purchase Receipt workflow, `workflow_state` in *WMS Settings > Receipt Workflow States*, else in the *Draft* states of that workflow whose *Allow Edit* role the caller has; every draft without an active workflow (the configured states are ignored then); `query` matches name / supplier / supplier name. Headers only: supplier, posting date, stage, `item_count`, `total_qty`, `can_receive`, `has_workflow`. |
-| `get_receipt` | `name` | The receipt with its rows (`qty`, `counted_qty` and `counted_batches` saved so far, `received_qty`, UOM, conversion factor, warehouse, `batch_no` - from the row or from its *Serial and Batch Bundle* - with its `batch_label`, `has_batch_no`, `has_serial_no`, `has_expiry_date`, `shelf_life_in_days`, `create_new_batch`, `needs_batch`, `is_stock_item`, `is_fixed_asset`, the item's barcodes) plus `can_receive`. |
+| `get_receipt` | `name` | The receipt with its rows (`qty`, `counted_qty` and `counted_batches` saved so far, `received_qty`, UOM, conversion factor, warehouse, `batch_no` - from the row or from its *Serial and Batch Bundle* - with its `batch_label`, `has_batch_no`, `has_serial_no`, `has_expiry_date`, `shelf_life_in_days`, `create_new_batch`, `needs_batch`, `is_stock_item`, `is_fixed_asset`, the item's barcodes) plus `can_receive` and `batch_qc_required` (the site keeps a QC number per batch, so `create_batch` needs one). |
 | `find_batch` | `code`, `item_code?`, `receipt?` | The Batches `code` stands for: by name / Batch ID, and by the supplier's number in the site's batch field (spaces and case ignored), among the batches of `item_code` or of the items on draft `receipt`. Returns `{code, found, batches: [{name, batch_no, qc_no, item, item_name, expiry_date, manufacturing_date, supplier, disabled}], item}` (`item`: `has_batch_no`, `has_expiry_date`, `shelf_life_in_days`, `create_new_batch`). |
-| `create_batch` | `item_code`, `batch_no`, `qc_no?`, `manufacturing_date?`, `expiry_date?`, `supplier?`, `receipt?`, `manufacturer?` | Creates the Batch of a supplier number (needs *create* on Batch): Batch ID from *WMS Settings > Batch ID Pattern*, the batch number in the batch field, the QC number in the QC No Field, expiry from the shelf life when empty (ERPNext), the receipt as reference document and its supplier. A batch that already carries the number (and the QC number, when one is sent) is returned with `created: false`; the same supplier number under another QC number becomes another Batch. Returns `{created, batch, item}`. |
+| `create_batch` | `item_code`, `batch_no`, `qc_no?`, `manufacturing_date?`, `expiry_date?`, `supplier?`, `receipt?`, `manufacturer?` | Creates the Batch of a supplier number (needs *create* on Batch): Batch ID from *WMS Settings > Batch ID Pattern*, the batch number in the batch field, the QC number in the QC No Field, expiry from the shelf life when empty (ERPNext), the receipt as reference document and its supplier. On sites with a QC No Field `qc_no` is required; a batch that already carries the number and the QC number is returned with `created: false`, and the same supplier number under another QC number becomes another Batch. Returns `{created, batch, item}`. |
 | `receive` | `name`, `rows`, `values?`, `submit?=1`, `remove_unreceived?=1` | `rows`: `[{"row", "qty", "warehouse"?, "batch_no"?, "batches"?: [{"batch_no", "qty"}]}]` in the row UOM; with `batches` the row's quantity is their sum and a confirmed row is split into one Purchase Receipt Item per batch (the first batch stays on the row, every further one is a copy with the same Purchase Order row, rate, UOM, warehouse and site fields). Rows missing or counted 0 are removed when `remove_unreceived` (the Purchase Order stays open for them) and left untouched otherwise. With `submit=0` and `remove_unreceived=0` (saving the progress of a count) only `custom_wms_counted_qty`, `custom_wms_counted_batches`, the warehouse and the first batch are written and `qty` keeps the expected quantity. Otherwise writes `received_qty`, `qty`, `stock_qty`, `rejected_qty = 0`, the warehouse and the batch (`use_serial_batch_fields = 1`; a *Serial and Batch Bundle* whose batch or quantity no longer matches is unlinked and rebuilt by ERPNext on submit), writes *WMS Settings > Receipt Field Values*, fills required fields, saves, and with `submit` applies the caller's workflow transition that leads to a submitted state (an action named *Receive / Submit / Approve / Confirm / Complete / Accept* first) or `doc.submit()` without a workflow. Returns the receipt plus `created`, `submitted`, `differences` (`[{row, item_code, expected, counted}]`) and `removed_rows`, or the `missing_fields` answer. |
 
 Batch tracked rows without a batch that ERPNext would not create on submit (`needs_batch`) are refused
