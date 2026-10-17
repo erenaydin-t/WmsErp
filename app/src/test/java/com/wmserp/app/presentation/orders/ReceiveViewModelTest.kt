@@ -283,6 +283,26 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun `a site that keeps QC numbers refuses to create a batch without one`() = runTest {
+        coEvery { findBatch("LOT-8", "ITEM-001", null) } returns AppResult.Success(BatchLookup("LOT-8", emptyList(), BatchItemFacts("ITEM-001", hasBatchNo = true)))
+        val vm = createViewModel(receipt.copy(batchQcRequired = true))
+        vm.openBatchSheet("row1")
+        vm.setBatchCode("LOT-8")
+        vm.lookupBatch()
+        assertTrue(vm.uiState.value.batchSheet!!.isNew)
+
+        vm.createBatchFromSheet()
+
+        assertNotNull(vm.uiState.value.batchSheet!!.error)
+        coVerify(exactly = 0) { createBatch(any()) }
+        vm.setBatchQcNo("5260903100")
+        val request = slot<NewBatch>()
+        coEvery { createBatch(capture(request)) } returns AppResult.Success(CreatedBatch(TestFixtures.batch.copy(name = "9-ITEM-001-LOT-8", batchNo = "LOT-8", qcNo = "5260903100"), created = true))
+        vm.createBatchFromSheet()
+        assertEquals("5260903100", request.captured.qcNo)
+    }
+
+    @Test
     fun `one row received in two batches sends both with their quantities and the row total`() = runTest {
         val a = TestFixtures.batch.copy(name = "1-ITEM-001-A", batchNo = "A")
         val b = TestFixtures.batch.copy(name = "2-ITEM-001-B", batchNo = "B")

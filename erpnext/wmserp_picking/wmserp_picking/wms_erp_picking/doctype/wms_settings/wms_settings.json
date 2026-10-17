@@ -100,7 +100,7 @@
    "fieldname": "batch_help",
    "fieldtype": "HTML",
    "label": "Help",
-   "options": "<p>Batch tracked items whose batches ERPNext does not create itself (<i>Has Batch No</i> without <i>Automatically Create New Batch</i>) need a Batch before the receipt is submitted. The app reads the batch number off the material, finds the Batch or creates it (<code>find_batch</code> / <code>create_batch</code>, Stock User needs <i>create</i> on Batch), and counts each batch under its row; a row received in several batches is split into one Purchase Receipt Item per batch when the receipt is confirmed. The expiry date defaults to the manufacturing date plus the item's shelf life. Sites that give every delivery a quality-control number keep it in the QC No Field: the app asks for it when creating a batch, and the same supplier number under another QC number is another Batch.</p>"
+   "options": "<p>Batch tracked items whose batches ERPNext does not create itself (<i>Has Batch No</i> without <i>Automatically Create New Batch</i>) need a Batch before the receipt is submitted. The app reads the batch number off the material, finds the Batch or creates it (<code>find_batch</code> / <code>create_batch</code>, Stock User needs <i>create</i> on Batch), and counts each batch under its row; a row received in several batches is split into one Purchase Receipt Item per batch when the receipt is confirmed. The expiry date defaults to the manufacturing date plus the item's shelf life. Sites that give every delivery a quality-control number keep it in the QC No Field: the app requires it when creating a batch, and the same supplier number under another QC number is another Batch.</p>"
   }
  ],
  "index_web_pages_for_search": 1,

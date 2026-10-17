@@ -359,6 +359,10 @@ class ReceiveViewModel @Inject constructor(
         val line = state.lines.firstOrNull { it.item.rowName == rowName } ?: return
         val receipt = state.receipt ?: return
         if (sheet.isBusy || !sheet.isNew) return
+        if (receipt.batchQcRequired && sheet.qcNo.isBlank()) {
+            _uiState.update { it.copy(batchSheet = sheet.copy(error = UiText.Res(R.string.receive_batch_qc_no_required))) }
+            return
+        }
         _uiState.update { it.copy(batchSheet = sheet.copy(isBusy = true, error = null)) }
         viewModelScope.launch {
             val request = NewBatch(

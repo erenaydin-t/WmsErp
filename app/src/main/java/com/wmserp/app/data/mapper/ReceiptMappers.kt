@@ -42,6 +42,7 @@ fun PurchaseReceiptDto.toDomain(): PurchaseReceipt = PurchaseReceipt(
     totalQty = if (items.isNotEmpty()) items.sumOf { it.qty } else totalQty,
     canReceive = canReceive,
     hasWorkflow = hasWorkflow,
+    batchQcRequired = batchQcRequired,
     items = items.map { it.toDomain() },
 )
 

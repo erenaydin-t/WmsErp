@@ -223,7 +223,7 @@ fun ReceiveScreen(state: ReceiveUiState, onBack: () -> Unit, actions: ReceiveAct
             onDismiss = actions.onDismissRequiredFields,
         )
     }
-    state.batchSheet?.let { sheet -> BatchSheet(sheet, state.lines, actions) }
+    state.batchSheet?.let { sheet -> BatchSheet(sheet, state.lines, actions, qcRequired = state.receipt?.batchQcRequired == true) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -429,7 +429,7 @@ private fun BatchLineRow(line: ReceiveLineState, batch: BatchLineState, editable
  * the ERPNext batch when several carry that number, or create it with its dates when it is new.
  */
 @Composable
-private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, actions: ReceiveActions) {
+private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, actions: ReceiveActions, qcRequired: Boolean = false) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val line = lines.firstOrNull { it.item.rowName == sheet.rowName }
     ModalBottomSheet(onDismissRequest = actions.onCloseBatchSheet, sheetState = sheetState, modifier = Modifier.testTag("receive_batch_sheet")) {
@@ -523,7 +523,8 @@ private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, ac
                     value = sheet.qcNo,
                     onValueChange = actions.onBatchQcNoChange,
                     label = { Text(stringResource(R.string.receive_batch_qc_no)) },
-                    supportingText = { Text(stringResource(R.string.receive_batch_qc_no_hint)) },
+                    supportingText = { Text(stringResource(if (qcRequired) R.string.receive_batch_qc_no_required else R.string.receive_batch_qc_no_hint)) },
+                    isError = qcRequired && sheet.qcNo.isBlank(),
                     singleLine = true,
                     enabled = !sheet.isBusy,
                     modifier = Modifier.fillMaxWidth().testTag("receive_batch_qc_no"),
@@ -549,7 +550,7 @@ private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, ac
                 )
                 Button(
                     onClick = actions.onCreateBatch,
-                    enabled = !sheet.isBusy && sheet.code.isNotBlank() && (!line.item.hasExpiryDate || sheet.expiryDate.isNotBlank()),
+                    enabled = !sheet.isBusy && sheet.code.isNotBlank() && (!line.item.hasExpiryDate || sheet.expiryDate.isNotBlank()) && (!qcRequired || sheet.qcNo.isNotBlank()),
                     modifier = Modifier.fillMaxWidth().testTag("receive_batch_create"),
                 ) { Text(stringResource(R.string.receive_batch_create)) }
             }

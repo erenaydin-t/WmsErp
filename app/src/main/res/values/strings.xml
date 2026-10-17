@@ -544,6 +544,7 @@
     <string name="receive_batch_qc">QC %1$s</string>
     <string name="receive_batch_qc_no">QC number</string>
     <string name="receive_batch_qc_no_hint">The quality-control number of this delivery, if your site assigns one at receiving; leave empty otherwise</string>
+    <string name="receive_batch_qc_no_required">Required: the QC number assigned to this delivery</string>
     <string name="receive_batch_another_qc">This delivery has another QC number: create a new batch</string>
     <string name="receive_summary_title">Confirm receipt</string>
     <string name="receive_summary_message">The receipt will be submitted with these quantities and batches. Stock enters the warehouse.</string>

@@ -20,6 +20,7 @@ data class PurchaseReceiptDto(
     @SerialName("total_qty") val totalQty: Double = 0.0,
     @SerialName("can_receive") val canReceive: Boolean = true,
     @SerialName("has_workflow") val hasWorkflow: Boolean = false,
+    @SerialName("batch_qc_required") val batchQcRequired: Boolean = false,
     val items: List<PurchaseReceiptItemDto> = emptyList(),
     // Present on the answer of `receive`.
     val created: Boolean? = null,

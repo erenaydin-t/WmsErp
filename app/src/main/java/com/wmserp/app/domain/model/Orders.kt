@@ -23,6 +23,8 @@ data class PurchaseReceipt(
     /** The signed-in user may count and confirm this receipt (draft, at their stage, write permission). */
     val canReceive: Boolean = true,
     val hasWorkflow: Boolean = false,
+    /** The site keeps a quality-control number per batch: a batch created from the app needs one. */
+    val batchQcRequired: Boolean = false,
     val items: List<PurchaseReceiptItem> = emptyList(),
 ) {
     val isDraft: Boolean get() = docStatus == 0
