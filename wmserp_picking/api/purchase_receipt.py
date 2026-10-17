@@ -432,7 +432,8 @@ def find_batch(code, item_code=None, receipt=None):
     or to the items of draft receipt `receipt`, so a bare supplier number cannot land on another
     item. Several batches can share one supplier number (a site that keeps a QC number per batch
     creates one Batch per QC run): the app lets the warehouse pick one. Returns
-    `{"code", "found", "batches": [...], "item": <item facts, when item_code was given>}`.
+    `{"code", "found", "batches": [...], "item": <item facts, when item_code was given>}`; each
+    batch carries its `qc_no` on sites with a QC number field, so the app can show which is which.
     """
     code = (code or "").strip()
     if not code:
@@ -455,7 +456,8 @@ def search_batches(code, items) -> list:
     (every item when empty). The supplier number is compared with spaces and case ignored, the way
     `rules.batch_key` does it."""
     field = batch_no_field()
-    fields = ["name", "batch_id", "item", "item_name", "expiry_date", "manufacturing_date", "disabled", "supplier"] + ([field] if field else [])
+    qc_field = qc_no_field()
+    fields = ["name", "batch_id", "item", "item_name", "expiry_date", "manufacturing_date", "disabled", "supplier"] + [f for f in (field, qc_field) if f]
     filters = {"item": ["in", items]} if items else {}
     out = list(frappe.get_all(BATCH, filters={**filters, "name": code}, fields=fields))
     seen = {b.name for b in out}
@@ -479,7 +481,7 @@ def search_batches(code, items) -> list:
 
 
 @frappe.whitelist()
-def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None, supplier=None, receipt=None, manufacturer=None):
+def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None, supplier=None, receipt=None, manufacturer=None, qc_no=None):
     """Creates the Batch of a batch number the supplier printed on the material, for an item that
     needs its batches created by hand (`has_batch_no` without `create_new_batch`).
 
@@ -488,11 +490,14 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     numeric prefix of the last batch created, assigned under a lock and retried when another user
     took it meanwhile. The expiry date defaults to the manufacturing date plus the item's shelf
     life (ERPNext does that itself); items with an expiry date and no shelf life need it sent.
-    When a Batch with that number already exists for the item it is returned as is
-    (`created: false`) instead of creating a duplicate.
+    Sites that keep a quality-control number per batch (*WMS Settings > QC No Field*, `custom_qc_no`
+    by default) send it as `qc_no`: the same supplier number under another QC number is another
+    Batch there. A Batch that already carries the number - and the QC number, when one was sent -
+    is returned as is (`created: false`) instead of creating a duplicate.
     """
     item_code = (item_code or "").strip()
     batch_no = (batch_no or "").strip()
+    qc_no = (qc_no or "").strip()
     if not item_code or not batch_no:
         frappe.throw(_("Item and batch number are required."))
     facts = batch_item_facts(item_code)
@@ -501,9 +506,12 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     if not facts["has_batch_no"]:
         frappe.throw(_("Item {0} is not batch tracked.").format(item_code))
     frappe.has_permission(BATCH, "create", throw=True)
-    existing = search_batches(batch_no, [item_code])
+    qc_field = qc_no_field()
+    if qc_no and not qc_field:
+        frappe.throw(_("Batch has no field for a QC number: configure WMS Settings > QC No Field."))
+    existing = same_batch(search_batches(batch_no, [item_code]), qc_no, qc_field)
     if existing:
-        return {"created": False, "batch": serialize_batch(existing[0]), "item": facts}
+        return {"created": False, "batch": serialize_batch(existing), "item": facts}
 
     pattern = batch_id_pattern()
     field = batch_no_field()
@@ -516,6 +524,8 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     }
     if field:
         values[field] = batch_no
+    if qc_no:
+        values[qc_field] = qc_no
     if manufacturer and frappe.get_meta(BATCH).has_field("custom_manufacturer"):
         values["custom_manufacturer"] = manufacturer
     if receipt:
@@ -551,6 +561,21 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     return {"created": True, "batch": serialize_batch(doc), "item": facts}
 
 
+def same_batch(candidates, qc_no, qc_field):
+    """The existing Batch `create_batch` must return instead of creating one: with a QC number the
+    one carrying the same number (spaces and case ignored); without one the batch without a QC
+    number, else the most recent one - the site then fills its QC number by hand, as it does today."""
+    if not candidates:
+        return None
+    if not qc_field:
+        return candidates[0]
+    wanted = rules.batch_key(qc_no)
+    for batch in candidates:
+        if rules.batch_key(batch.get(qc_field)) == wanted:
+            return batch
+    return None if wanted else candidates[0]
+
+
 def next_batch_counter() -> int:
     """The next `{counter}`: numeric prefix of the last Batch created plus one, past any id that
     is already taken. The row lock serializes two receivers creating batches at the same moment."""
@@ -582,10 +607,12 @@ def batch_item_facts(item_code):
 
 def serialize_batch(batch) -> dict:
     field = batch_no_field()
+    qc_field = qc_no_field()
     label = (batch.get(field) if field else None) or batch.get("batch_id") or batch.get("name")
     return {
         "name": batch.get("name"),
         "batch_no": label,
+        "qc_no": (batch.get(qc_field) or None) if qc_field else None,
         "item": batch.get("item"),
         "item_name": batch.get("item_name"),
         "expiry_date": str_or_none(batch.get("expiry_date")),
@@ -612,6 +639,18 @@ def batch_no_field():
             frappe.throw(_("WMS Settings > Batch No Field: Batch has no field {0}.").format(configured))
         return configured
     return "custom_batch_no" if meta.has_field("custom_batch_no") else None
+
+
+def qc_no_field():
+    """The Batch field that holds the quality-control number: *WMS Settings > QC No Field*, else
+    `custom_qc_no` when the site has it, else None."""
+    configured = (wms_settings().get("qc_no_field") or "").strip()
+    meta = frappe.get_meta(BATCH)
+    if configured:
+        if not meta.has_field(configured):
+            frappe.throw(_("WMS Settings > QC No Field: Batch has no field {0}.").format(configured))
+        return configured
+    return "custom_qc_no" if meta.has_field("custom_qc_no") else None
 
 
 def batch_id_pattern() -> str:
