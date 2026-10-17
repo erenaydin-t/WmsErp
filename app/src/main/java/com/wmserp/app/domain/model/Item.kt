@@ -44,6 +44,8 @@ data class Batch(
     val description: String? = null,
     /** The supplier's batch number as printed on the material, on sites that keep it in its own Batch field. */
     val batchNo: String? = null,
+    /** The quality-control number of the delivery, on sites that keep one per batch. */
+    val qcNo: String? = null,
 ) {
     /** What a label shows: the supplier's number when the site keeps one, else the ERPNext name. */
     val label: String get() = batchNo?.takeIf { it.isNotBlank() } ?: name

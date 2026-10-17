@@ -97,6 +97,7 @@ class ReceiptRepositoryImpl(
         val body = buildJsonObject {
             put("item_code", batch.itemCode)
             put("batch_no", batch.batchNo)
+            batch.qcNo?.takeIf { it.isNotBlank() }?.let { put("qc_no", it) }
             batch.manufacturingDate?.takeIf { it.isNotBlank() }?.let { put("manufacturing_date", it) }
             batch.expiryDate?.takeIf { it.isNotBlank() }?.let { put("expiry_date", it) }
             batch.supplier?.takeIf { it.isNotBlank() }?.let { put("supplier", it) }

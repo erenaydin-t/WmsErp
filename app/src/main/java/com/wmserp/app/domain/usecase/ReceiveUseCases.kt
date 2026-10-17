@@ -135,7 +135,7 @@ class CreateBatchUseCase @Inject constructor(private val repository: ReceiptRepo
         if (mfg != null && expiry != null && expiry < mfg) {
             return AppResult.Failure(AppError.Validation("Expiry $expiry is before manufacturing date $mfg", ErrorCode.EXPIRY_BEFORE_MANUFACTURING, listOf(expiry, mfg)))
         }
-        return repository.createBatch(batch.copy(batchNo = batchNo, manufacturingDate = mfg, expiryDate = expiry))
+        return repository.createBatch(batch.copy(batchNo = batchNo, qcNo = batch.qcNo?.trim()?.ifBlank { null }, manufacturingDate = mfg, expiryDate = expiry))
     }
 
     companion object {

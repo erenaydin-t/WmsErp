@@ -539,6 +539,10 @@
     <string name="receive_batch_expiry_optional">برای این کالا اختیاری است</string>
     <string name="receive_batch_expiry_default">تاریخ تولید + %1$d روز ماندگاری؛ اگر برچسب چیز دیگری می‌گوید اصلاح کنید</string>
     <string name="receive_batch_expiry_required">الزامی: این کالا ماندگاری تعریف‌شده ندارد، تاریخ روی برچسب را وارد کنید</string>
+    <string name="receive_batch_qc">QC %1$s</string>
+    <string name="receive_batch_qc_no">شماره کنترل کیفیت</string>
+    <string name="receive_batch_qc_no_hint">شماره QC این محموله، اگر هنگام دریافت تعیین می‌شود؛ در غیر این صورت خالی بگذارید</string>
+    <string name="receive_batch_another_qc">این محموله شماره QC دیگری دارد: بچ جدید بساز</string>
     <string name="receive_batch_create">ساخت بچ و شمارش</string>
     <string name="receive_summary_title">تأیید دریافت</string>
     <string name="receive_summary_message">رسید با این مقادیر و بچ‌ها ثبت می‌شود. موجودی وارد انبار می‌شود.</string>

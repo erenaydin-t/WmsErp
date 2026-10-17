@@ -122,6 +122,8 @@ data class ReceiveActions(
     val onBatchCodeChange: (String) -> Unit = {},
     val onLookupBatch: () -> Unit = {},
     val onSelectFoundBatch: (Batch) -> Unit = {},
+    val onBatchQcNoChange: (String) -> Unit = {},
+    val onCreateAnotherBatch: () -> Unit = {},
     val onChooseBatchRow: (String) -> Unit = {},
     val onBatchManufacturingDateChange: (String) -> Unit = {},
     val onBatchExpiryDateChange: (String) -> Unit = {},
@@ -170,6 +172,8 @@ fun ReceiveRoute(onBack: () -> Unit, viewModel: ReceiveViewModel = hiltViewModel
             onChooseBatchRow = viewModel::chooseBatchRow,
             onBatchManufacturingDateChange = viewModel::setBatchManufacturingDate,
             onBatchExpiryDateChange = viewModel::setBatchExpiryDate,
+            onBatchQcNoChange = viewModel::setBatchQcNo,
+            onCreateAnotherBatch = viewModel::createAnotherBatch,
             onCreateBatch = viewModel::createBatchFromSheet,
             onCloseBatchSheet = viewModel::closeBatchSheet,
         ),
@@ -497,6 +501,7 @@ private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, ac
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(batch.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                             val details = listOfNotNull(
+                                batch.qcNo?.let { stringResource(R.string.receive_batch_qc, it) },
                                 batch.expiryDate?.let { stringResource(R.string.st_batch_expires, Formatters.date(it)) },
                                 batch.manufacturingDate?.let { stringResource(R.string.receive_batch_manufactured, Formatters.date(it)) },
                                 if (batch.disabled) stringResource(R.string.scan_chip_disabled) else null,
@@ -505,10 +510,24 @@ private fun BatchSheet(sheet: BatchSheetState, lines: List<ReceiveLineState>, ac
                         }
                     }
                 }
+                if (sheet.matchesHaveQc) {
+                    TextButton(onClick = actions.onCreateAnotherBatch, enabled = !sheet.isBusy, modifier = Modifier.testTag("receive_batch_another")) {
+                        Text(stringResource(R.string.receive_batch_another_qc))
+                    }
+                }
             }
             if (sheet.isNew && line != null) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text(stringResource(R.string.receive_batch_new_message, sheet.code, line.item.itemCode), style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(
+                    value = sheet.qcNo,
+                    onValueChange = actions.onBatchQcNoChange,
+                    label = { Text(stringResource(R.string.receive_batch_qc_no)) },
+                    supportingText = { Text(stringResource(R.string.receive_batch_qc_no_hint)) },
+                    singleLine = true,
+                    enabled = !sheet.isBusy,
+                    modifier = Modifier.fillMaxWidth().testTag("receive_batch_qc_no"),
+                )
                 DateField(
                     label = stringResource(R.string.receive_batch_manufacturing_date),
                     value = sheet.manufacturingDate,

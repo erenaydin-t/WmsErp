@@ -110,9 +110,14 @@ data class BatchSheetState(
     val matches: List<Batch> = emptyList(),
     val manufacturingDate: String = LocalDate.now().toString(),
     val expiryDate: String = "",
+    /** The quality-control number of the delivery, typed by the operator (sites that keep one per batch). */
+    val qcNo: String = "",
     val error: UiText? = null,
 ) {
     val isNew: Boolean get() = lookedUp && matches.isEmpty()
+
+    /** The found batches all carry a QC number: the delivery at hand is new when its number is not among them. */
+    val matchesHaveQc: Boolean get() = matches.isNotEmpty() && matches.all { !it.qcNo.isNullOrBlank() }
 }
 
 data class ReceiveUiState(
@@ -300,6 +305,14 @@ class ReceiveViewModel @Inject constructor(
 
     fun setBatchExpiryDate(text: String) = _uiState.update { state -> state.copy(batchSheet = state.batchSheet?.copy(expiryDate = text, error = null)) }
 
+    fun setBatchQcNo(text: String) = _uiState.update { state -> state.copy(batchSheet = state.batchSheet?.copy(qcNo = text, error = null)) }
+
+    /** The found batches belong to earlier deliveries (other QC numbers): create one for this delivery instead. */
+    fun createAnotherBatch() = _uiState.update { state ->
+        val sheet = state.batchSheet ?: return@update state
+        state.copy(batchSheet = sheet.copy(matches = emptyList(), lookedUp = true, error = null))
+    }
+
     /** The operator says which row the scanned number belongs to; the lookup then runs for that item. */
     fun chooseBatchRow(rowName: String) {
         val sheet = _uiState.value.batchSheet ?: return
@@ -351,6 +364,7 @@ class ReceiveViewModel @Inject constructor(
             val request = NewBatch(
                 itemCode = line.item.itemCode,
                 batchNo = sheet.code,
+                qcNo = sheet.qcNo.trim().ifBlank { null },
                 manufacturingDate = sheet.manufacturingDate,
                 expiryDate = sheet.expiryDate,
                 supplier = receipt.supplier.ifBlank { null },

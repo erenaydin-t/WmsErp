@@ -154,10 +154,12 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
      own Batch field (*WMS Settings > Batch No Field*, `custom_batch_no` when it exists), spaces and case
      ignored, among the items of this receipt only. A WMS QR label works as before;
    * a known batch goes under its row and the quantity prompt opens; when several batches carry the number
-     (one per QC run) the operator picks one;
-   * an unknown number opens the **new batch sheet**: manufacturing date (today) and expiry date (manufacturing
-     date + the item's shelf life, editable; required when the item expires but has no shelf life). *Create
-     batch and count* calls `create_batch`, which names the Batch after *WMS Settings > Batch ID Pattern*
+     (one per QC number, on sites that give every delivery a quality-control number) the operator picks the
+     one on the label, or taps *This delivery has another QC number* to create a new batch for it;
+   * an unknown number opens the **new batch sheet**: the QC number of the delivery (optional, kept in *WMS
+     Settings > QC No Field*, `custom_qc_no` by default), manufacturing date (today) and expiry date
+     (manufacturing date + the item's shelf life, editable; required when the item expires but has no shelf
+     life). *Create batch and count* calls `create_batch`, which names the Batch after *WMS Settings > Batch ID Pattern*
      (`{counter}-{item}-{batch_no}` on sites with a batch number field, else the number itself; the counter
      continues the numeric prefix of the last batch, assigned under a lock) with the receipt as reference
      document and the supplier, and returns an existing batch instead of creating a duplicate;

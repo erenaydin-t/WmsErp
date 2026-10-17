@@ -105,18 +105,19 @@ class ReceiptRepositoryImplTest {
     fun `find_batch and create_batch map the batches with the supplier's number as label`() = runTest {
         harness.server.enqueue(
             MockResponse().setBody(
-                """{"message":{"code":"LOT-1","found":true,"batches":[{"name":"12-ITEM-001-LOT-1","batch_no":"LOT-1","item":"ITEM-001","item_name":"Steel Bolt M8","expiry_date":"2028-09-30","manufacturing_date":"2026-10-01","disabled":false}],
+                """{"message":{"code":"LOT-1","found":true,"batches":[{"name":"12-ITEM-001-LOT-1","batch_no":"LOT-1","qc_no":"5260903080","item":"ITEM-001","item_name":"Steel Bolt M8","expiry_date":"2028-09-30","manufacturing_date":"2026-10-01","disabled":false}],
                    "item":{"item_code":"ITEM-001","has_batch_no":true,"has_expiry_date":true,"shelf_life_in_days":730}}}"""
             )
         )
         harness.server.enqueue(MockResponse().setBody("""{"message":{"created":true,"batch":{"name":"13-ITEM-001-LOT-2","batch_no":"LOT-2","item":"ITEM-001","expiry_date":"2028-09-30"}}}"""))
 
         val lookup = (repository.findBatch("LOT-1", itemCode = "ITEM-001") as AppResult.Success).data
-        val created = (repository.createBatch(NewBatch("ITEM-001", "LOT-2", "2026-10-01", null, "SUP-001", "MAT-PRE-2026-00001")) as AppResult.Success).data
+        val created = (repository.createBatch(NewBatch("ITEM-001", "LOT-2", "2026-10-01", null, "SUP-001", "MAT-PRE-2026-00001", qcNo = "5260903081")) as AppResult.Success).data
 
         assertTrue(lookup.found)
         assertEquals("12-ITEM-001-LOT-1", lookup.batches.single().name)
         assertEquals("LOT-1", lookup.batches.single().label)
+        assertEquals("5260903080", lookup.batches.single().qcNo)
         assertEquals(730, lookup.item!!.shelfLifeDays)
         assertTrue(created.created)
         assertEquals("LOT-2", created.batch.label)
@@ -131,6 +132,7 @@ class ReceiptRepositoryImplTest {
         assertEquals("LOT-2", body["batch_no"]!!.jsonPrimitive.content)
         assertEquals("MAT-PRE-2026-00001", body["receipt"]!!.jsonPrimitive.content)
         assertNull(body["expiry_date"])
+        assertEquals("5260903081", body["qc_no"]!!.jsonPrimitive.content)
     }
 
     @Test

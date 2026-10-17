@@ -257,6 +257,32 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun `batches of earlier deliveries carry QC numbers, so the sheet can create another batch with this delivery's QC number`() = runTest {
+        val earlier = TestFixtures.batch.copy(name = "1-ITEM-001-LOT-5", batchNo = "LOT-5", qcNo = "5260903080")
+        coEvery { findBatch("LOT-5", "ITEM-001", null) } returns AppResult.Success(BatchLookup("LOT-5", listOf(earlier, earlier.copy(name = "2-ITEM-001-LOT-5", qcNo = "5260903081")), BatchItemFacts("ITEM-001", hasBatchNo = true)))
+        val vm = createViewModel()
+        vm.openBatchSheet("row1")
+        vm.setBatchCode("LOT-5")
+        vm.lookupBatch()
+        assertTrue(vm.uiState.value.batchSheet!!.matchesHaveQc)
+
+        vm.createAnotherBatch()
+        val sheet = vm.uiState.value.batchSheet!!
+        assertTrue(sheet.isNew)
+        assertTrue(sheet.matches.isEmpty())
+        vm.setBatchQcNo(" 5260903099 ")
+
+        val request = slot<NewBatch>()
+        val created = earlier.copy(name = "3-ITEM-001-LOT-5", qcNo = "5260903099")
+        coEvery { createBatch(capture(request)) } returns AppResult.Success(CreatedBatch(created, created = true))
+        vm.createBatchFromSheet()
+
+        assertEquals("5260903099", request.captured.qcNo)
+        assertEquals("LOT-5", request.captured.batchNo)
+        assertEquals("3-ITEM-001-LOT-5", vm.line("ITEM-001").batchNo)
+    }
+
+    @Test
     fun `one row received in two batches sends both with their quantities and the row total`() = runTest {
         val a = TestFixtures.batch.copy(name = "1-ITEM-001-A", batchNo = "A")
         val b = TestFixtures.batch.copy(name = "2-ITEM-001-B", batchNo = "B")

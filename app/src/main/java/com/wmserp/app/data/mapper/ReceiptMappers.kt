@@ -83,6 +83,7 @@ fun FoundBatchDto.toDomain(): Batch = Batch(
     disabled = disabled,
     supplier = supplier,
     batchNo = batchNo?.takeIf { it.isNotBlank() },
+    qcNo = qcNo?.takeIf { it.isNotBlank() },
 )
 
 fun BatchItemFactsDto.toDomain(): BatchItemFacts = BatchItemFacts(

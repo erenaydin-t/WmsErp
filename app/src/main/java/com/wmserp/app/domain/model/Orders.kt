@@ -117,6 +117,8 @@ data class NewBatch(
     val supplier: String? = null,
     /** Draft Purchase Receipt the batch is created for (becomes its reference document). */
     val receipt: String? = null,
+    /** Quality-control number of the delivery, on sites that keep one per batch (`qc_no`). */
+    val qcNo: String? = null,
 )
 
 /** Result of `create_batch`: the batch, new or already existing for that number. */

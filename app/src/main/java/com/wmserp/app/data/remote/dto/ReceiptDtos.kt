@@ -73,6 +73,7 @@ data class BatchCountDto(
 data class FoundBatchDto(
     val name: String,
     @SerialName("batch_no") val batchNo: String? = null,
+    @SerialName("qc_no") val qcNo: String? = null,
     val item: String? = null,
     @SerialName("item_name") val itemName: String? = null,
     @SerialName("expiry_date") val expiryDate: String? = null,
