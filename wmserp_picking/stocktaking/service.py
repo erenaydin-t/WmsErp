@@ -10,6 +10,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_datetime, now_datetime, nowdate, nowtime
 
+from wmserp_picking import documents
 from wmserp_picking.stocktaking import freeze, rules
 from wmserp_picking.wms_erp_picking.doctype.wms_settings.wms_settings import get_qr_keys
 
@@ -421,6 +422,7 @@ def create_reconciliation(name, submit=False):
     if not cint(frappe.db.get_value("Warehouse", doc.warehouse, "is_group")):
         set_if_field(reconciliation, "set_warehouse", doc.warehouse)
     set_if_field(reconciliation, "custom_stocktaking_session", name)
+    documents.stamp_officer(reconciliation)
     for row in diff_rows:
         item = reconciliation.append("items", {"item_code": row.item_code, "warehouse": row.warehouse, "qty": flt(row.final_qty)})
         if flt(row.valuation_rate) > 0:

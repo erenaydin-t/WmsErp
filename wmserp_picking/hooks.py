@@ -45,6 +45,12 @@ jinja = {
 
 # Batch / Item list > Actions > "Print QR Label Sheet" (many labels per A4 page, layout in the
 # sheet Print Format). Read from the app folder by the desk, no `bench build` needed.
+# Material Request form: Create > "Pick List" on Material Issue requests (ERPNext offers it on
+# Material Transfer requests only).
+doctype_js = {
+    "Material Request": "public/js/material_request.js",
+}
+
 doctype_list_js = {
     "Batch": ["public/js/wms_labels.js", "public/js/batch_list.js"],
     "Item": ["public/js/wms_labels.js", "public/js/item_list.js"],

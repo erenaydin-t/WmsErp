@@ -26,6 +26,8 @@ PURPOSE_DELIVERY = "Delivery"
 PURPOSE_MATERIAL_TRANSFER = "Material Transfer"
 PURPOSE_MATERIAL_ISSUE = "Material Issue"
 PURPOSE_MATERIAL_TRANSFER_FOR_MANUFACTURE = "Material Transfer for Manufacture"
+# Purposes a Pick List may carry once the app's Property Setter added Material Issue.
+PICK_LIST_PURPOSES = (PURPOSE_DELIVERY, PURPOSE_MATERIAL_TRANSFER, PURPOSE_MATERIAL_ISSUE, PURPOSE_MATERIAL_TRANSFER_FOR_MANUFACTURE)
 
 DELIVERY_NOTE = "Delivery Note"
 STOCK_ENTRY = "Stock Entry"

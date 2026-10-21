@@ -204,3 +204,66 @@ class BatchNamingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WarehouseStageTests(unittest.TestCase):
+    STATES = [
+        {"state": "Draft", "doc_status": "0"},
+        {"state": "Pending Approval", "doc_status": "0"},
+        {"state": "Pending for Warehouse Approval", "doc_status": "0"},
+        {"state": "Received", "doc_status": "1"},
+        {"state": "Rejected", "doc_status": "0"},
+    ]
+    TRANSITIONS = [
+        {"state": "Draft", "action": "Send for Approval", "next_state": "Pending Approval", "allowed": "Stock User"},
+        {"state": "Pending Approval", "action": "Approve", "next_state": "Pending for Warehouse Approval", "allowed": "Purchase Manager"},
+        {"state": "Pending for Warehouse Approval", "action": "Submit", "next_state": "Received", "allowed": "Stock User"},
+        {"state": "Pending for Warehouse Approval", "action": "Reject", "next_state": "Rejected", "allowed": "Stock User"},
+        {"state": "Received", "action": "Reopen", "next_state": "Draft", "allowed": "Stock User"},
+    ]
+
+    def test_submittable_states_are_where_the_role_may_submit(self):
+        self.assertEqual(["Pending for Warehouse Approval"], rules.submittable_states(self.STATES, self.TRANSITIONS, ["Stock User", "Employee"]))
+        self.assertEqual([], rules.submittable_states(self.STATES, self.TRANSITIONS, ["Purchase Manager"]))
+        self.assertEqual([], rules.submittable_states(self.STATES, [], ["Stock User"]))
+
+    def test_warehouse_states_fall_back_to_editable_states(self):
+        states = [dict(s, allow_edit="Stock User") for s in self.STATES]
+        self.assertEqual(["Pending for Warehouse Approval"], rules.warehouse_states(states, self.TRANSITIONS, ["Stock User"]))
+        self.assertEqual(["Draft", "Pending Approval", "Pending for Warehouse Approval", "Rejected"], rules.warehouse_states(states, [], ["Stock User"]))
+
+
+class ShortageTests(unittest.TestCase):
+    ROWS = [
+        dict(row("r1", "A", 10), purchase_order="PO-1", purchase_order_item="po1"),
+        dict(row("r2", "B", 5), purchase_order="PO-1", purchase_order_item="po2"),
+        dict(row("r3", "C", 4), purchase_order="PO-2", purchase_order_item="po3"),
+        dict(row("r4", "D", 2), purchase_order=None, purchase_order_item=None),
+        dict(row("r5", "A", 3), purchase_order="PO-1", purchase_order_item="po1"),
+    ]
+
+    def test_shortages_cover_removed_and_short_rows_only(self):
+        plan = rules.plan_receipt(self.ROWS, [{"row": "r1", "qty": 6}, {"row": "r3", "qty": 4}, {"row": "r5", "qty": 1}])
+        short = rules.shortages(self.ROWS, plan)
+        self.assertEqual(
+            [("po1", 10.0, 6.0, 4.0), ("po2", 5.0, 0.0, 5.0), ("po1", 3.0, 1.0, 2.0)],
+            [(s["purchase_order_item"], s["expected"], s["counted"], s["short"]) for s in short],
+        )
+        self.assertEqual(["PO-1", "PO-1", "PO-1"], [s["purchase_order"] for s in short])
+
+    def test_no_shortage_on_a_full_receipt(self):
+        plan = rules.plan_receipt(self.ROWS, [{"row": r["name"], "qty": r["qty"]} for r in self.ROWS])
+        self.assertEqual([], rules.shortages(self.ROWS, plan))
+
+    def test_followup_quantities_are_capped_by_the_order_and_other_drafts(self):
+        short = [
+            {"purchase_order_item": "po1", "short": 4},
+            {"purchase_order_item": "po1", "short": 2},  # a second batch row of the same order row
+            {"purchase_order_item": "po2", "short": 5},
+            {"purchase_order_item": "po3", "short": 1},
+        ]
+        pending = {"po1": 6, "po2": 3, "po3": 1}
+        in_drafts = {"po2": 3, "po3": 0.5}
+        self.assertEqual({"po1": 6.0, "po3": 0.5}, rules.followup_quantities(short, pending, in_drafts))
+        self.assertEqual({}, rules.followup_quantities(short, {}, {}))
+        self.assertEqual({}, rules.followup_quantities([], pending, in_drafts))
