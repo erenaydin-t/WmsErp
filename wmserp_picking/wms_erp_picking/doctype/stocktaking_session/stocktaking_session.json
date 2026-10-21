@@ -62,7 +62,6 @@
    "reqd": 1
   },
   {
-   "default": ":Company",
    "fieldname": "company",
    "fieldtype": "Link",
    "label": "Company",
