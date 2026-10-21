@@ -1,7 +1,8 @@
 """Custom Fields, Property Setters and the label Print Formats added to standard DocTypes.
 
 Everything here is additive (Custom Field / Property Setter / Print Format records), so no file
-in `frappe` or `erpnext` is modified. Re-running is safe: `create_custom_fields(update=True)`
+in `frappe` or `erpnext` is modified. The site document labels in `MANAGED_TEMPLATES` (Material
+Status Label) are owned by the app: their HTML is re-applied on every migrate. Re-running is safe: `create_custom_fields(update=True)`
 updates existing fields in place, the Property Setter is only created when missing and the label
 print formats are created when missing and re-enabled when disabled (their HTML is never overwritten,
 so a site can adjust the label sheet layout in the Print Format; `reset_label_print_formats` restores
@@ -219,6 +220,7 @@ def setup_customizations():
     remove_obsolete_fields()
     extend_purpose_options()
     ensure_label_print_formats()
+    apply_managed_print_formats()
     frappe.clear_cache(doctype="Pick List")
     frappe.clear_cache(doctype="Pick List Item")
     frappe.clear_cache(doctype="Stock Reconciliation")
@@ -329,3 +331,31 @@ def create_label_print_format(name, file_name):
             "disabled": 0,
         }
     ).insert(ignore_permissions=True)
+
+
+def apply_managed_print_formats():
+    """The site document labels the app owns (`label_rules.MANAGED_TEMPLATES`, e.g. the *Material
+    Status Label QC-LAB-02* printed from a Purchase Receipt onto the pre-printed QC label): created
+    when missing and, unlike the QR label formats, overwritten with the shipped template on every
+    migrate - the template file in the app is the only place to change them. Page size and
+    margins live in the template's `.print-format` rule, so the format itself carries none."""
+    for name, (doctype, file_name) in label_rules.MANAGED_TEMPLATES.items():
+        values = {
+            "doc_type": doctype,
+            "print_format_type": "Jinja",
+            "custom_format": 1,
+            "standard": "No",
+            "html": label_template_html(file_name),
+            "margin_top": 0,
+            "margin_bottom": 0,
+            "margin_left": 0,
+            "margin_right": 0,
+            "disabled": 0,
+        }
+        if frappe.db.exists("Print Format", name):
+            doc = frappe.get_doc("Print Format", name)
+            if any(doc.get(key) != value for key, value in values.items()):
+                doc.update(values)
+                doc.save(ignore_permissions=True)
+        else:
+            frappe.get_doc({"doctype": "Print Format", "name": name, "module": "WMS ERP Picking", "font_size": 14, **values}).insert(ignore_permissions=True)

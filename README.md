@@ -50,7 +50,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.6.0     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.6.1     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -61,17 +61,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.6.0                              # or pin a version
+# git checkout wmserp_picking-v0.6.1                              # or pin a version
 cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format, creates the stocktaking DocTypes
 bench restart                    # no `bench build` needed: the form / list / report scripts are served from the app folder
-bench version                    # should list wmserp_picking 0.6.0
+bench version                    # should list wmserp_picking 0.6.1
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.6.1 | `wmserp_picking-v0.6.1` | The follow-up receipt is mapped from the Purchase Order as Administrator (ERPNext's mapper checks the caller's *create* permission on Purchase Receipt, which the warehouse role lacks on sites where purchasing creates receipts); it is still inserted as the warehouse user. The *Material Status Label QC-LAB-02* Purchase Receipt print format (the site's pre-printed QC label, one per item row, with the officer's name and signature and the batch QR) ships with the app and is re-applied on every migrate (`labels.rules.MANAGED_TEMPLATES`, `templates/print_formats/material_status_label_qc_lab_02.html`). |
 | 0.6.0 | `wmserp_picking-v0.6.0` | **Warehouse process rules.** The QC number of a new batch is optional again (`create_batch` refuses an empty `qc_no` only with *WMS Settings > Require QC No*; `batch_qc_required` follows it). `get_receivable` lists, by default, the draft states from which the caller's role may submit (*Pending for Warehouse Approval*) instead of every draft the role may edit. Confirming a receipt stamps *WMS Settings > Warehouse Department* on every row, the confirming user's Employee in the site's *Warehouse Document Processing Officer* field (*WMS Settings > Officer Field*, found by label when empty) and the posting date/time of the confirmation; Stock Entries / Delivery Notes from picking and Stock Reconciliations from stocktaking get the department and officer too. A receipt confirmed short gets a draft follow-up Purchase Receipt per Purchase Order for the undelivered quantity in the warehouse stage (`followups`, capped by the order's pending quantity minus other drafts; *Follow-up Receipt for Short Deliveries* / *Follow-up Receipt State*). `create_pick_list_from_material_request` and a *Create > Pick List* button on Material Issue requests. `get_settings` features: `followup_receipts`, `warehouse_stamps`, `material_request_pick_lists`. |
 | 0.5.5 | `wmserp_picking-v0.5.5` | The QC number is required: on sites with a QC No Field `create_batch` refuses an empty `qc_no`, and `get_receipt` says so with `batch_qc_required` so the app asks before calling. |
 | 0.5.4 | `wmserp_picking-v0.5.4` | QC numbers on batches: *WMS Settings > QC No Field* (`custom_qc_no` by default), `create_batch` takes `qc_no` and returns the existing batch only when it carries the same number (the same supplier number under another QC number is another Batch), `find_batch` / `create_batch` batches carry `qc_no`. |
@@ -239,6 +240,15 @@ Rows of fixed assets and of non-stock items (services) are counted like any othe
 warehouse (one sent for them is ignored) and ERPNext posts their amount without a stock ledger entry. The
 Asset record is created by ERPNext on submit only for items with *Auto Create Assets on Purchase*; otherwise
 it stays with the asset accountant, as in the desk.
+
+### Site document labels
+
+`templates/print_formats/material_status_label_qc_lab_02.html` is the *Material Status Label QC-LAB-02* print
+format of the Purchase Receipt: the values of every item row printed onto the pre-printed 125 × 95 mm QC label
+(item, batch, dates, supplier, quantity, the *Warehouse Document Processing Officer* with their signature image
+and the batch QR). The app owns it: `apply_managed_print_formats` creates it and re-applies the template on
+every migrate, so the file in the app is the one place to change it (`OFFSET_X` / `OFFSET_Y` at the top move
+the print if the printer shifts).
 
 ### Label sheets
 

@@ -496,7 +496,15 @@ def make_followup_receipt(doc, purchase_order, po_rows, quantities, state):
     delivery already had."""
     from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
-    target = make_purchase_receipt(purchase_order, args={"filtered_children": sorted(po_rows)})
+    # ERPNext's mapper checks the session user's *create* permission on Purchase Receipt, which the
+    # warehouse role does not hold on sites where purchasing creates receipts: the mapping runs as
+    # Administrator, the document is still inserted (below) as the warehouse user.
+    user = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        target = make_purchase_receipt(purchase_order, args={"filtered_children": sorted(po_rows)})
+    finally:
+        frappe.set_user(user)
     kept = []
     for row in target.get("items") or []:
         qty = flt(quantities.get(row.get("purchase_order_item")))
