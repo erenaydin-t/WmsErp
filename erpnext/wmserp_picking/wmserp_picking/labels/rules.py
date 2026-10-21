@@ -33,6 +33,13 @@ TEMPLATE_FILES = {
     "WMS Item QR Label Sheet": "wms_item_qr_label_sheet.html",
 }
 
+# Site document labels the app ships and owns: Print Format name -> (DocType, template file).
+# Unlike the QR labels above, their HTML is re-applied on every migrate, so the shipped template
+# is the only place to change them (no separate customization to maintain on the site).
+MANAGED_TEMPLATES = {
+    "Material Status Label QC-LAB-02": ("Purchase Receipt", "material_status_label_qc_lab_02.html"),
+}
+
 SUPPORTED_DOCTYPES = tuple(SHEET_FORMATS)
 PAGE_SIZES = ("A4", "A5", "A3", "Letter", "Legal")
 MAX_LABELS = 500

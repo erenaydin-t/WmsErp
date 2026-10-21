@@ -1,0 +1,88 @@
+<meta name="pdfkit-disable-smart-shrinking" content="">
+
+{#- Frappe takes the PDF page size / margins from this .print-format rule (wkhtmltopdf). -#}
+<style>
+.print-format { page-size: Custom; page-width: 125mm; page-height: 95mm; margin-top: 0mm; margin-bottom: 0mm; margin-left: 0mm; margin-right: 0mm; }
+</style>
+
+{#- Prints the values only, onto the pre-printed "Material Status Label" (QC-LAB-02), 125 x 95 mm.
+    One label per item row. If the printer shifts the text, change OFFSET_X / OFFSET_Y (mm, + = right / down). -#}
+{%- set OFFSET_X = 0 -%}
+{%- set OFFSET_Y = 0 -%}
+{%- set SHOW_GUIDE = 0 -%}
+
+<style>
+@page { size: 125mm 95mm; margin: 0; }
+html, body { margin: 0 !important; padding: 0 !important; background: #fff; }
+.print-format { padding: 0 !important; margin: 0 !important; width: 125mm !important; max-width: none !important; min-height: 0 !important; }
+.print-format-gutter, .print-preview { padding: 0 !important; }
+.lbl {
+  position: relative;
+  width: 125mm;
+  height: 95mm;
+  overflow: hidden;
+  page-break-after: always;
+  font-family: "DejaVu Sans", Tahoma, Arial, sans-serif;
+  color: #000;
+}
+.lbl:last-child { page-break-after: auto; }
+.f { position: absolute; display: table; table-layout: fixed; }
+.f > div { display: table-cell; vertical-align: middle; font-size: 8.5pt; font-weight: bold; line-height: 1.15; white-space: nowrap; overflow: hidden; }
+.f > div.wrap { white-space: normal; word-break: break-all; font-size: 7pt; }
+.f > div.fa { direction: rtl; text-align: left; unicode-bidi: plaintext; font-size: 8pt; }
+.f > div.sm { font-size: 7pt; }
+.f > div.bt { white-space: normal; word-wrap: break-word; font-size: 7pt; line-height: 1.1; }
+.f > div.wrap.fa { font-size: 6.5pt; line-height: 1.05; word-break: normal; }
+.tick { font-size: 11pt !important; text-align: center; }
+.guide { position: absolute; border: 0.2mm dashed #e00; }
+.sig { position: absolute; }
+.sig img { max-height: 10mm; max-width: 26mm; }
+.qr { position: absolute; line-height: 0; }
+</style>
+
+{%- macro field(x, y, w, h, value, cls="") -%}
+<div class="f" style="left:{{ x + OFFSET_X }}mm; top:{{ y + OFFSET_Y }}mm; width:{{ w }}mm; height:{{ h }}mm;{% if SHOW_GUIDE %} outline:0.2mm dashed #e00;{% endif %}"><div class="{{ cls }}">{{ value }}</div></div>
+{%- endmacro -%}
+
+{%- macro d(v) -%}{{ frappe.utils.getdate(v).strftime("%Y-%m-%d") if v else "" }}{%- endmacro -%}
+
+{%- set supplier = doc.supplier_name or doc.supplier or "" -%}
+{#- Prepared By = Warehouse Document Processing Officer (falls back to the employee of the user who created the receipt) -#}
+{%- set emp_fields = ["employee_name", "custom_signature_image"] -%}
+{%- set officer = (frappe.db.get_value("Employee", doc.custom_warehouse_document_processing_officer, emp_fields, as_dict=1) if doc.custom_warehouse_document_processing_officer else None)
+      or frappe.db.get_value("Employee", {"user_id": doc.owner}, emp_fields, as_dict=1) -%}
+
+{%- for row in doc.items -%}
+{%- set b = frappe.db.get_value("Batch", row.batch_no, ["manufacturing_date", "expiry_date", "custom_retest_date"], as_dict=1) if row.batch_no else None -%}
+{%- set mfg = b.manufacturing_date if b else None -%}
+{%- set retest = b.custom_retest_date if b else None -%}
+{%- set exp = (b.expiry_date if b else None) or row.custom_batch_expiry_date -%}
+{%- set q = frappe.utils.flt(row.qty) -%}
+{%- set qty_txt = ("{:,.0f}".format(q) if q == q|round(0) else "{:,.3f}".format(q).rstrip("0")) ~ " " ~ (row.uom or "") -%}
+{%- set name = (row.item_name or row.item_code or "")|replace("‎", "")|trim -%}
+<div class="lbl">
+  {%- if SHOW_GUIDE %}
+  <div class="guide" style="left:0; top:0; width:124.6mm; height:94.6mm;"></div>
+  {%- endif %}
+  {{ field(28.0, 17.0, 93.5, 5.9, name, "wrap" if name|length > 55 else "") }}
+  {{ field(26.3, 23.2, 38.0, 5.8, row.item_code) }}
+  {{ field(84.6, 23.2, 37.0, 5.8, (row.batch_no or "")|e|replace("-", "-&#8203;")|replace("/", "/&#8203;"), "bt" if (row.batch_no or "")|length > 20 else "") }}
+  {{ field(21.3, 29.3, 40.0, 5.9, d(mfg)) }}
+  {{ field(20.1, 35.5, 44.0, 5.9, supplier, "fa wrap" if supplier|length > 36 else ("fa sm" if supplier|length > 22 else "fa")) }}
+  {{ field(72.9, 36.7, 3.6, 3.5, "&#10004;" if (exp and not retest) else "", "tick") }}
+  {{ field(87.2, 36.7, 3.7, 3.5, "&#10004;" if retest else "", "tick") }}
+  {{ field(101.3, 35.5, 20.5, 5.9, d(retest or exp)) }}
+  {{ field(21.1, 41.7, 43.0, 5.8, qty_txt) }}
+  {{ field(82.3, 41.7, 39.5, 5.8, "") }}
+  {{ field(31.2, 47.8, 33.0, 5.7, "") }}
+  {{ field(84.3, 47.8, 37.5, 5.7, "") }}
+  {{ field(38.3, 53.8, 36.0, 5.9, officer.employee_name if officer else "", "fa") }}
+  {%- if officer and officer.custom_signature_image %}
+  <div class="sig" style="left:{{ 75 + OFFSET_X }}mm; top:{{ 51.8 + OFFSET_Y }}mm;"><img src="{{ officer.custom_signature_image }}"></div>
+  {%- endif %}
+  {{ field(101.3, 53.8, 20.5, 5.9, d(doc.posting_date)) }}
+  {%- if row.batch_no %}
+  <div class="qr" style="left:{{ 14 + OFFSET_X }}mm; top:{{ 62 + OFFSET_Y }}mm;">{{ wms_batch_qr_svg(frappe.get_doc("Batch", row.batch_no), 2.5) }}</div>
+  {%- endif %}
+</div>
+{%- endfor -%}
