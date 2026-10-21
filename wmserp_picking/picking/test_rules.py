@@ -126,3 +126,24 @@ class KpiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeldProgressTests(unittest.TestCase):
+    def test_next_row_status_hold(self):
+        self.assertEqual(rules.next_row_status(10, 10), rules.ROW_PICKED)
+        self.assertEqual(rules.next_row_status(10, 10, hold=True), rules.ROW_PICKING)
+        self.assertEqual(rules.next_row_status(0, 10, hold=True), rules.ROW_NOT_PICKED)
+        self.assertEqual(rules.next_row_status(0, 10, rules.ROW_PICKING, hold=True), rules.ROW_PICKING)
+
+    def test_stock_shortfalls(self):
+        rows = [
+            {"item_code": "A", "batch_no": "B1", "warehouse": "W", "picked": 5, "available": 3},
+            {"item_code": "B", "batch_no": None, "warehouse": "W", "picked": 2, "available": 2},
+            {"item_code": "C", "batch_no": "B3", "warehouse": "W", "picked": 1, "available": None},
+            {"item_code": "D", "batch_no": "B4", "warehouse": "W", "picked": 0, "available": 0},
+        ]
+        short = rules.stock_shortfalls(rows)
+        self.assertEqual([r["item_code"] for r in short], ["A"])
+        self.assertAlmostEqual(short[0]["short"], 2)
+        self.assertEqual(rules.stock_shortfalls([]), [])
+
