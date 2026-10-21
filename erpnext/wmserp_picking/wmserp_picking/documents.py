@@ -11,6 +11,11 @@ Order of sources for an empty `reqd` field (header and every child row):
 What is still empty is reported as `missing_fields` so the app can ask once and call again; the
 document is never inserted half-filled. `frappe.MandatoryError`s raised anyway (fields made
 mandatory by a Client / Server Script, for instance) are turned into the same answer.
+
+The second half stamps what the warehouse owns on every document it processes: the warehouse
+department on each row (*WMS Settings > Warehouse Department*), the employee processing the
+document in the site's *Warehouse Document Processing Officer* field (whose signature the printed
+document carries) and the posting date and time of the moment it was processed.
 """
 
 import frappe
@@ -135,3 +140,107 @@ def missing_fields_answer(doctype, exc):
     frappe.db.rollback()
     frappe.clear_messages()
     return rules.missing_response(doctype, missing)
+
+
+# --------------------------------------------------------------------------------------------
+# Values the warehouse stamps on every document it processes
+# --------------------------------------------------------------------------------------------
+
+OFFICER_LABELS = ("warehouse document processing officer", "document processing officer")
+
+
+def wms_setting(fieldname):
+    try:
+        return frappe.get_cached_doc("WMS Settings", "WMS Settings").get(fieldname)
+    except Exception:
+        return None
+
+
+def warehouse_department():
+    """*WMS Settings > Warehouse Department*: the department written on every row (and on the
+    header, when it has the field) of documents the app confirms or creates."""
+    return (wms_setting("warehouse_department") or "").strip() or None
+
+
+def apply_department(doc, department=None):
+    """Writes the warehouse department to `department` of the header (only when empty) and of
+    every row (always: site rules require the warehouse's own department on each row). No-op
+    without a configured department or without such fields."""
+    department = department or warehouse_department()
+    if not department:
+        return
+    if doc.meta.has_field("department") and not doc.get("department"):
+        doc.set("department", department)
+    for table in doc.meta.get_table_fields():
+        rows = doc.get(table.fieldname) or []
+        if rows and frappe.get_meta(table.options).has_field("department"):
+            for row in rows:
+                row.set("department", department)
+
+
+def officer_field(doctype):
+    """The field of `doctype` that names the warehouse employee who processed the document:
+    *WMS Settings > Officer Field* when `doctype` has it, else a field labelled *Warehouse Document
+    Processing Officer*. None when the DocType keeps no such field."""
+    meta = frappe.get_meta(doctype)
+    configured = (wms_setting("officer_field") or "").strip()
+    if configured:
+        return meta.get_field(configured)
+    for df in meta.fields:
+        if (df.label or "").strip().lower() in OFFICER_LABELS:
+            return df
+    return None
+
+
+def employee_of(user=None):
+    """`{name, employee_name}` of the active Employee linked to `user` (the session user by
+    default), or None."""
+    user = user or frappe.session.user
+    employee = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, ["name", "employee_name"], as_dict=True)
+    if not employee:
+        employee = frappe.db.get_value("Employee", {"user_id": user}, ["name", "employee_name"], as_dict=True)
+    return employee
+
+
+def officer_value(df, user=None):
+    """What goes into the officer field: the Employee for a link to Employee, the user for a link
+    to User, the employee's (else the user's) full name for a text field."""
+    user = user or frappe.session.user
+    employee = employee_of(user)
+    if df.fieldtype in ("Link", "Dynamic Link"):
+        if df.options == "Employee":
+            return employee.name if employee else None
+        if df.options == "User":
+            return user
+        return None
+    if employee and employee.employee_name:
+        return employee.employee_name
+    return frappe.utils.get_fullname(user)
+
+
+def stamp_officer(doc, user=None):
+    """Names the warehouse employee processing `doc` in its officer field (see `officer_field`):
+    the person whose signature the printed document carries. Returns the value written, or None
+    when the DocType has no such field or the user is no employee the field can hold."""
+    df = officer_field(doc.doctype)
+    if df is None:
+        return None
+    value = officer_value(df, user)
+    if value in (None, ""):
+        return None
+    doc.set(df.fieldname, value)
+    return value
+
+
+def stamp_posting_now(doc):
+    """Dates the document at the moment the warehouse processes it: posting date and time are
+    set to now (with *Edit Posting Date and Time* on, so ERPNext keeps them), the way a receipt
+    confirmed today must not carry the date purchasing drafted it."""
+    from frappe.utils import nowdate, nowtime
+
+    if doc.meta.has_field("posting_date"):
+        doc.set("posting_date", nowdate())
+    if doc.meta.has_field("posting_time"):
+        doc.set("posting_time", nowtime())
+    if doc.meta.has_field("set_posting_time"):
+        doc.set("set_posting_time", 1)

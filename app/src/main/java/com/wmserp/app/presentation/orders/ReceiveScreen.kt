@@ -665,6 +665,19 @@ private fun CompletedCard(outcome: ReceiveResult, message: String?, onBack: () -
             if (changed > 0) {
                 Text(stringResource(R.string.receive_differences, changed), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            outcome.followups.forEach { followup ->
+                val text = if (followup.name != null) {
+                    stringResource(R.string.receive_followup_created, followup.name, Formatters.qty(followup.qty))
+                } else {
+                    stringResource(R.string.receive_followup_failed, followup.purchaseOrder.orEmpty())
+                }
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (followup.name != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("receive_followup"),
+                )
+            }
             val batched = outcome.receipt.items.filter { !it.batchNo.isNullOrBlank() }
             if (outcome.submitted && batched.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))

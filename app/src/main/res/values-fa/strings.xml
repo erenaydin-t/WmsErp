@@ -514,6 +514,8 @@
     <string name="receive_confirm_submit">تأیید</string>
     <string name="receive_removed_rows">%1$d ردیف دریافت نشد</string>
     <string name="receive_differences">%1$d ردیف با مقدار متفاوت</string>
+    <string name="receive_followup_created">رسید تکمیلی %1$s برای %2$s واحد تحویل‌نشده ایجاد شد</string>
+    <string name="receive_followup_failed">رسید تکمیلی برای %1$s ایجاد نشد؛ از واحد خرید بخواهید آن را بسازد</string>
     <string name="error_batch_required">%1$s: بچ را اسکن یا وارد کنید</string>
     <string name="error_invalid_date">%1$s تاریخ معتبری نیست (yyyy-MM-dd)</string>
     <string name="error_expiry_before_manufacturing">تاریخ انقضا %1$s قبل از تاریخ تولید %2$s است</string>
@@ -541,7 +543,7 @@
     <string name="receive_batch_expiry_required">الزامی: این کالا ماندگاری تعریف‌شده ندارد، تاریخ روی برچسب را وارد کنید</string>
     <string name="receive_batch_qc">QC %1$s</string>
     <string name="receive_batch_qc_no">شماره کنترل کیفیت</string>
-    <string name="receive_batch_qc_no_hint">شماره QC این محموله، اگر هنگام دریافت تعیین می‌شود؛ در غیر این صورت خالی بگذارید</string>
+    <string name="receive_batch_qc_no_hint">اختیاری: شماره کنترل کیفیت این محموله، اگر تعیین شده باشد</string>
     <string name="receive_batch_qc_no_required">الزامی: شماره کنترل کیفیت اختصاص‌یافته به این محموله</string>
     <string name="receive_batch_another_qc">این محموله شماره QC دیگری دارد: بچ جدید بساز</string>
     <string name="receive_batch_create">ساخت بچ و شمارش</string>

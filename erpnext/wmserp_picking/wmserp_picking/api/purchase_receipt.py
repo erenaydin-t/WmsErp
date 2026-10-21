@@ -16,9 +16,20 @@ purchasing expects - untouched, so the differences reported when the receipt is 
 and the expected column of the app stay right.
 
 Which drafts are "at the warehouse stage": the states listed in *WMS Settings > Receipt Workflow
-States*, or, when that is empty, the draft states of the Purchase Receipt workflow in which one of
-the user's roles may edit. Without an active workflow every draft the user may read is listed (the
-configured states only apply to a workflow).
+States*, or, when that is empty, the draft states of the Purchase Receipt workflow from which one
+of the user's roles may take a transition into a submitted state (*Pending for Warehouse Approval*
+on a site whose warehouse approves receipts there; earlier drafts the role may merely edit are not
+listed). Without an active workflow every draft the user may read is listed (the configured states
+only apply to a workflow).
+
+Confirming also stamps what the warehouse owns on the receipt: the warehouse department on every
+row (*WMS Settings > Warehouse Department*; site rules require it on submit), the employee
+confirming it in the site's *Warehouse Document Processing Officer* field (whose signature the
+printed receipt carries) and the posting date and time of the moment it is confirmed. A receipt
+confirmed short (rows removed or counted below the expected quantity) gets a follow-up draft
+Purchase Receipt per Purchase Order for the undelivered quantity, placed in the warehouse stage
+(`followup_receipts`), capped by what the order still has to receive minus what other drafts
+already carry, so repeating the process never asks for the same goods twice.
 
 Batch tracked items (`has_batch_no` without `create_new_batch`): the Batch must exist before the
 receipt is submitted. The app reads the supplier's batch number off the material, `find_batch`
@@ -199,6 +210,9 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
 
     if not progress:
         apply_field_values(doc, configured_field_values())
+        documents.apply_department(doc)
+        documents.stamp_officer(doc)
+        documents.stamp_posting_now(doc)
     missing = documents.fill_required(doc, frappe.parse_json(values) or {}, company=doc.company)
     if missing:
         return documents.MissingRequiredFields(PURCHASE_RECEIPT, missing).response()
@@ -221,8 +235,20 @@ def receive(name, rows, values=None, submit=1, remove_unreceived=1):
     else:
         comment = _("Received through the WMS app ({0} row(s), {1} unit(s))")
     doc.add_comment("Info", comment.format(len(plan["updates"]), flt(plan["total_qty"])))
+    followups = []
+    if submitted:
+        followups = create_followup_receipts(doc, rules.shortages(facts, plan), stage)
     result = serialize_receipt(doc, facts=row_facts(doc), stage=stage)
-    result.update({"created": True, "submitted": submitted, "differences": plan["differences"], "removed_rows": plan["removed"]})
+    result.update(
+        {
+            "created": True,
+            "submitted": submitted,
+            "differences": plan["differences"],
+            "removed_rows": plan["removed"],
+            "followup_receipts": [f["name"] for f in followups],
+            "followups": followups,
+        }
+    )
     return result
 
 
@@ -418,6 +444,132 @@ def submit_receipt(doc, stage=None):
 
 
 # --------------------------------------------------------------------------------------------
+# Follow-up receipts for short deliveries
+# --------------------------------------------------------------------------------------------
+
+
+def followups_enabled() -> bool:
+    """*WMS Settings > Follow-up Receipt for Short Deliveries* (on by default)."""
+    value = wms_settings().get("create_followup_receipt")
+    return True if value is None else bool(cint(value))
+
+
+def create_followup_receipts(doc, shortages, stage=None) -> list:
+    """One draft Purchase Receipt per Purchase Order for what `doc` (just submitted) left
+    undelivered, placed in the warehouse stage of the workflow (`followup_state`). The quantity of
+    every row is the shortage capped by what the order still has to receive minus what other draft
+    receipts already carry (`rules.followup_quantities`), so nothing is created when the order is
+    covered. A failure here is logged and reported in the answer (`followups[].error`) instead of
+    undoing the receipt that was just submitted.
+    Returns `[{"name", "purchase_order", "qty", "workflow_state"}, ...]`."""
+    if not shortages or not followups_enabled():
+        return []
+    po_rows = {entry["purchase_order_item"] for entry in shortages}
+    quantities = rules.followup_quantities(shortages, po_pending_qty(po_rows), qty_in_draft_receipts(po_rows, exclude=doc.name))
+    by_order = {}
+    for entry in shortages:
+        if entry["purchase_order_item"] in quantities and entry.get("purchase_order"):
+            by_order.setdefault(entry["purchase_order"], set()).add(entry["purchase_order_item"])
+    state = followup_state(stage)
+    out = []
+    for purchase_order, rows in by_order.items():
+        savepoint = "wms_followup"
+        frappe.db.savepoint(savepoint)
+        try:
+            created = make_followup_receipt(doc, purchase_order, rows, quantities, state)
+        except Exception as exc:
+            frappe.db.rollback(save_point=savepoint)
+            frappe.log_error(title=f"WMS receiving: follow-up receipt for {doc.name} / {purchase_order} failed", message=frappe.get_traceback())
+            out.append({"name": None, "purchase_order": purchase_order, "qty": sum(quantities[r] for r in rows), "workflow_state": None, "error": str(exc)})
+            continue
+        if created is not None:
+            out.append({"name": created.name, "purchase_order": purchase_order, "qty": sum(flt(r.qty) for r in created.get("items")), "workflow_state": created.get(WORKFLOW_STATE)})
+    return out
+
+
+def make_followup_receipt(doc, purchase_order, po_rows, quantities, state):
+    """The follow-up draft: mapped from the Purchase Order the way the desk's *Create > Purchase
+    Receipt* does it (same rates, taxes, warehouses and site fields), limited to the rows of the
+    short receipt and to their undelivered quantity. Inserted on behalf of the process
+    (`ignore_permissions`: the warehouse role may not create receipts, nor keep protected pricing
+    fields), then moved to the warehouse stage without passing through the earlier approvals the
+    delivery already had."""
+    from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
+
+    target = make_purchase_receipt(purchase_order, args={"filtered_children": sorted(po_rows)})
+    kept = []
+    for row in target.get("items") or []:
+        qty = flt(quantities.get(row.get("purchase_order_item")))
+        if qty <= rules.QTY_TOLERANCE:
+            continue
+        conversion_factor = flt(row.get("conversion_factor")) or 1
+        row.qty = qty
+        row.received_qty = qty
+        row.rejected_qty = 0
+        row.stock_qty = qty * conversion_factor
+        row.received_stock_qty = qty * conversion_factor
+        row.set(COUNTED_QTY, 0)
+        kept.append(row)
+    if not kept:
+        return None
+    target.set("items", kept)
+    for index, row in enumerate(kept, start=1):
+        row.idx = index
+    if target.meta.has_field("supplier_delivery_note") and doc.get("supplier_delivery_note"):
+        target.supplier_delivery_note = doc.supplier_delivery_note
+    note = _("Follow-up of {0} (created by the WMS app for the quantity not delivered)").format(doc.name)
+    if target.meta.has_field("remarks"):
+        target.remarks = note if not target.get("remarks") else f"{target.remarks}\n{note}"
+    documents.apply_department(target)
+    target.flags.ignore_permissions = True
+    target.insert(ignore_permissions=True)
+    if state and target.meta.has_field(WORKFLOW_STATE) and target.get(WORKFLOW_STATE) != state:
+        target.db_set(WORKFLOW_STATE, state, update_modified=False)
+    target.add_comment("Info", note)
+    doc.add_comment("Info", _("Follow-up receipt {0} created for the quantity not delivered ({1} unit(s))").format(target.name, sum(flt(r.qty) for r in kept)))
+    return target
+
+
+def followup_state(stage=None):
+    """Where a follow-up draft goes: *WMS Settings > Follow-up Receipt State*, else the first
+    state in which the app lists receipts (the warehouse stage); None without a workflow."""
+    stage = stage or workflow_stage()
+    if not stage["workflow"]:
+        return None
+    configured = (wms_settings().get("followup_receipt_state") or "").strip()
+    known = {s.state for s in stage["workflow"].states}
+    if configured:
+        if configured not in known:
+            frappe.throw(_("WMS Settings > Follow-up Receipt State: {0} is not a state of the Purchase Receipt workflow.").format(configured))
+        return configured
+    states = stage["states"] or []
+    return states[0] if states else None
+
+
+def po_pending_qty(po_rows) -> dict:
+    """{Purchase Order row: ordered minus received} after the receipt was submitted."""
+    if not po_rows:
+        return {}
+    return {
+        row.name: flt(row.qty) - flt(row.received_qty)
+        for row in frappe.get_all("Purchase Order Item", filters={"name": ["in", list(po_rows)]}, fields=["name", "qty", "received_qty"])
+    }
+
+
+def qty_in_draft_receipts(po_rows, exclude=None) -> dict:
+    """{Purchase Order row: quantity other draft receipts already carry for it}."""
+    if not po_rows:
+        return {}
+    filters = {"purchase_order_item": ["in", list(po_rows)], "docstatus": 0, "parenttype": PURCHASE_RECEIPT}
+    if exclude:
+        filters["parent"] = ["!=", exclude]
+    out = {}
+    for row in frappe.get_all(PURCHASE_RECEIPT_ITEM, filters=filters, fields=["purchase_order_item", "qty"]):
+        out[row.purchase_order_item] = out.get(row.purchase_order_item, 0.0) + flt(row.qty)
+    return out
+
+
+# --------------------------------------------------------------------------------------------
 # Batches
 # --------------------------------------------------------------------------------------------
 
@@ -491,9 +643,10 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     took it meanwhile. The expiry date defaults to the manufacturing date plus the item's shelf
     life (ERPNext does that itself); items with an expiry date and no shelf life need it sent.
     Sites that keep a quality-control number per batch (*WMS Settings > QC No Field*, `custom_qc_no`
-    by default) must send it as `qc_no` (refused otherwise): the same supplier number under
-    another QC number is another Batch there. A Batch that already carries the number and the QC
-    number is returned as is (`created: false`) instead of creating a duplicate.
+    by default) send it as `qc_no` (optional unless *WMS Settings > Require QC No* is on): the
+    same supplier number under another QC number is another Batch there. A Batch that already
+    carries the number and the QC number (both empty counts too) is returned as is
+    (`created: false`) instead of creating a duplicate.
     """
     item_code = (item_code or "").strip()
     batch_no = (batch_no or "").strip()
@@ -509,7 +662,7 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
     qc_field = qc_no_field()
     if qc_no and not qc_field:
         frappe.throw(_("Batch has no field for a QC number: configure WMS Settings > QC No Field."))
-    if qc_field and not qc_no:
+    if qc_field and not qc_no and require_batch_qc_no():
         frappe.throw(_("Enter the QC number of this delivery: every batch created here carries one."), frappe.MandatoryError)
     existing = same_batch(search_batches(batch_no, [item_code]), qc_no, qc_field)
     if existing:
@@ -565,8 +718,8 @@ def create_batch(item_code, batch_no, manufacturing_date=None, expiry_date=None,
 
 def same_batch(candidates, qc_no, qc_field):
     """The existing Batch `create_batch` must return instead of creating one: on sites with a QC
-    number field the one carrying the same QC number (spaces and case ignored), elsewhere the most
-    recent batch of the number."""
+    number field the one carrying the same QC number (spaces and case ignored; none matches
+    none), elsewhere the most recent batch of the number."""
     if not candidates:
         return None
     if not qc_field:
@@ -575,7 +728,7 @@ def same_batch(candidates, qc_no, qc_field):
     for batch in candidates:
         if rules.batch_key(batch.get(qc_field)) == wanted:
             return batch
-    return None if wanted else candidates[0]
+    return None
 
 
 def next_batch_counter() -> int:
@@ -655,6 +808,11 @@ def qc_no_field():
     return "custom_qc_no" if meta.has_field("custom_qc_no") else None
 
 
+def require_batch_qc_no() -> bool:
+    """*WMS Settings > Require QC No*: off by default, the QC number of a new batch may stay empty."""
+    return bool(cint(wms_settings().get("require_batch_qc_no")))
+
+
 def batch_id_pattern() -> str:
     configured = (wms_settings().get("batch_id_pattern") or "").strip()
     return configured or rules.default_batch_id_pattern(bool(batch_no_field()))
@@ -687,7 +845,7 @@ def receivable_states(workflow=None):
         configured = []
     if configured:
         return configured
-    return rules.editable_states([s.as_dict() for s in workflow.states], frappe.get_roles())
+    return rules.warehouse_states([s.as_dict() for s in workflow.states], [t.as_dict() for t in workflow.transitions], frappe.get_roles())
 
 
 def active_workflow():
@@ -775,6 +933,8 @@ def row_facts(doc):
                 "counted_qty": flt(row.get(COUNTED_QTY)),
                 "counted_batches": counted_batches,
                 "warehouse": row.get("warehouse"),
+                "purchase_order": row.get("purchase_order"),
+                "purchase_order_item": row.get("purchase_order_item"),
                 "batch_no": batch_no,
                 "bundle": bundle,
                 "has_batch_no": has_batch_no,
@@ -826,8 +986,8 @@ def serialize_receipt(doc, facts=None, stage=None):
         {
             "can_receive": can_receive(doc, stage) and frappe.has_permission(PURCHASE_RECEIPT, "write", doc),
             "has_workflow": stage["workflow"] is not None,
-            # Every batch created from the app needs the delivery's QC number on sites that keep one.
-            "batch_qc_required": bool(qc_no_field()),
+            # The delivery's QC number is asked for when a batch is created; required only if the site says so.
+            "batch_qc_required": bool(qc_no_field()) and require_batch_qc_no(),
             "items": [serialize_row(row, facts.get(row.name) or {}, barcodes) for row in rows],
         }
     )

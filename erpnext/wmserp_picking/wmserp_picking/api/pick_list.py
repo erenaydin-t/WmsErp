@@ -97,7 +97,16 @@ def get_settings():
         "qr_batch_key": keys["qr_batch_key"],
         "app_version": __version__,
         # What this backend offers beyond picking, so the app can tell an old backend from a broken one.
-        "features": ["stocktaking", "purchase_receipt_receiving", "label_sheets", "required_field_values", "batch_receiving"],
+        "features": [
+            "stocktaking",
+            "purchase_receipt_receiving",
+            "label_sheets",
+            "required_field_values",
+            "batch_receiving",
+            "followup_receipts",
+            "warehouse_stamps",
+            "material_request_pick_lists",
+        ],
     }
 
 
@@ -634,6 +643,15 @@ def prepare_delivery_note(delivery_note, pick_list):
     delivery_note.run_method("set_missing_values")
     delivery_note.run_method("set_po_nos")
     delivery_note.run_method("calculate_taxes_and_totals")
+    stamp_warehouse_values(delivery_note)
+
+
+def stamp_warehouse_values(doc):
+    """What the warehouse owns on a document it creates: its department on every row (*WMS
+    Settings > Warehouse Department*, so the site's submit rules pass without asking) and the
+    employee processing it in the site's officer field (whose signature the print carries)."""
+    documents.apply_department(doc)
+    documents.stamp_officer(doc)
 
 
 def make_stock_entry(pick_list, purpose, values=None):
@@ -680,12 +698,64 @@ def make_stock_entry(pick_list, purpose, values=None):
             item.material_request_item = row.get("material_request_item")
 
     stock_entry.run_method("set_missing_values")
+    stamp_warehouse_values(stock_entry)
     sources = [pick_list]
     if pick_list.get("material_request"):
         sources.insert(0, documents.source_values("Material Request", pick_list.material_request))
     require_fields(rules.STOCK_ENTRY, [(stock_entry, sources)], values)
     stock_entry.insert()
     return stock_entry
+
+
+# --------------------------------------------------------------------------------------------
+# Pick Lists from Material Requests
+# --------------------------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def create_pick_list_from_material_request(source_name, target_doc=None):
+    """A Pick List for a submitted Material Request, for *Material Issue* requests too (ERPNext's
+    own *Create > Pick List* only offers it on *Material Transfer* requests; the app's Property
+    Setter adds *Material Issue* to the Pick List purposes). Mirrors
+    `erpnext...material_request.create_pick_list`: rows for what is not picked yet, purpose from
+    the request type, locations allocated unless the request picks manually. On a Material Issue
+    request the row's *For Warehouse* is the warehouse to issue from, so it becomes the pick
+    location; a transfer request's *Source Warehouse* does the same there. Used by the desk button
+    the app adds on Material Request."""
+    from frappe.model.mapper import get_mapped_doc
+
+    request_type = frappe.db.get_value("Material Request", source_name, "material_request_type")
+    source_warehouse = "warehouse" if request_type == rules.PURPOSE_MATERIAL_ISSUE else "from_warehouse"
+
+    def update_item(obj, target, source_parent):
+        qty = flt((flt(obj.stock_qty) - flt(obj.picked_qty)) / (flt(target.conversion_factor) or 1), obj.precision("qty"))
+        target.qty = qty
+        target.stock_qty = qty * (flt(obj.conversion_factor) or 1)
+        target.conversion_factor = obj.conversion_factor
+
+    doc = get_mapped_doc(
+        "Material Request",
+        source_name,
+        {
+            "Material Request": {
+                "doctype": PICK_LIST,
+                "field_map": {"material_request_type": "purpose"},
+                "validation": {"docstatus": ["=", 1]},
+            },
+            "Material Request Item": {
+                "doctype": PICK_LIST_ITEM,
+                "field_map": {"name": "material_request_item", "stock_qty": "stock_qty", source_warehouse: "warehouse"},
+                "postprocess": update_item,
+                "condition": lambda row: flt(row.picked_qty, row.precision("picked_qty")) < flt(row.stock_qty, row.precision("stock_qty")),
+            },
+        },
+        target_doc,
+    )
+    if doc.purpose not in rules.PICK_LIST_PURPOSES:
+        frappe.throw(_("A Pick List cannot be created for a {0} Material Request.").format(_(request_type)))
+    if not doc.get("pick_manually"):
+        doc.set_item_locations()
+    return doc
 
 
 # --------------------------------------------------------------------------------------------

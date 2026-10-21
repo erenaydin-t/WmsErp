@@ -16,6 +16,7 @@ import com.wmserp.app.domain.model.BatchCount
 import com.wmserp.app.domain.model.BatchItemFacts
 import com.wmserp.app.domain.model.BatchLookup
 import com.wmserp.app.domain.model.CreatedBatch
+import com.wmserp.app.domain.model.FollowupReceipt
 import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.PurchaseReceiptItem
 import com.wmserp.app.domain.model.ReceiptDifference
@@ -107,6 +108,7 @@ fun PurchaseReceiptDto.toReceiveResult(): ReceiveResult = ReceiveResult(
     submitted = submitted || docstatus == 1,
     differences = differences.map { it.toDomain() },
     removedRows = removedRows,
+    followups = followups.map { FollowupReceipt(name = it.name, purchaseOrder = it.purchaseOrder, qty = it.qty, workflowState = it.workflowState, error = it.error) },
 )
 
 fun SalesOrderDto.toDomain(): SalesOrder = SalesOrder(

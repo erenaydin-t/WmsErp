@@ -140,7 +140,9 @@ class ReceiptRepositoryImplTest {
         harness.server.enqueue(
             MockResponse().setBody(
                 """{"message":${receiptJson.trimEnd('}')},"created":true,"submitted":true,"docstatus":1,"workflow_state":"Received",
-                   "differences":[{"row":"row2","item_code":"ITEM-002","expected":5,"counted":3}],"removed_rows":[]}}"""
+                   "differences":[{"row":"row2","item_code":"ITEM-002","expected":5,"counted":3}],"removed_rows":[],
+                   "followup_receipts":["MAT-PRE-2026-00002"],
+                   "followups":[{"name":"MAT-PRE-2026-00002","purchase_order":"PUR-ORD-2026-00001","qty":2,"workflow_state":"Pending for Warehouse Approval"}]}}"""
             )
         )
 
@@ -156,6 +158,12 @@ class ReceiptRepositoryImplTest {
         assertEquals(1, outcome.differences.size)
         assertEquals(3.0, outcome.differences.single().counted, 0.0)
         assertTrue(outcome.receipt.isSubmitted)
+        val followup = outcome.followups.single()
+        assertEquals("MAT-PRE-2026-00002", followup.name)
+        assertEquals("PUR-ORD-2026-00001", followup.purchaseOrder)
+        assertEquals(2.0, followup.qty, 0.0)
+        assertEquals("Pending for Warehouse Approval", followup.workflowState)
+        assertNull(followup.error)
 
         val request = harness.server.takeRequest()
         assertEquals("/api/method/wmserp_picking.api.purchase_receipt.receive", request.path)

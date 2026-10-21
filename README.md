@@ -133,9 +133,10 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
 
 1. Purchasing creates the Purchase Receipt from the Purchase Order (desk: *Create > Purchase Receipt*) and the
    site's **Purchase Receipt workflow** carries it through its approvals. The draft reaches the warehouse stage:
-   a workflow state whose `doc_status` is *Draft* and that the warehouse role may edit (`allow_edit`). Sites
-   without a workflow show every draft the user can write. *WMS Settings > Receipt Workflow States* can pin the
-   states explicitly (one per line).
+   a *Draft* workflow state from which the warehouse role may take the transition into a submitted state
+   (*Pending for Warehouse Approval* on a site that submits from there); drafts in earlier states the role may
+   merely edit are not listed. Sites without a workflow show every draft the user can write. *WMS Settings >
+   Receipt Workflow States* can pin the states explicitly (one per line).
 2. **Orders → Receive** lists those drafts (`get_receivable`: supplier, stage, rows and units). Scanning a
    receipt barcode on the *Scan* screen (*Receipt* target) opens it as well.
 3. The warehouse counts: scanning an item barcode / item code counts the row (quantity prompt or +1), the
@@ -156,8 +157,8 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
    * a known batch goes under its row and the quantity prompt opens; when several batches carry the number
      (one per QC number, on sites that give every delivery a quality-control number) the operator picks the
      one on the label, or taps *This delivery has another QC number* to create a new batch for it;
-   * an unknown number opens the **new batch sheet**: the QC number of the delivery (required on sites that
-     keep one per batch, *WMS Settings > QC No Field*, `custom_qc_no` by default), manufacturing date (today) and expiry date
+   * an unknown number opens the **new batch sheet**: the QC number of the delivery (optional; kept in *WMS
+     Settings > QC No Field*, `custom_qc_no` by default, and required only with *Require QC No*), manufacturing date (today) and expiry date
      (manufacturing date + the item's shelf life, editable; required when the item expires but has no shelf
      life). *Create batch and count* calls `create_batch`, which names the Batch after *WMS Settings > Batch ID Pattern*
      (`{counter}-{item}-{batch_no}` on sites with a batch number field, else the number itself; the counter
@@ -178,9 +179,17 @@ Goods enter the warehouse through ERPNext's own *Purchase Receipt*; the app only
    `stock_qty`, warehouse, `batch_no` + `use_serial_batch_fields`), splits multi-batch rows, saves, and submits
    through the workflow transition available to the user that leads to a submitted state (*Receive / Submit /
    Approve / …*), or `doc.submit()` without a workflow. The response tells whether the receipt was submitted or
-   only moved to the next approval stage. Values a site's own submit rules require on every receipt (the
-   warehouse department on each row, for instance) are configured once in *WMS Settings > Receipt Field
-   Values* and written by the backend before the save.
+   only moved to the next approval stage. Before the save the backend stamps what the warehouse owns: the
+   **warehouse department** on every row (*WMS Settings > Warehouse Department*, so the site's submit rule
+   passes without asking), the confirming user's **Employee** in the site's *Warehouse Document Processing
+   Officer* field (whose signature the printed receipt carries; *WMS Settings > Officer Field*, found by label
+   when empty) and the **posting date and time of the confirmation** (not the date purchasing drafted it).
+   Other values a site's rules require are configured once in *WMS Settings > Receipt Field Values*.
+   A receipt confirmed **short** (rows removed or counted below the expected quantity) gets a draft
+   **follow-up Purchase Receipt** per Purchase Order for the undelivered quantity, created by the backend in
+   the warehouse stage (*Pending for Warehouse Approval*) and shown on the completion card; the quantity is
+   capped by what the order still has to receive minus what other drafts already carry, so receiving the
+   follow-up short again creates the next one for the remainder and never a duplicate.
 6. **Save progress** stores the counts of the rows counted so far (`submit=0`, `remove_unreceived=0`) in the
    row's *WMS Counted Qty* (`custom_wms_counted_qty`) and the per-batch counts in *WMS Counted Batches*
    (`custom_wms_counted_batches`), plus the first batch and the warehouse, and changes nothing else: the
@@ -203,6 +212,12 @@ card: Ready to Pick ──first row started──▶ Picking ──last row pick
                                                                      └──generate_document──▶ draft Delivery Note / Stock Entry
 ```
 
+* **Submitted Pick Lists only.** The app picks on *submitted* Pick Lists: ERPNext allocates the batches and
+  locations when the list is saved and counts them against other open lists (draft or submitted), the
+  Delivery Note / Stock Entry can only be made from a submitted list, and the picked quantities are written
+  to the Sales Order / Material Request on submit. A Material Issue Pick List can be created straight from a
+  *Material Issue* Material Request (*Create > Pick List*, added by the backend app); ERPNext itself offers
+  that on Material Transfer requests only.
 * **Row-level assignment.** Every `Pick List Item` row has its own picker (`custom_picker`), so several
   pickers work on one card at the same time. Each row records started/completed timestamps and its
   duration; the card records its first start and last completion.

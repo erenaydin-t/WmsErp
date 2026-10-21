@@ -89,6 +89,34 @@ def editable_states(states, roles) -> list[str]:
     return out
 
 
+def submittable_states(states, transitions, roles) -> list[str]:
+    """Draft states of a workflow from which one of `roles` may take a transition into a submitted
+    state (doc_status 1): the receipt 'is at the warehouse stage' exactly there. A site whose
+    warehouse approves receipts in *Pending for Warehouse Approval* lists that state only, even
+    when the same role may still edit earlier drafts.
+
+    `states`: rows with `state`, `doc_status`; `transitions`: rows with `state`, `next_state`,
+    `allowed` (role)."""
+    roles = set(roles or [])
+    docstatus = {_get(s, "state"): str(_get(s, "doc_status") or "0") for s in states or []}
+    out = []
+    for row in transitions or []:
+        state, next_state = _get(row, "state"), _get(row, "next_state")
+        if not state or docstatus.get(state, "0") != "0" or docstatus.get(next_state) != "1":
+            continue
+        if _get(row, "allowed") in roles and state not in out:
+            out.append(state)
+    return out
+
+
+def warehouse_states(states, transitions, roles) -> list[str]:
+    """The default receivable states: the states the user may submit from (see
+    `submittable_states`); only when the workflow lets the role submit from nowhere, the draft
+    states the role may edit (`editable_states`), so a site without a submit transition for the
+    warehouse still sees something."""
+    return submittable_states(states, transitions, roles) or editable_states(states, roles)
+
+
 def choose_submit_action(transitions, state_docstatus) -> str | None:
     """Among the workflow transitions allowed to the user, the action that submits the document
     (next state with docstatus 1); prefers actions named like Receive / Submit / Approve."""
@@ -214,6 +242,63 @@ def _counted_batches(entry, item_code) -> list[dict]:
         if qty <= QTY_TOLERANCE:
             continue
         out.append({"batch_no": batch_no, "qty": qty})
+    return out
+
+
+def shortages(rows, plan) -> list[dict]:
+    """What a confirmed receipt leaves undelivered, per Purchase Order row: the rows removed
+    (nothing received) and the rows counted below what purchasing expected. Quantities in the row
+    UOM; rows without a Purchase Order row are skipped (nothing to follow up on).
+    Returns `[{purchase_order, purchase_order_item, item_code, row, expected, counted, short}]`."""
+    out = []
+    removed = set(plan.get("removed") or [])
+    updates = plan.get("updates") or {}
+    for row in rows or []:
+        name = _get(row, "name")
+        po_row = _get(row, "purchase_order_item")
+        if not po_row:
+            continue
+        expected = _num(_get(row, "qty"))
+        if name in removed:
+            counted = 0.0
+        elif name in updates:
+            counted = _num(updates[name].get("qty"))
+        else:
+            continue
+        short = expected - counted
+        if short <= QTY_TOLERANCE:
+            continue
+        out.append(
+            {
+                "purchase_order": _get(row, "purchase_order"),
+                "purchase_order_item": po_row,
+                "item_code": _get(row, "item_code"),
+                "row": name,
+                "expected": expected,
+                "counted": counted,
+                "short": short,
+            }
+        )
+    return out
+
+
+def followup_quantities(shortages, pending, in_drafts) -> dict:
+    """Quantity of each Purchase Order row the follow-up receipt should carry: the shortage,
+    capped by what the Purchase Order still has to receive (`pending`, after the short receipt
+    was submitted) minus what other draft receipts already carry for that row (`in_drafts`), so
+    receiving a short receipt twice never asks for the same goods twice nor more than ordered.
+    Shortages of one Purchase Order row (a row split into batches) are summed.
+    Returns `{purchase_order_item: qty}` with positive quantities only."""
+    wanted = {}
+    for entry in shortages or []:
+        po_row = entry["purchase_order_item"]
+        wanted[po_row] = wanted.get(po_row, 0.0) + _num(entry["short"])
+    out = {}
+    for po_row, short in wanted.items():
+        room = _num((pending or {}).get(po_row)) - _num((in_drafts or {}).get(po_row))
+        qty = min(short, room)
+        if qty > QTY_TOLERANCE:
+            out[po_row] = qty
     return out
 
 

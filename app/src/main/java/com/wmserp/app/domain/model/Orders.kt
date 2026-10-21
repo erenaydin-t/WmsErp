@@ -140,6 +140,18 @@ data class ReceiveResult(
     val submitted: Boolean,
     val differences: List<ReceiptDifference> = emptyList(),
     val removedRows: List<String> = emptyList(),
+    /** Follow-up draft receipts the backend created for what was not delivered (one per Purchase Order). */
+    val followups: List<FollowupReceipt> = emptyList(),
+)
+
+/** A draft Purchase Receipt created for the undelivered quantity of a short receipt. */
+data class FollowupReceipt(
+    val name: String?,
+    val purchaseOrder: String?,
+    val qty: Double,
+    val workflowState: String? = null,
+    /** Set when the backend could not create it (the short receipt itself was still submitted). */
+    val error: String? = null,
 )
 
 /** Maps to the ERPNext `Sales Order` DocType (used by the delivery delay analytics). */

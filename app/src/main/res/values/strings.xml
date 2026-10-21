@@ -514,6 +514,8 @@
     <string name="receive_confirm_submit">Confirm</string>
     <string name="receive_removed_rows">%1$d row(s) not received</string>
     <string name="receive_differences">%1$d row(s) with a different quantity</string>
+    <string name="receive_followup_created">Follow-up receipt %1$s created for the %2$s unit(s) not delivered</string>
+    <string name="receive_followup_failed">The follow-up receipt for %1$s could not be created; ask purchasing to create it</string>
     <string name="error_batch_required">%1$s: scan or enter the batch</string>
     <string name="error_invalid_date">%1$s is not a date (yyyy-MM-dd)</string>
     <string name="error_expiry_before_manufacturing">Expiry %1$s is before the manufacturing date %2$s</string>
@@ -543,7 +545,7 @@
     <string name="receive_batch_create">Create batch and count</string>
     <string name="receive_batch_qc">QC %1$s</string>
     <string name="receive_batch_qc_no">QC number</string>
-    <string name="receive_batch_qc_no_hint">The quality-control number of this delivery, if your site assigns one at receiving; leave empty otherwise</string>
+    <string name="receive_batch_qc_no_hint">Optional: the quality-control number of this delivery, if one was assigned</string>
     <string name="receive_batch_qc_no_required">Required: the QC number assigned to this delivery</string>
     <string name="receive_batch_another_qc">This delivery has another QC number: create a new batch</string>
     <string name="receive_summary_title">Confirm receipt</string>

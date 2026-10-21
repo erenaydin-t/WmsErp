@@ -27,6 +27,16 @@ data class PurchaseReceiptDto(
     val submitted: Boolean = false,
     val differences: List<ReceiptDifferenceDto> = emptyList(),
     @SerialName("removed_rows") val removedRows: List<String> = emptyList(),
+    val followups: List<FollowupReceiptDto> = emptyList(),
+)
+
+@Serializable
+data class FollowupReceiptDto(
+    val name: String? = null,
+    @SerialName("purchase_order") val purchaseOrder: String? = null,
+    val qty: Double = 0.0,
+    @SerialName("workflow_state") val workflowState: String? = null,
+    val error: String? = null,
 )
 
 @Serializable
