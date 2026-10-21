@@ -207,10 +207,16 @@ fields, a QR label print format and whitelisted APIs **without modifying ERPNext
 stock ledger or GL entries**.
 
 ```
-row:  Not Picked ──start_row──▶ Picking ──save_row_progress (each scan)──▶ Picked (picked == required)
-card: Ready to Pick ──first row started──▶ Picking ──last row picked (card completion check)──▶ Picked
-                                                                     └──generate_document──▶ draft Delivery Note / Stock Entry
+row:  Not Picked ──start_row──▶ Picking ──save_row_progress(hold) (each scan / correction)──▶ Picking (picked == required, editable)
+                                   └──reset_row──▶ Not Picked (quantity + scanned batch cleared)
+      Picking ──complete_row (final confirmation)──▶ Picked
+card: Ready to Pick ──first row started──▶ Picking ──last row confirmed (card completion check)──▶ Picked
+                                                                     └──generate_document (stock re-checked)──▶ draft Delivery Note / Stock Entry
 ```
+
+In the app a pick list goes through **Draft → Picking in progress → Final confirmation**: scanning and
+entering a quantity never finalizes anything, every row stays correctable until the picker confirms, and the
+document is created only after that confirmation.
 
 * **Submitted Pick Lists only.** The app picks on *submitted* Pick Lists: ERPNext allocates the batches and
   locations when the list is saved and counts them against other open lists (draft or submitted), the
@@ -224,6 +230,11 @@ card: Ready to Pick ──first row started──▶ Picking ──last row pick
 * **Strict JSON QR labels.** Picking only moves through scanned QR codes whose content is a JSON object
   with the keys configured in *WMS Settings* (default `{"item_code": …, "batch_no": …}`), printed with
   the *WMS Batch QR Label* print format. Plain barcodes, typed batches and dropdowns are not accepted.
+* **Batch stock is checked at every scan.** A scanned batch must belong to the row's item, be live and
+  unexpired, and hold the picked quantity in the row's warehouse (the batch balance ERPNext computes, or the
+  Bin quantity for items without batches). A batch with no stock there is refused with a large red *No stock
+  for this batch* alert and nothing is recorded; `generate_document` repeats the check for every picked row,
+  so a Delivery Note that could not be submitted is never created.
 * **The last-picker rule.** When a row reaches its required quantity the backend marks it *Picked* and,
   under a row lock, checks whether every row of the card is picked. Exactly one request observes that
   transition and is answered with `is_last_picker: true`; that picker gets the document button, everyone
@@ -243,7 +254,9 @@ bench --site <site> install-app wmserp_picking
 * **Dashboard → My picking today** shows the picker's KPIs from `get_picker_kpis`: rows picked (and
   units), average time per row (and rows per hour), open rows, cards completed.
 * **Orders → Pick** is the task list: submitted, *Open* pick lists with at least one row assigned to the
-  signed-in user (`get_my_pick_lists`), with "my rows" progress. Drafts never appear.
+  signed-in user (`get_my_pick_lists`), with "my rows" progress. Drafts never appear. Completed lists (card
+  *Picked* or document already created) are hidden by default; the *Show completed (n)* chip lists them
+  after the open ones.
 * **Active picking** lists only the rows assigned to the picker, each with the **expected batch in bold**,
   source → target warehouse, expiry and picked / required. Tapping a row makes it active and starts its
   hidden timer (`start_row`). Scanning a label (PDA wedge, intent, or the camera toggle) parses it strictly
@@ -251,14 +264,21 @@ bench --site <site> install-app wmserp_picking
   immediately (`save_row_progress` with the label and the elapsed time); a wrong batch shows a large red
   *Wrong batch. Expected: X, scanned: Y*; unknown items, other pickers' rows and rows already at their
   required quantity are refused. Batches are never typed or chosen by hand; the quantity of a matching scan
-  is confirmed in the prompt below.
+  is confirmed in the prompt below. Every save is *held* on the server: a row counted in full shows *Ready
+  to confirm* but stays editable.
+* **Corrections before the final confirmation.** The pencil on a row opens the correction dialog: change the
+  picked quantity (0 up to the required quantity, saved like a scan) or **Remove pick**, which clears the
+  quantity and a batch the picker scanned (`reset_row`) so the row can be scanned again with the right one.
+  A row already confirmed on the server (another device, an older app) can only be removed. The details card
+  shows the phase: *Draft*, *Picking in progress*, *Confirmed*.
 * **Next to scan** stays visible above the list: the active row's item, its expected batch, how much is still
   open and which scanner to use (*Hardware scanner ready — pull the trigger* on a PDA, the camera button
   otherwise). The list scrolls to the row that becomes active after a completed one.
-* **Complete picking** becomes enabled when every row of the picker has its required quantity. It sends
-  any row the server has not confirmed yet (`complete_row`) and applies the last-picker rule: the picker who
-  closed the card sees the **Create Delivery Note / Create Material Transfer / Create Material Issue**
-  button (one draft, generated once), the others see *Task completed* and return to the dashboard.
+* **Final confirmation** becomes enabled when every row of the picker has its required quantity. It marks
+  the rows *Picked* on the server (`complete_row`) and applies the last-picker rule: for the picker who
+  closed the card the app creates the draft **Delivery Note / Material Transfer / Material Issue** right away
+  (one draft, generated once; the button stays for a retry when the site asks for a required field or the
+  stock check fails), the others see *Task completed* and return to the dashboard.
 
 ## Stocktaking workflow
 
@@ -293,7 +313,11 @@ hidden from counters), a quantity tolerance, an item group / brand filter and *i
   before anything is sent.
 * **Offline-safe.** Every count is written to a file-backed queue first (*Saved locally · Pending sync*) and
   synchronised with `sync_counts`, which replays the queue in order with one savepoint per entry; a `client_ref`
-  per count makes replays idempotent. The server's verdict replaces the local one when it arrives (for example a
+  per count makes replays idempotent. The outcome of every sync is visible: confirmed counts update the rows,
+  refused ones (counted by someone else meanwhile, not assigned...) are dropped with the server's reason, and
+  when the server fails (HTTP error or `reason: server` on an entry) the counts stay on the device, the screen
+  says *Sync failed: n count(s) are kept on the device* and the sync button retries them with the same
+  `client_ref`, so nothing is ever recorded twice. The server's verdict replaces the local one when it arrives (for example a
   second count requested for a row whose ERP quantity the device did not know); refusals are shown with the error
   tone; the sync retries every 15 s while the session is open and the badge on the sync icon shows the queue size.
 * The progress card shows the session totals (counted / total, matches, variances, pending review) and the

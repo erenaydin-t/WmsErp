@@ -73,6 +73,7 @@ fun PickListItemDto.toDomain(): PickListItem = PickListItem(
     rowStartedAt = rowStartedAt,
     rowCompletedAt = rowCompletedAt,
     durationSeconds = durationSeconds,
+    batchFromWms = batchFromWms != 0,
 )
 
 fun RowUpdateDto.toDomain(): RowUpdate = RowUpdate(

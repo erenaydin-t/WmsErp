@@ -201,10 +201,15 @@ class SubmitStocktakingCountUseCase @Inject constructor(private val repository: 
     }
 }
 
-/** What a sync pass did: confirmed counts, counts the server refused (dropped from the queue), and what is still waiting. */
+/**
+ * What a sync pass did: confirmed counts, counts the server refused (dropped from the queue), counts
+ * the server failed on (kept for a retry), and what is still waiting.
+ */
 data class SyncReport(
     val confirmed: List<CountResult> = emptyList(),
     val refused: List<CountResult> = emptyList(),
+    /** Entries the server could not process (`reason: server`); they stay in the queue. */
+    val failed: List<CountResult> = emptyList(),
     val remaining: List<CountSubmission> = emptyList(),
     /** The server could not be reached; everything stays queued. */
     val offline: Boolean = false,
@@ -231,17 +236,22 @@ class SyncPendingCountsUseCase @Inject constructor(
                 val byRef = result.data.results.associateBy { it.clientRef }
                 val confirmed = ArrayList<CountResult>()
                 val refused = ArrayList<CountResult>()
+                val failed = ArrayList<CountResult>()
                 val remaining = ArrayList<CountSubmission>()
                 for (submission in pending) {
                     val outcome = byRef[submission.clientRef]
                     when {
                         outcome == null -> remaining += submission.copy(attempts = submission.attempts + 1)
+                        outcome.keepsQueued -> {
+                            failed += outcome
+                            remaining += submission.copy(attempts = submission.attempts + 1, lastError = outcome.message)
+                        }
                         outcome.isRejected -> refused += outcome
                         else -> confirmed += outcome
                     }
                 }
                 store.writePending(sessionName, remaining)
-                SyncReport(confirmed = confirmed, refused = refused, remaining = remaining)
+                SyncReport(confirmed = confirmed, refused = refused, failed = failed, remaining = remaining)
             }
         }
     }
@@ -269,13 +279,17 @@ class UpdateCachedStocktakingUseCase @Inject constructor(private val store: Stoc
     suspend operator fun invoke(cache: CachedStocktaking) = store.writeSession(cache)
 }
 
+/** A server-side failure is not a verdict on the count: it is kept and sent again. */
+private val CountResult.keepsQueued: Boolean
+    get() = outcome == CountOutcome.ERROR && (rejection == null || rejection == CountRejection.SERVER || rejection == CountRejection.UNKNOWN)
+
 /** Which rejection the server sent, as a refusal the screen already knows how to show. */
 fun CountRejection.toRefusal(): CountRefusal? = when (this) {
     CountRejection.ALREADY_COUNTED -> CountRefusal.ALREADY_COUNTED
     CountRejection.NOT_ASSIGNED -> CountRefusal.NOT_ASSIGNED
     CountRejection.SESSION_CLOSED -> CountRefusal.SESSION_CLOSED
     CountRejection.FINALIZED -> CountRefusal.FINALIZED
-    CountRejection.VALIDATION, CountRejection.PERMISSION, CountRejection.UNKNOWN -> null
+    CountRejection.VALIDATION, CountRejection.PERMISSION, CountRejection.SERVER, CountRejection.UNKNOWN -> null
 }
 
 /** Asks the server to identify a label the device cache could not resolve (needs the network). */

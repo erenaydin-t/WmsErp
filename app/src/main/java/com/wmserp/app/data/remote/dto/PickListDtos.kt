@@ -60,9 +60,10 @@ data class PickListItemDto(
     @SerialName("row_started_at") val rowStartedAt: String? = null,
     @SerialName("row_completed_at") val rowCompletedAt: String? = null,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
+    @SerialName("batch_from_wms") val batchFromWms: Int = 0,
 )
 
-/** Response of `start_row`, `save_row_progress` and `complete_row`. */
+/** Response of `start_row`, `save_row_progress`, `complete_row` and `reset_row`. */
 @Serializable
 data class RowUpdateDto(
     @SerialName("pick_list") val pickList: PickListDto,

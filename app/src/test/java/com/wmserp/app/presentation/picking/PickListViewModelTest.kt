@@ -21,6 +21,7 @@ import com.wmserp.app.domain.usecase.GeneratePickDocumentUseCase
 import com.wmserp.app.domain.usecase.GetPickListUseCase
 import com.wmserp.app.domain.usecase.GetWmsQrKeysUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
+import com.wmserp.app.domain.usecase.ResetPickRowUseCase
 import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
 import com.wmserp.app.domain.usecase.SavePickRowProgressUseCase
 import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
@@ -74,6 +75,7 @@ class PickListViewModelTest {
             StartPickRowUseCase(repository),
             SavePickRowProgressUseCase(repository),
             CompletePickRowUseCase(repository),
+            ResetPickRowUseCase(repository),
             GeneratePickDocumentUseCase(repository, settingsRepository),
             searchLinkValues,
             saveFieldDefaults,
@@ -88,13 +90,12 @@ class PickListViewModelTest {
 
     private fun PickListViewModel.line(rowName: String) = uiState.value.lines.first { it.item.rowName == rowName }
 
-    /** The server echoes the saved quantity; the row completes at the required quantity. */
-    private fun mockProgressFor(rowName: String, required: Double, base: () -> PickList, lastPickerOnComplete: Boolean = false) {
-        coEvery { repository.saveRowProgress(name, rowName, any(), any(), any(), any()) } answers {
+    /** The server echoes the saved quantity; held saves keep the row Picking even at the required quantity. */
+    private fun mockProgressFor(rowName: String, required: Double, base: () -> PickList) {
+        coEvery { repository.saveRowProgress(name, rowName, any(), any(), any(), any(), any()) } answers {
             val qty = arg<Double>(2)
-            val complete = qty >= required
-            val updated = base().withRow(rowName, qty, if (complete) PickRowStatus.PICKED else PickRowStatus.PICKING)
-            AppResult.Success(rowUpdate(updated, rowName, rowCompleted = complete, lastPicker = complete && lastPickerOnComplete && updated.allRowsPicked))
+            val updated = base().withRow(rowName, qty, if (qty > 0.0) PickRowStatus.PICKING else PickRowStatus.NOT_PICKED)
+            AppResult.Success(rowUpdate(updated, rowName, rowCompleted = false, lastPicker = false))
         }
     }
 
@@ -125,7 +126,7 @@ class PickListViewModelTest {
         assertTrue(vm.line("prow1").highlighted)
         assertEquals(UiText.Res(R.string.pick_qty_added, listOf("1", "ITEM-001")), vm.uiState.value.message)
         assertEquals(1, scanner.feedbackCalls.size)
-        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 1.0, "ITEM-001", "B-001", any()) }
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 1.0, "ITEM-001", "B-001", any(), true) }
         assertFalse(vm.line("prow1").syncing)
     }
 
@@ -145,7 +146,7 @@ class PickListViewModelTest {
         assertTrue(vm.line("prow1").highlighted)
         assertEquals(1, scanner.errorFeedbackCalls)
         assertTrue(scanner.feedbackCalls.isEmpty())
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -159,7 +160,7 @@ class PickListViewModelTest {
         vm.onScanned(ScannedCode(qrLabel("ITEM-003", "B-777"), ScanSource.HARDWARE_KEYBOARD))
         assertEquals(ScanAlertKind.NOT_ASSIGNED, vm.uiState.value.scanAlert?.kind)
         assertEquals(UiText.Res(R.string.pick_item_not_assigned, listOf("ITEM-003")), vm.uiState.value.scanAlert?.message)
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -171,62 +172,132 @@ class PickListViewModelTest {
 
         assertEquals(ScanAlertKind.ALREADY_COMPLETE, vm.uiState.value.scanAlert?.kind)
         assertEquals(5.0, vm.line("prow2").qty, 0.0)
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
     fun `finishing my rows while others still work ends in Task Completed`() = runTest {
         val start = ready.withRow("prow2", 5.0, PickRowStatus.PICKED)
         var current = start
-        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any()) } answers {
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any(), any()) } answers {
             val qty = arg<Double>(2)
-            current = current.withRow("prow1", qty, if (qty >= 10.0) PickRowStatus.PICKED else PickRowStatus.PICKING)
-            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = qty >= 10.0, lastPicker = false))
+            current = current.withRow("prow1", qty, PickRowStatus.PICKING)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = false, lastPicker = false))
+        }
+        coEvery { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) } answers {
+            current = current.withRow("prow1", 10.0, PickRowStatus.PICKED)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = true, lastPicker = false))
         }
         val vm = createViewModel(start)
+        assertEquals(PickPhase.IN_PROGRESS, vm.uiState.value.phase)
 
         repeat(10) { vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_INTENT)) }
 
+        // Scans never finalize: the row is counted in full but stays editable until the final confirmation.
         assertEquals(10.0, vm.line("prow1").qty, 0.0)
-        assertEquals(PickRowStatus.PICKED, vm.line("prow1").item.rowStatus)
+        assertEquals(PickRowStatus.PICKING, vm.line("prow1").item.rowStatus)
+        assertTrue(vm.line("prow1").ready)
+        assertEquals(PickPhase.IN_PROGRESS, vm.uiState.value.phase)
         assertTrue(vm.uiState.value.allMyRowsComplete)
         assertNull(vm.uiState.value.outcome)
         assertFalse(vm.uiState.value.canScan)
         assertTrue(vm.uiState.value.canComplete)
+        coVerify(exactly = 10) { repository.saveRowProgress(name, "prow1", any(), "ITEM-001", "B-001", any(), true) }
 
         vm.completePicking()
 
         assertEquals(PickOutcome.TASK_COMPLETED, vm.uiState.value.outcome)
+        assertEquals(PickPhase.CONFIRMED, vm.uiState.value.phase)
         assertFalse(vm.uiState.value.canGenerate)
-        coVerify(exactly = 0) { repository.completeRow(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) }
     }
 
     @Test
-    fun `the picker who completes the last row of the card gets the document CTA`() = runTest {
+    fun `the picker who confirms the last row of the card gets the document created at once`() = runTest {
         val start = ready.withRow("prow2", 5.0, PickRowStatus.PICKED).withRow("prow3", 3.0, PickRowStatus.PICKED)
         var current = start
-        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any()) } answers {
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any(), any()) } answers {
             val qty = arg<Double>(2)
-            val complete = qty >= 10.0
-            current = current.withRow("prow1", qty, if (complete) PickRowStatus.PICKED else PickRowStatus.PICKING)
-            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = complete, lastPicker = complete))
+            current = current.withRow("prow1", qty, PickRowStatus.PICKING)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = false, lastPicker = false))
+        }
+        coEvery { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) } answers {
+            current = current.withRow("prow1", 10.0, PickRowStatus.PICKED)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = true, lastPicker = true))
         }
         coEvery { repository.generateDocument(name, emptyMap()) } returns AppResult.Success(GeneratedDocument("Delivery Note", "MAT-DN-00001"))
         val vm = createViewModel(start)
 
         repeat(10) { vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD)) }
+        assertNull(vm.uiState.value.outcome)
+        assertNull(vm.uiState.value.generatedDocument)
+
+        vm.completePicking()
 
         assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
         assertEquals(PickingStatus.PICKED, vm.uiState.value.cardStatus)
-        assertEquals(UiText.Res(R.string.pick_completed_message), vm.uiState.value.message)
-        assertTrue(vm.uiState.value.canGenerate)
-
-        vm.generateDocument()
-
         assertEquals("MAT-DN-00001", vm.uiState.value.generatedDocument?.name)
         assertEquals(UiText.Res(R.string.pick_document_created, listOf("Delivery Note", "MAT-DN-00001")), vm.uiState.value.message)
         assertFalse(vm.uiState.value.canGenerate)
         coVerify(exactly = 1) { repository.generateDocument(name, emptyMap()) }
+    }
+
+    @Test
+    fun `a pick can be corrected or removed before the final confirmation`() = runTest {
+        var current = ready
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any(), any()) } answers {
+            val qty = arg<Double>(2)
+            current = current.withRow("prow1", qty, if (qty > 0.0) PickRowStatus.PICKING else PickRowStatus.NOT_PICKED)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = false))
+        }
+        coEvery { repository.resetRow(name, "prow1") } answers {
+            current = current.withRow("prow1", 0.0, PickRowStatus.NOT_PICKED)
+            AppResult.Success(rowUpdate(current, "prow1", rowCompleted = false))
+        }
+        val vm = createViewModel()
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(1.0, vm.line("prow1").qty, 0.0)
+
+        vm.openEdit("prow1")
+        val edit = vm.uiState.value.editLine
+        assertNotNull(edit)
+        assertEquals("1", edit?.qtyText)
+        assertFalse(vm.uiState.value.canScan)
+        vm.setEditQty("4")
+        vm.confirmEdit()
+
+        assertNull(vm.uiState.value.editLine)
+        assertEquals(4.0, vm.line("prow1").qty, 0.0)
+        assertEquals(UiText.Res(R.string.pick_qty_updated, listOf("ITEM-001", "4")), vm.uiState.value.message)
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 4.0, null, null, any(), true) }
+
+        vm.openEdit("prow1")
+        vm.setEditQty("11")
+        assertFalse(vm.uiState.value.editLine!!.isValid)
+        vm.removePick()
+
+        assertNull(vm.uiState.value.editLine)
+        assertEquals(0.0, vm.line("prow1").qty, 0.0)
+        assertEquals(PickRowStatus.NOT_PICKED, vm.line("prow1").item.rowStatus)
+        assertEquals(UiText.Res(R.string.pick_removed, listOf("ITEM-001")), vm.uiState.value.message)
+        assertTrue(vm.uiState.value.canScan)
+        coVerify(exactly = 1) { repository.resetRow(name, "prow1") }
+    }
+
+    @Test
+    fun `a batch without stock in the warehouse is shown as a red alert and the count rolls back`() = runTest {
+        coEvery { repository.saveRowProgress(name, "prow2", any(), any(), any(), any(), any()) } returns AppResult.Failure(
+            AppError.Validation("Batch B-9 of ITEM-002 has only 0 in Stores - WM, but 1 would be picked.", serverType = "InsufficientStockError")
+        )
+        val vm = createViewModel()
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-002", "B-9"), ScanSource.HARDWARE_KEYBOARD))
+
+        assertEquals(0.0, vm.line("prow2").qty, 0.0)
+        assertEquals(ScanAlertKind.NO_STOCK, vm.uiState.value.scanAlert?.kind)
+        assertEquals("B-9", vm.uiState.value.scanAlert?.scanned)
+        assertNull(vm.uiState.value.error)
+        assertEquals(1, scanner.errorFeedbackCalls)
     }
 
     @Test
@@ -261,19 +332,23 @@ class PickListViewModelTest {
         val start = ready.withRow("prow2", 5.0, PickRowStatus.PICKED).withRow("prow3", 3.0, PickRowStatus.PICKED).withRow("prow1", 10.0, PickRowStatus.PICKING)
         val finished = start.withRow("prow1", 10.0, PickRowStatus.PICKED)
         coEvery { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) } returns AppResult.Success(rowUpdate(finished, "prow1", rowCompleted = true, lastPicker = true))
+        coEvery { repository.generateDocument(name, emptyMap()) } returns AppResult.Failure(AppError.Network("offline"))
         val vm = createViewModel(start)
         assertTrue(vm.uiState.value.canComplete)
 
         vm.completePicking()
 
         assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
+        // The document could not be created right away: the button stays so the picker can retry.
         assertTrue(vm.uiState.value.canGenerate)
+        assertEquals(UiText.Res(R.string.error_network_unreachable), vm.uiState.value.error)
         coVerify(exactly = 1) { repository.completeRow(name, "prow1", 10.0, null, "B-001", any()) }
+        coVerify(exactly = 1) { repository.generateDocument(name, emptyMap()) }
     }
 
     @Test
     fun `a failed sync rolls the local count back to the server value`() = runTest {
-        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any()) } returns AppResult.Failure(AppError.Network("offline"))
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any(), any()) } returns AppResult.Failure(AppError.Network("offline"))
         val vm = createViewModel()
 
         vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
@@ -295,7 +370,7 @@ class PickListViewModelTest {
 
         assertEquals("prow2", vm.uiState.value.activeRowName)
         coVerify(exactly = 1) { repository.startRow(name, "prow2") }
-        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow2", 1.0, "ITEM-002", null, 42.0) }
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow2", 1.0, "ITEM-002", null, 42.0, true) }
     }
 
     @Test
@@ -331,7 +406,7 @@ class PickListViewModelTest {
         assertEquals(0.0, vm.line("prow1").qty, 0.0)
         assertFalse(vm.uiState.value.canScan)
         assertEquals(1, scanner.feedbackCalls.size)
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -346,11 +421,12 @@ class PickListViewModelTest {
 
         assertNull(vm.uiState.value.pendingScan)
         assertEquals(10.0, vm.line("prow1").qty, 0.0)
-        assertEquals(PickRowStatus.PICKED, vm.line("prow1").item.rowStatus)
+        assertEquals(PickRowStatus.PICKING, vm.line("prow1").item.rowStatus)
+        assertTrue(vm.line("prow1").ready)
         assertEquals(UiText.Res(R.string.pick_qty_added, listOf("10", "ITEM-001")), vm.uiState.value.message)
         assertEquals("prow2", vm.uiState.value.activeRowName)
         assertTrue(vm.uiState.value.canScan)
-        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 10.0, "ITEM-001", "B-001", 30.0) }
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 10.0, "ITEM-001", "B-001", 30.0, true) }
     }
 
     @Test
@@ -364,7 +440,7 @@ class PickListViewModelTest {
         assertFalse(vm.uiState.value.pendingScan!!.isValid)
         vm.confirmPendingScan()
         assertNotNull(vm.uiState.value.pendingScan)
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
 
         vm.decrementPendingQty()
         assertEquals("10", vm.uiState.value.pendingScan!!.qtyText)
@@ -382,7 +458,7 @@ class PickListViewModelTest {
         assertEquals(4.0, vm.line("prow1").qty, 0.0)
         assertEquals(PickRowStatus.PICKING, vm.line("prow1").status)
         assertEquals(UiText.Res(R.string.pick_qty_added, listOf("4", "ITEM-001")), vm.uiState.value.message)
-        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 4.0, "ITEM-001", "B-001", any()) }
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 4.0, "ITEM-001", "B-001", any(), true) }
 
         vm.onScanned(ScannedCode(qrLabel("ITEM-001", "B-001"), ScanSource.HARDWARE_KEYBOARD))
         assertEquals(6.0, vm.uiState.value.pendingScan!!.remaining, 0.0)
@@ -406,7 +482,7 @@ class PickListViewModelTest {
         assertEquals(0.0, vm.line("prow1").qty, 0.0)
         assertNotNull(vm.line("prow1").startedAtMillis)
         assertTrue(vm.uiState.value.canScan)
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test

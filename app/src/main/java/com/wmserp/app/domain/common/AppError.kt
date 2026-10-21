@@ -56,11 +56,18 @@ enum class ErrorCode {
     ROW_NOT_ASSIGNED,
     PICK_LIST_NOT_FOUND,
     UNSUPPORTED_PICK_PURPOSE,
+    PICK_DOCUMENT_EXISTS,
     COUNT_QTY_INVALID,
     STOCKTAKING_SESSION_NOT_FOUND,
     STOCKTAKING_ITEM_NOT_IN_SESSION,
     STOCKTAKING_OFFLINE_UNKNOWN_ITEM,
     UNKNOWN,
+}
+
+/** Frappe exception classes (`exc_type`) raised by the wmserp_picking backend that the app reacts to. */
+object ServerErrorTypes {
+    /** A picked quantity is not available for the batch / item in the row's warehouse. */
+    const val INSUFFICIENT_STOCK = "InsufficientStockError"
 }
 
 /**
@@ -108,6 +115,8 @@ sealed class AppError(
         override val message: String,
         override val code: ErrorCode? = null,
         override val args: List<String> = emptyList(),
+        /** Frappe exception class (`exc_type`) when the server raised it, e.g. `InsufficientStockError`. */
+        val serverType: String? = null,
     ) : AppError(message, code, args)
 
     /** ERPNext returned a server side failure. */

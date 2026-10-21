@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -86,6 +87,7 @@ fun OrdersRoute(
         onOpenPurchaseReceipt = onOpenPurchaseReceipt,
         onOpenPickList = onOpenPickList,
         onOpenStocktaking = onOpenStocktaking,
+        onToggleCompletedPicks = viewModel::toggleCompletedPicks,
     )
 }
 
@@ -98,6 +100,7 @@ fun OrdersScreen(
     onOpenPurchaseReceipt: (String) -> Unit,
     onOpenPickList: (String) -> Unit,
     onOpenStocktaking: (String) -> Unit = {},
+    onToggleCompletedPicks: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -167,6 +170,21 @@ fun OrdersScreen(
                         }
                         OrdersTab.PICK -> {
                             val pickLists = state.filteredPickLists
+                            if (state.completedPickCount > 0) {
+                                item {
+                                    FilterChip(
+                                        selected = state.showCompletedPicks,
+                                        onClick = onToggleCompletedPicks,
+                                        label = {
+                                            Text(
+                                                if (state.showCompletedPicks) stringResource(R.string.orders_pick_hide_completed)
+                                                else stringResource(R.string.orders_pick_show_completed, state.completedPickCount),
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("orders_pick_completed_toggle"),
+                                    )
+                                }
+                            }
                             if (pickLists.isEmpty()) {
                                 item { EmptyState(Icons.Outlined.Inbox, stringResource(R.string.orders_empty_pick_title), stringResource(R.string.orders_empty_pick_message)) }
                             }

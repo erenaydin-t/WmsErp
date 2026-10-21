@@ -208,6 +208,30 @@ class LoadAndSyncUseCaseTest {
     }
 
     @Test
+    fun `a count the server failed on stays queued for the next attempt`() = runTest {
+        val a = CountSubmission("ref-a", "ST-2026-0001", "r1", "PCT-500", "PCT-250901", "Main - C", 100.0, "2026-09-30 10:00:00")
+        val b = CountSubmission("ref-b", "ST-2026-0001", "r4", "ASP-100", "ASP-1", "Main - C", 12.0, "2026-09-30 10:01:00")
+        store.writePending("ST-2026-0001", listOf(a, b))
+        coEvery { repository.syncCounts("ST-2026-0001", listOf(a, b)) } returns AppResult.Success(
+            SyncOutcome(
+                results = listOf(
+                    CountResult(CountOutcome.ERROR, rejection = CountRejection.SERVER, message = "Column 'final_qty' cannot be null", clientRef = "ref-a"),
+                    CountResult(CountOutcome.ACCEPTED, StocktakingFixtures.aspirinCounted, clientRef = "ref-b"),
+                ),
+            )
+        )
+
+        val report = SyncPendingCountsUseCase(repository, store)("ST-2026-0001")
+
+        assertEquals(listOf("ref-b"), report.confirmed.map { it.clientRef })
+        assertEquals(listOf("ref-a"), report.failed.map { it.clientRef })
+        assertTrue(report.refused.isEmpty())
+        assertEquals(listOf("ref-a"), report.remaining.map { it.clientRef })
+        assertEquals("Column 'final_qty' cannot be null", report.remaining.first().lastError)
+        assertEquals(listOf("ref-a"), store.readPending("ST-2026-0001").map { it.clientRef })
+    }
+
+    @Test
     fun `sync keeps the whole queue when the network is down`() = runTest {
         val a = CountSubmission("ref-a", "ST-2026-0001", "r1", "PCT-500", "PCT-250901", null, 100.0, "2026-09-30 10:00:00")
         store.writePending("ST-2026-0001", listOf(a))

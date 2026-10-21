@@ -121,7 +121,7 @@ class PickListUseCasesTest {
         assertEquals(ErrorCode.OVER_PICK, result.code())
         assertEquals(listOf("ITEM-001", "11", "10"), result.args())
         assertEquals(ErrorCode.ROW_NOT_ASSIGNED, SavePickRowProgressUseCase(repository)(pickList, notMine, 1.0).code())
-        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test

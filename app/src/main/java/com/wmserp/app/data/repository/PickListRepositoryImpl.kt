@@ -65,8 +65,19 @@ class PickListRepositoryImpl(
         itemCode: String?,
         batchNo: String?,
         elapsedSeconds: Double?,
+        hold: Boolean,
     ): AppResult<RowUpdate> = apiCaller.call {
-        dataSource.postMethod<RowUpdateDto>(method("save_row_progress"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds)).toDomain()
+        dataSource.postMethod<RowUpdateDto>(method("save_row_progress"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds, hold)).toDomain()
+    }
+
+    override suspend fun resetRow(name: String, rowName: String): AppResult<RowUpdate> = apiCaller.call {
+        dataSource.postMethod<RowUpdateDto>(
+            method("reset_row"),
+            buildJsonObject {
+                put("name", name)
+                put("row", rowName)
+            },
+        ).toDomain()
     }
 
     override suspend fun completeRow(
@@ -95,7 +106,7 @@ class PickListRepositoryImpl(
         dataSource.getMethod<PickerKpisDto>(method("get_picker_kpis")).toDomain()
     }
 
-    private fun rowBody(name: String, rowName: String, pickedQty: Double, itemCode: String?, batchNo: String?, elapsedSeconds: Double?): JsonObject =
+    private fun rowBody(name: String, rowName: String, pickedQty: Double, itemCode: String?, batchNo: String?, elapsedSeconds: Double?, hold: Boolean = false): JsonObject =
         buildJsonObject {
             put("name", name)
             put("row", rowName)
@@ -103,6 +114,7 @@ class PickListRepositoryImpl(
             itemCode?.takeIf { it.isNotBlank() }?.let { put("item_code", it) }
             batchNo?.takeIf { it.isNotBlank() }?.let { put("batch_no", it) }
             elapsedSeconds?.let { put("elapsed_seconds", it) }
+            if (hold) put("hold", 1)
         }
 
     companion object {

@@ -68,7 +68,11 @@ class StartPickRowUseCase @Inject constructor(private val repository: PickListRe
     }
 }
 
-/** Syncs a partial quantity; the scanned label (item + batch) is forwarded for server-side validation. */
+/**
+ * Syncs a partial quantity; the scanned label (item + batch) is forwarded for server-side validation
+ * (item, batch, expiry and stock in the row's warehouse). The quantity is *held*: the server keeps
+ * the row editable until [CompletePickRowUseCase], the picker's final confirmation.
+ */
 class SavePickRowProgressUseCase @Inject constructor(private val repository: PickListRepository) {
     suspend operator fun invoke(
         pickList: PickList,
@@ -79,7 +83,20 @@ class SavePickRowProgressUseCase @Inject constructor(private val repository: Pic
     ): AppResult<RowUpdate> {
         if (!row.isMine) return AppResult.Failure(rowNotAssigned(row))
         validateRowQty(row, pickedQty)?.let { return AppResult.Failure(it) }
-        return repository.saveRowProgress(pickList.name, row.rowName, pickedQty, label?.itemCode, label?.batchNo, elapsedSeconds)
+        return repository.saveRowProgress(pickList.name, row.rowName, pickedQty, label?.itemCode, label?.batchNo, elapsedSeconds, hold = true)
+    }
+}
+
+/** Clears a row (quantity, timers, a batch assigned by scan) so it can be picked again; refused once the document exists. */
+class ResetPickRowUseCase @Inject constructor(private val repository: PickListRepository) {
+    suspend operator fun invoke(pickList: PickList, row: PickListItem): AppResult<RowUpdate> {
+        if (!row.isMine) return AppResult.Failure(rowNotAssigned(row))
+        pickList.generatedDocument?.let { doc ->
+            return AppResult.Failure(
+                AppError.Validation("${doc.doctype} ${doc.name} was already created from this pick list", ErrorCode.PICK_DOCUMENT_EXISTS, listOf("${doc.doctype} ${doc.name}"))
+            )
+        }
+        return repository.resetRow(pickList.name, row.rowName)
     }
 }
 

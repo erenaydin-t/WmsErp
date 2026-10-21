@@ -43,21 +43,33 @@ data class OrdersUiState(
     val sessionError: UiText? = null,
     /** Counts still queued on this device per session, for the "waiting to sync" line of the cards. */
     val pendingCounts: Map<String, Int> = emptyMap(),
+    /** Completed pick lists (picked or documented) are hidden unless the picker asks for them. */
+    val showCompletedPicks: Boolean = false,
 ) {
+    /** How many of the user's pick lists are done (hidden by default). */
+    val completedPickCount: Int get() = pickLists.count { it.isDone }
+
     val filteredSessions: List<StocktakingSession>
         get() = if (query.isBlank()) sessions else sessions.filter { it.name.contains(query, ignoreCase = true) || it.warehouseName.contains(query, ignoreCase = true) || it.warehouse.contains(query, ignoreCase = true) }
 
-    /** The backend already returns only the user's own lists; the search box filters them on the device. */
+    /**
+     * The backend already returns only the user's own lists; the search box filters them on the
+     * device, completed ones are left out unless [showCompletedPicks], and open lists come first.
+     */
     val filteredPickLists: List<PickList>
-        get() = if (query.isBlank()) {
-            pickLists
-        } else {
-            pickLists.filter {
-                it.name.contains(query, ignoreCase = true) ||
-                    it.customerName?.contains(query, ignoreCase = true) == true ||
-                    it.customer?.contains(query, ignoreCase = true) == true ||
-                    it.purposeLabel.contains(query, ignoreCase = true)
+        get() {
+            val matching = if (query.isBlank()) {
+                pickLists
+            } else {
+                pickLists.filter {
+                    it.name.contains(query, ignoreCase = true) ||
+                        it.customerName?.contains(query, ignoreCase = true) == true ||
+                        it.customer?.contains(query, ignoreCase = true) == true ||
+                        it.purposeLabel.contains(query, ignoreCase = true)
+                }
             }
+            val visible = if (showCompletedPicks) matching else matching.filterNot { it.isDone }
+            return visible.sortedBy { it.isDone }
         }
 }
 
@@ -85,6 +97,8 @@ class OrdersViewModel @Inject constructor(
     }
 
     fun selectTab(tab: OrdersTab) = _uiState.update { it.copy(tab = tab) }
+
+    fun toggleCompletedPicks() = _uiState.update { it.copy(showCompletedPicks = !it.showCompletedPicks) }
 
     fun onQueryChange(value: String) {
         _uiState.update { it.copy(query = value) }

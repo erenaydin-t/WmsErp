@@ -90,6 +90,8 @@ data class PickListItem(
     val rowStartedAt: String? = null,
     val rowCompletedAt: String? = null,
     val durationSeconds: Double? = null,
+    /** The batch was assigned by a scan in the app (ERPNext left the row without one); a reset clears it. */
+    val batchFromWms: Boolean = false,
 ) {
     val isComplete: Boolean get() = rowStatus == PickRowStatus.PICKED || isPickComplete(pickedQty, requiredQty)
 }
@@ -126,6 +128,9 @@ data class PickList(
     val myProgress: Float get() = if (myRowCount <= 0) 0f else (myPickedRows.toFloat() / myRowCount).coerceIn(0f, 1f)
     val myItems: List<PickListItem> get() = items.filter { it.isMine }
     val isCardPicked: Boolean get() = pickingStatus == PickingStatus.PICKED || allRowsPicked
+
+    /** Nothing left to do on the device: every row is picked or the document already exists. */
+    val isDone: Boolean get() = isCardPicked || generatedDocument != null
 }
 
 /** Result of `start_row` / `save_row_progress` / `complete_row`. */

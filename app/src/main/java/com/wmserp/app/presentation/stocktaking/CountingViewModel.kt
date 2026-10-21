@@ -469,9 +469,18 @@ class CountingViewModel @Inject constructor(
                         nextFeedbackId(),
                     )
                 }
+                // The server (not the network) failed: say so and keep every count on the device for the retry.
+                val failure: UiText? = when {
+                    report.error != null && !report.offline -> report.error.toUiText()
+                    report.failed.isNotEmpty() -> report.failed.firstOrNull { !it.message.isNullOrBlank() }?.message?.let { UiText.Plain(it) } ?: UiText.Plain("ERPNext server error")
+                    else -> null
+                }
+                if (failure != null && report.remaining.isNotEmpty()) {
+                    feedback = CountFeedback(FeedbackKind.ERROR, UiText.Res(R.string.st_sync_failed, listOf(report.remaining.size.toString())), failure, nextFeedbackId())
+                }
                 state.copy(items = items, session = session, phase = phase, feedback = feedback, lastCount = lastCount, pending = report.remaining, isSyncing = false, fromCache = if (report.offline) state.fromCache else false)
             }
-            if (report.refused.isNotEmpty()) scanner.feedback(beep = _uiState.value.beep, vibrate = true, error = true)
+            if (report.refused.isNotEmpty() || (report.error != null && !report.offline) || report.failed.isNotEmpty()) scanner.feedback(beep = _uiState.value.beep, vibrate = true, error = true)
             persistCache()
             if (report.remaining.isNotEmpty() && report.offline) scheduleRetry() else if (report.remaining.isNotEmpty() && report.error == null) scheduleRetry()
         }

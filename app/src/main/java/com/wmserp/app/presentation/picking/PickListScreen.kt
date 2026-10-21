@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Button
@@ -103,6 +104,13 @@ fun PickListRoute(onBack: () -> Unit, onDone: () -> Unit, viewModel: PickListVie
         onPendingAll = viewModel::setPendingAll,
         onConfirmPending = viewModel::confirmPendingScan,
         onCancelPending = viewModel::cancelPendingScan,
+        onEditRow = viewModel::openEdit,
+        onEditQtyChange = viewModel::setEditQty,
+        onEditPlus = viewModel::editPlusOne,
+        onEditMinus = viewModel::editMinusOne,
+        onEditSave = viewModel::confirmEdit,
+        onEditRemove = viewModel::removePick,
+        onEditCancel = viewModel::cancelEdit,
     )
 }
 
@@ -113,7 +121,9 @@ fun PickListRoute(onBack: () -> Unit, onDone: () -> Unit, viewModel: PickListVie
  * alert. The camera is a modal sheet on top of the list (phones, or the Camera scanner mode);
  * on a PDA the trigger of the built-in scanner feeds the screen directly. When the picker's rows
  * are done the screen becomes either the "task completed" state or, for the picker who closed
- * the last row of the card, the post-picking state with the document CTA.
+ * the last row of the card, the post-picking state with the document CTA. Until the final
+ * confirmation every row carries a pencil that opens the correction dialog (change the quantity
+ * or remove the pick so the row can be scanned again).
  */
 @Composable
 fun PickListScreen(
@@ -136,8 +146,26 @@ fun PickListScreen(
     onPendingAll: () -> Unit = {},
     onConfirmPending: () -> Unit = {},
     onCancelPending: () -> Unit = {},
+    onEditRow: (String) -> Unit = {},
+    onEditQtyChange: (String) -> Unit = {},
+    onEditPlus: () -> Unit = {},
+    onEditMinus: () -> Unit = {},
+    onEditSave: () -> Unit = {},
+    onEditRemove: () -> Unit = {},
+    onEditCancel: () -> Unit = {},
 ) {
     val pickList = state.pickList
+    state.editLine?.let { edit ->
+        PickLineEditDialog(
+            edit = edit,
+            onQtyChange = onEditQtyChange,
+            onIncrement = onEditPlus,
+            onDecrement = onEditMinus,
+            onSave = onEditSave,
+            onRemove = onEditRemove,
+            onDismiss = onEditCancel,
+        )
+    }
     if (pickList != null && state.cameraActive && state.outcome == null) {
         CameraScannerSheet(
             title = stringResource(R.string.camera_sheet_title),
@@ -234,7 +262,7 @@ fun PickListScreen(
                     item { InfoBanner(message.asString(), container = WmsTheme.colors.successContainer, content = MaterialTheme.colorScheme.onSurface) }
                 }
                 when (state.outcome) {
-                    null -> activeContent(state, pickList, onSelectRow)
+                    null -> activeContent(state, pickList, onSelectRow, onEditRow)
                     PickOutcome.TASK_COMPLETED -> taskCompletedContent(state, pickList)
                     PickOutcome.CARD_COMPLETED -> cardCompletedContent(state, pickList)
                 }
@@ -245,15 +273,21 @@ fun PickListScreen(
 
 // ---- Active picking ------------------------------------------------------------------------
 
-private fun LazyListScope.activeContent(state: PickListUiState, pickList: PickList, onSelectRow: (String) -> Unit) {
+private fun LazyListScope.activeContent(state: PickListUiState, pickList: PickList, onSelectRow: (String) -> Unit, onEditRow: (String) -> Unit) {
     item { PickListDetailsCard(pickList, state) }
-    item { Text(stringResource(R.string.pick_scan_hint_qr), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    item {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.pick_scan_hint_qr), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.pick_workflow_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
     item { SectionHeader(stringResource(R.string.pick_my_rows)) }
     items(state.lines, key = { it.item.rowName }) { line ->
         PickRowCard(
             line = line,
             active = state.activeRowName == line.item.rowName,
             onClick = { onSelectRow(line.item.rowName) },
+            onEdit = { onEditRow(line.item.rowName) },
         )
     }
 }
@@ -437,6 +471,7 @@ private fun ScanAlertBanner(alert: ScanAlert, onDismiss: () -> Unit) {
         ScanAlertKind.NOT_ASSIGNED -> R.string.pick_alert_not_assigned_title
         ScanAlertKind.ALREADY_COMPLETE -> R.string.pick_alert_complete_title
         ScanAlertKind.INVALID_QR -> R.string.pick_alert_invalid_title
+        ScanAlertKind.NO_STOCK -> R.string.pick_alert_no_stock_title
     }
     Card(
         colors = CardDefaults.cardColors(containerColor = WmsTheme.colors.danger),
@@ -476,6 +511,7 @@ private fun PickListDetailsCard(pickList: PickList, state: PickListUiState) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.pick_details_card), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                StatusChip(stringResource(state.phase.labelRes()), phaseColor(state.phase), modifier = Modifier.padding(end = 6.dp).testTag("pick_phase"))
                 StatusChip(stringResource(pickList.pickingStatus.labelRes()), pickingStatusColor(pickList.pickingStatus), modifier = Modifier.testTag("pick_status"))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -505,9 +541,12 @@ private fun PickListDetailsCard(pickList: PickList, state: PickListUiState) {
     }
 }
 
-/** One of the picker's rows: expected batch in bold, picked/required, status. No manual inputs. */
+/**
+ * One of the picker's rows: expected batch in bold, picked/required, status. Quantities only move
+ * through scans; the pencil opens the correction dialog while the row is not confirmed.
+ */
 @Composable
-private fun PickRowCard(line: PickLineState, active: Boolean, onClick: (() -> Unit)?) {
+private fun PickRowCard(line: PickLineState, active: Boolean, onClick: (() -> Unit)?, onEdit: (() -> Unit)? = null) {
     val item = line.item
     val container = when {
         line.highlighted -> MaterialTheme.colorScheme.secondaryContainer
@@ -530,7 +569,16 @@ private fun PickRowCard(line: PickLineState, active: Boolean, onClick: (() -> Un
                 if (active && !line.isComplete) {
                     StatusChip(stringResource(R.string.pick_active), MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 6.dp))
                 }
-                StatusChip(stringResource(line.status.labelRes()), rowStatusColor(line.status), modifier = Modifier.testTag("pick_row_status_${item.rowName}"))
+                StatusChip(
+                    stringResource(if (line.ready) R.string.pick_row_ready else line.status.labelRes()),
+                    if (line.ready) WmsTheme.colors.success else rowStatusColor(line.status),
+                    modifier = Modifier.testTag("pick_row_status_${item.rowName}"),
+                )
+                if (onEdit != null && (line.qty > 0.0 || line.confirmed || item.batchFromWms)) {
+                    IconButton(onClick = onEdit, enabled = !line.syncing, modifier = Modifier.size(36.dp).testTag("pick_edit_${item.rowName}")) {
+                        Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.pick_edit_title), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
             }
             val source = item.sourceWarehouse ?: "-"
             Text(
@@ -588,6 +636,19 @@ private fun pickingStatusColor(status: PickingStatus): Color = when (status) {
     PickingStatus.READY_TO_PICK -> WmsTheme.colors.info
     PickingStatus.PICKING -> WmsTheme.colors.warning
     PickingStatus.PICKED -> WmsTheme.colors.success
+}
+
+@Composable
+private fun phaseColor(phase: PickPhase): Color = when (phase) {
+    PickPhase.DRAFT -> MaterialTheme.colorScheme.onSurfaceVariant
+    PickPhase.IN_PROGRESS -> WmsTheme.colors.warning
+    PickPhase.CONFIRMED -> WmsTheme.colors.success
+}
+
+private fun PickPhase.labelRes(): Int = when (this) {
+    PickPhase.DRAFT -> R.string.pick_phase_draft
+    PickPhase.IN_PROGRESS -> R.string.pick_phase_in_progress
+    PickPhase.CONFIRMED -> R.string.pick_phase_confirmed
 }
 
 @Composable

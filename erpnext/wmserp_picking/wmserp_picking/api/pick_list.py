@@ -10,6 +10,14 @@ Model
 * Assignment is per row: `Pick List Item.custom_picker`. Several pickers share one card.
 * Row lifecycle: Not Picked --start_row--> Picking --save_row_progress*--> --complete_row--> Picked
   (a row completes when picked qty == required qty; timestamps and duration are stamped).
+  `save_row_progress(hold=1)` keeps a row *Picking* even at the required quantity, so the app's
+  draft -> picking in progress -> final confirmation flow leaves quantities and batches editable
+  until `complete_row`; `reset_row` clears a row (and a batch the app assigned) before a document
+  exists.
+* Stock checks: a scanned batch must belong to the row's item, be live and hold the picked
+  quantity in the row's warehouse (`InsufficientStockError`); `generate_document` re-checks every
+  picked row before creating the Delivery Note / Stock Entry, so a draft that cannot be submitted
+  is never created.
 * Card lifecycle (header `custom_picking_status`): Ready to Pick -> Picking (first row started)
   -> Picked (every row picked; checked after each row completion under a row lock, so exactly one
   request observes the transition and is told `is_last_picker: true`).
@@ -80,7 +88,12 @@ ROW_FIELDS = [
     "custom_row_started_at",
     "custom_row_completed_at",
     "custom_picking_duration_seconds",
+    "custom_batch_from_wms",
 ]
+
+
+class InsufficientStockError(frappe.ValidationError):
+    """The picked quantity is not available in the row's warehouse (batch or item)."""
 
 
 # --------------------------------------------------------------------------------------------
@@ -218,10 +231,38 @@ def start_row(name, row):
 
 
 @frappe.whitelist()
-def save_row_progress(name, row, picked_qty, item_code=None, batch_no=None, elapsed_seconds=None):
+def save_row_progress(name, row, picked_qty, item_code=None, batch_no=None, elapsed_seconds=None, hold=0):
     """Stores a partial (or full) picked quantity for one row. Completes the row when it reaches
-    the required quantity, then runs the card completion check."""
-    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=False)
+    the required quantity, then runs the card completion check - unless `hold` is set, in which
+    case the row stays *Picking* (editable) until `complete_row`."""
+    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=False, hold=bool(cint(hold)))
+
+
+@frappe.whitelist()
+def reset_row(name, row):
+    """Clears what was picked on one row (quantity, timestamps and a batch the app assigned) so
+    the picker can scan it again. Refused once the card's document exists; a *Picked* card
+    returns to *Picking*."""
+    doc, child = load_row(name, row)
+    existing = find_generated_document(doc)
+    if existing:
+        frappe.throw(_("Row {0} ({1}) can no longer be changed: {2} {3} was already created from Pick List {4}.").format(child.idx, child.item_code, _(existing["doctype"]), existing["name"], doc.name))
+    updates = {
+        "custom_wms_picked_qty": 0,
+        "custom_row_status": rules.ROW_NOT_PICKED,
+        "custom_row_completed_at": None,
+        "custom_picking_duration_seconds": 0,
+        "picked_qty": 0,
+    }
+    if cint(child.get("custom_batch_from_wms")):
+        updates.update({"batch_no": None, "custom_batch_from_wms": 0})
+    child.db_set(updates, update_modified=False)
+    if current_status(doc) == rules.STATUS_PICKED:
+        doc.db_set({"custom_picking_status": rules.STATUS_PICKING, "custom_card_completed_at": None}, notify=True)
+    else:
+        frappe.db.set_value(PICK_LIST, doc.name, "modified", now_datetime(), update_modified=False)
+    doc.add_comment("Info", _("Row {0} ({1}) was reset by {2} from the WMS app.").format(child.idx, child.item_code, frappe.utils.get_fullname(frappe.session.user)))
+    return row_result(doc.name, child.name, row_completed=False, card_completed=False)
 
 
 @frappe.whitelist()
@@ -279,6 +320,7 @@ def generate_document(name, values=None):
         existing["documents"] = [{"doctype": existing["doctype"], "name": existing["name"]}]
         return existing
 
+    ensure_stock_for(doc)
     doctype, stock_entry_purpose = target_for(doc)
     try:
         if doctype == rules.DELIVERY_NOTE:
@@ -313,7 +355,7 @@ def generate_document(name, values=None):
 # --------------------------------------------------------------------------------------------
 
 
-def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete):
+def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete, hold=False):
     doc, child = load_row(name, row)
     required = required_qty(child)
     picked = flt(picked_qty) if picked_qty not in (None, "") else flt(child.get("custom_wms_picked_qty"))
@@ -326,14 +368,18 @@ def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, requ
         frappe.throw(_("Wrong item. Expected: {0}, scanned: {1}").format(child.item_code, item_code))
 
     updates = {"custom_wms_picked_qty": picked}
+    effective_batch = child.get("batch_no")
     if batch_no:
-        updates.update(validate_scanned_batch(child, batch_no.strip()))
+        batch_updates = validate_scanned_batch(child, batch_no.strip())
+        updates.update(batch_updates)
+        effective_batch = batch_updates.get("batch_no") or effective_batch
+    check_stock(child, effective_batch, picked)
 
     complete = rules.is_row_complete(picked, required)
     if require_complete and not complete:
         frappe.throw(_("Row {0} ({1}) is not complete: {2} of {3} picked.").format(child.idx, child.item_code, flt(picked), flt(required)))
     if child.get("custom_row_status") == rules.ROW_PICKED and not complete:
-        frappe.throw(_("Row {0} ({1}) is already picked and cannot be reduced.").format(child.idx, child.item_code))
+        frappe.throw(_("Row {0} ({1}) is already picked and cannot be reduced. Reset the row first.").format(child.idx, child.item_code))
 
     now = now_datetime()
     started = child.get("custom_row_started_at")
@@ -344,7 +390,7 @@ def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, requ
         updates["custom_row_started_at"] = started
 
     row_completed = False
-    if complete and child.get("custom_row_status") != rules.ROW_PICKED:
+    if complete and not hold and child.get("custom_row_status") != rules.ROW_PICKED:
         updates.update(
             {
                 "custom_row_status": rules.ROW_PICKED,
@@ -355,8 +401,8 @@ def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, requ
             }
         )
         row_completed = True
-    elif not complete:
-        updates["custom_row_status"] = rules.next_row_status(picked, required, child.get("custom_row_status"))
+    elif child.get("custom_row_status") != rules.ROW_PICKED:
+        updates["custom_row_status"] = rules.next_row_status(picked, required, child.get("custom_row_status"), hold=hold)
 
     child.db_set(updates, update_modified=False)
     stamp_card_started(doc, started)
@@ -405,12 +451,14 @@ def started_from_elapsed(now, elapsed_seconds):
 
 def validate_scanned_batch(child, batch_no) -> dict:
     """The scanned batch must be the one ERPNext allocated to the row; rows without an allocated
-    batch accept any valid, unexpired batch of the same item (and remember it)."""
+    batch accept any valid, unexpired batch of the same item and remember it (flagged
+    `custom_batch_from_wms`, so it can be replaced while nothing is picked on the row)."""
     expected = (child.get("batch_no") or "").strip()
-    if expected:
-        if batch_no.lower() != expected.lower():
-            frappe.throw(_("Wrong batch. Expected: {0}, scanned: {1}").format(expected, batch_no))
+    if expected and batch_no.lower() == expected.lower():
         return {}
+    replaceable = cint(child.get("custom_batch_from_wms")) and flt(child.get("custom_wms_picked_qty")) <= rules.QTY_TOLERANCE
+    if expected and not replaceable:
+        frappe.throw(_("Wrong batch. Expected: {0}, scanned: {1}").format(expected, batch_no))
     batch = frappe.db.get_value("Batch", batch_no, ["item", "expiry_date", "disabled"], as_dict=True)
     if not batch:
         frappe.throw(_("Batch {0} does not exist.").format(batch_no))
@@ -420,7 +468,67 @@ def validate_scanned_batch(child, batch_no) -> dict:
         frappe.throw(_("Batch {0} is disabled.").format(batch_no))
     if batch.expiry_date and getdate(batch.expiry_date) < getdate(nowdate()):
         frappe.throw(_("Batch {0} expired on {1}.").format(batch_no, frappe.format(batch.expiry_date, "Date")))
-    return {"batch_no": batch_no}
+    return {"batch_no": batch_no, "custom_batch_from_wms": 1}
+
+
+def available_qty(item_code, warehouse, batch_no=None):
+    """What the warehouse holds right now: the batch balance (ERPNext's `get_batch_qty`, bundles
+    and ledger) or, for items without batches, the Bin's actual quantity. None without a warehouse."""
+    if not warehouse or not item_code:
+        return None
+    if batch_no:
+        from erpnext.stock.doctype.batch.batch import get_batch_qty
+
+        return flt(get_batch_qty(batch_no=batch_no, warehouse=warehouse, item_code=item_code))
+    return flt(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty"))
+
+
+def check_stock(child, batch_no, picked):
+    """Refuses a picked quantity the row's warehouse does not hold (for the batch when there is one)."""
+    picked = flt(picked)
+    if picked <= rules.QTY_TOLERANCE:
+        return
+    available = available_qty(child.item_code, child.get("warehouse"), batch_no)
+    short = rules.stock_shortfalls([{"picked": picked, "available": available}])
+    if not short:
+        return
+    if batch_no:
+        message = _("Batch {0} of {1} has only {2} in {3}, but {4} would be picked. Choose a batch with stock in this warehouse.").format(
+            batch_no, child.item_code, flt(available), child.get("warehouse"), picked
+        )
+    else:
+        message = _("{0} has only {1} in {2}, but {3} would be picked.").format(child.item_code, flt(available), child.get("warehouse"), picked)
+    frappe.throw(message, InsufficientStockError)
+
+
+def ensure_stock_for(doc):
+    """Final gate before a document is created: every picked row must still be covered by the
+    warehouse's stock, so the draft can be submitted later."""
+    rows = []
+    for row in doc.get("locations") or []:
+        picked = flt(row.get("custom_wms_picked_qty"))
+        if picked <= rules.QTY_TOLERANCE or row.get("product_bundle_item"):
+            continue
+        rows.append(
+            {
+                "idx": row.idx,
+                "item_code": row.item_code,
+                "batch_no": row.get("batch_no"),
+                "warehouse": row.get("warehouse"),
+                "picked": picked,
+                "available": available_qty(row.item_code, row.get("warehouse"), row.get("batch_no")),
+            }
+        )
+    short = rules.stock_shortfalls(rows)
+    if not short:
+        return
+    lines = [
+        _("Row {0}: {1}{2} has {3} in {4}, {5} picked").format(
+            r["idx"], r["item_code"], f" ({r['batch_no']})" if r.get("batch_no") else "", flt(r["available"]), r["warehouse"], flt(r["picked"])
+        )
+        for r in short
+    ]
+    frappe.throw(_("The picked quantities are not available in the warehouse, so no document was created. Reset these rows and pick from stock:") + "<br>" + "<br>".join(lines), InsufficientStockError)
 
 
 # --------------------------------------------------------------------------------------------
@@ -862,6 +970,7 @@ def serialize_row(row, user, info=None, expiry_date=None, target_warehouse=None)
         "warehouse": row.get("warehouse"),
         "target_warehouse": target_warehouse,
         "batch_no": row.get("batch_no"),
+        "batch_from_wms": cint(row.get("custom_batch_from_wms")),
         "expiry_date": str_or_none(expiry_date),
         "serial_no": row.get("serial_no"),
         "required_qty": required,

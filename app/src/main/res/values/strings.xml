@@ -5,6 +5,7 @@
     <!-- Common -->
     <string name="common_retry">Retry</string>
     <string name="common_dismiss">Dismiss</string>
+    <string name="common_cancel">Cancel</string>
     <string name="common_done">Done</string>
     <string name="common_clear">Clear</string>
     <string name="common_back">Back</string>
@@ -276,6 +277,8 @@
     <string name="orders_search_pick">Search pick lists…</string>
     <string name="orders_empty_pick_title">No picking tasks</string>
     <string name="orders_empty_pick_message">Open pick lists with rows assigned to you in ERPNext will appear here</string>
+    <string name="orders_pick_show_completed">Show completed (%1$d)</string>
+    <string name="orders_pick_hide_completed">Hide completed</string>
     <string name="pick_status_ready">Ready to Pick</string>
     <string name="pick_status_picking">Picking</string>
     <string name="pick_status_picked">Picked</string>
@@ -323,9 +326,9 @@
     <string name="qr_error_not_json">Not a WMS QR label (JSON expected)</string>
     <string name="qr_error_not_object">QR content is not a JSON object</string>
     <string name="qr_error_missing_item">QR label has no item code</string>
-    <string name="pick_complete">Complete picking</string>
+    <string name="pick_complete">Final confirmation</string>
     <string name="pick_progress_summary">Picked %1$s / %2$s</string>
-    <string name="pick_completed_message">All rows of this pick list are picked. Create the document to continue.</string>
+    <string name="pick_completed_message">Picking confirmed. The ERPNext draft document is being created.</string>
     <string name="pick_task_completed_title">Task completed</string>
     <string name="pick_task_completed_message">Your rows are picked. Other pickers are still working on this pick list.</string>
     <string name="pick_back_to_dashboard">Back to dashboard</string>
@@ -344,6 +347,22 @@
     <string name="pick_scanner_ready">Hardware scanner ready — pull the trigger to scan</string>
     <string name="pick_scanner_camera">No hardware scanner detected — tap the camera button to scan</string>
     <string name="pick_scan_camera_button">Scan with camera</string>
+    <string name="pick_phase_draft">Draft</string>
+    <string name="pick_phase_in_progress">Picking in progress</string>
+    <string name="pick_phase_confirmed">Confirmed</string>
+    <string name="pick_row_ready">Ready to confirm</string>
+    <string name="pick_workflow_hint">Quantities and batches stay editable until the final confirmation. Tap the pencil on a row to change the quantity or remove the pick.</string>
+    <string name="pick_edit_title">Correct pick</string>
+    <string name="pick_edit_qty">Picked quantity</string>
+    <string name="pick_edit_required">Required: %1$s %2$s</string>
+    <string name="pick_edit_batch_scanned">Batch assigned by your scan</string>
+    <string name="pick_edit_confirmed_hint">This row is already confirmed. Remove the pick to scan it again.</string>
+    <string name="pick_edit_save">Save</string>
+    <string name="pick_edit_remove">Remove pick</string>
+    <string name="pick_edit_remove_hint">Removing clears the quantity and a scanned batch, so the row can be scanned again with the right batch.</string>
+    <string name="pick_qty_updated">%1$s: quantity set to %2$s</string>
+    <string name="pick_removed">%1$s: pick removed, scan the row again</string>
+    <string name="pick_alert_no_stock_title">No stock for this batch</string>
     <string name="scan_qty_title_pick">How many did you pick?</string>
     <string name="scan_qty_title_receive">How many did you receive?</string>
     <string name="scan_qty_batch">Batch %1$s</string>
@@ -417,6 +436,7 @@
     <string name="st_syncing">Syncing…</string>
     <string name="st_saved_locally">Saved locally · pending sync</string>
     <string name="st_sync_refused">%1$s count(s) were refused by ERPNext: %2$s</string>
+    <string name="st_sync_failed">Sync failed: %1$s count(s) are kept on the device. Tap sync to retry.</string>
     <string name="st_item_label">Item</string>
     <string name="st_batch_label">Batch</string>
     <string name="st_expiry_label">Expiry</string>
@@ -472,6 +492,7 @@
     <string name="error_stocktaking_session_not_found">Stocktaking %1$s not found</string>
     <string name="error_stocktaking_item_not_in_session">%1$s is not part of this stocktaking</string>
     <string name="error_stocktaking_offline_unknown_item">Cannot identify %1$s without a network connection</string>
+    <string name="error_pick_document_exists">%1$s was already created from this pick list; its rows can no longer be changed</string>
 
     <!-- Receiving against draft Purchase Receipts, batch scanning, read-only profile -->
     <string name="kpi_receipts">Receipts</string>

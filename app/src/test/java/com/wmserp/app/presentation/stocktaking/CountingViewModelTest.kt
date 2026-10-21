@@ -341,6 +341,33 @@ class CountingViewModelTest {
     }
 
     @Test
+    fun `a sync the server fails keeps the count on the device and says so`() = runTest {
+        coEvery { repository.syncCounts(name, any()) } returns AppResult.Failure(AppError.Server("ERPNext server error", 500))
+        val vm = createViewModel()
+
+        vm.scan("8690000000017")
+        vm.setQtyText("49")
+        vm.submitCount()
+
+        val state = vm.uiState.value
+        assertEquals(1, state.pendingCount)
+        assertFalse(state.isSyncing)
+        assertEquals(FeedbackKind.ERROR, state.feedback?.kind)
+        assertEquals(UiText.Res(R.string.st_sync_failed, listOf("1")), state.feedback?.title)
+        assertEquals(UiText.Plain("ERPNext server error"), state.feedback?.detail)
+        assertEquals(1, scanner.errorFeedbackCalls)
+
+        // The retry sends the same client reference, so the server never records the count twice.
+        coEvery { repository.syncCounts(name, any()) } answers {
+            val queued = secondArg<List<CountSubmission>>()
+            AppResult.Success(SyncOutcome(queued.map { s -> CountResult(CountOutcome.ACCEPTED, StocktakingFixtures.gauze.copy(status = CountItemStatus.COUNTED), clientRef = s.clientRef) }))
+        }
+        vm.syncNow()
+
+        assertEquals(0, vm.uiState.value.pendingCount)
+    }
+
+    @Test
     fun `scans are ignored while a count is open and once counting is closed`() = runTest {
         val vm = createViewModel()
         vm.scan(qrLabel("PCT-500", "PCT-250901"))

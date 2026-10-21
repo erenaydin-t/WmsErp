@@ -14,6 +14,10 @@ interface PickListRepository {
     suspend fun getMyPickLists(): AppResult<List<PickList>>
     suspend fun getPickList(name: String): AppResult<PickList>
     suspend fun startRow(name: String, rowName: String): AppResult<RowUpdate>
+    /**
+     * Saves a partial quantity. With [hold] the server keeps the row *Picking* even at the required
+     * quantity, so it stays editable until [completeRow] (the picker's final confirmation).
+     */
     suspend fun saveRowProgress(
         name: String,
         rowName: String,
@@ -21,7 +25,11 @@ interface PickListRepository {
         itemCode: String? = null,
         batchNo: String? = null,
         elapsedSeconds: Double? = null,
+        hold: Boolean = false,
     ): AppResult<RowUpdate>
+
+    /** Clears the row's quantity, timers and a batch assigned by scan; refused once the document exists. */
+    suspend fun resetRow(name: String, rowName: String): AppResult<RowUpdate>
     suspend fun completeRow(
         name: String,
         rowName: String,

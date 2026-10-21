@@ -778,7 +778,8 @@ def submit_count(name, qty, item=None, item_code=None, batch_no=None, warehouse=
     else:
         updates.update({"recount_qty": qty, "recount_by": user, "recount_at": now, "recount_count": cint(row.recount_count) + 1})
     if result["final_qty"] is None:
-        updates.update({"final_qty": None, "qty_difference": 0.0, "value_difference": 0.0})
+        # No final quantity yet (a second count is due): numeric columns are NOT NULL on Frappe 16.
+        updates.update({"final_qty": 0.0, "qty_difference": 0.0, "value_difference": 0.0})
     else:
         diff, value = rules.differences(result["final_qty"], row.erp_qty, row.valuation_rate)
         updates.update({"final_qty": result["final_qty"], "qty_difference": diff, "value_difference": value})
@@ -838,6 +839,11 @@ def sync_counts(name, counts):
             frappe.db.rollback(save_point=savepoint)
             frappe.clear_last_message()
             results.append({"client_ref": client_ref, "outcome": "error", "reason": "permission", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - one broken entry must not lose the rest of the queue
+            frappe.db.rollback(save_point=savepoint)
+            frappe.clear_last_message()
+            frappe.log_error(title=f"Stocktaking sync_counts {name} {client_ref}", message=frappe.get_traceback())
+            results.append({"client_ref": client_ref, "outcome": "error", "reason": "server", "message": str(exc)})
     doc = get_session_doc(name)
     return {"results": results, "totals": doc.totals(), "session_status": doc.status}
 

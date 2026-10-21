@@ -5,6 +5,7 @@
     <!-- Common -->
     <string name="common_retry">تلاش مجدد</string>
     <string name="common_dismiss">بستن</string>
+    <string name="common_cancel">لغو</string>
     <string name="common_done">تمام</string>
     <string name="common_clear">پاک کردن</string>
     <string name="common_back">بازگشت</string>
@@ -276,6 +277,8 @@
     <string name="orders_search_pick">جستجوی لیست‌های برداشت…</string>
     <string name="orders_empty_pick_title">کار برداشتی وجود ندارد</string>
     <string name="orders_empty_pick_message">لیست‌های برداشت بازی که در ERPNext ردیفی به شما واگذار شود اینجا نمایش داده می‌شود</string>
+    <string name="orders_pick_show_completed">نمایش انجام‌شده‌ها (%1$d)</string>
+    <string name="orders_pick_hide_completed">پنهان کردن انجام‌شده‌ها</string>
     <string name="pick_status_ready">آماده برداشت</string>
     <string name="pick_status_picking">در حال برداشت</string>
     <string name="pick_status_picked">برداشت‌شده</string>
@@ -323,9 +326,9 @@
     <string name="qr_error_not_json">برچسب QR انبار نیست (JSON انتظار می‌رود)</string>
     <string name="qr_error_not_object">محتوای QR یک شیء JSON نیست</string>
     <string name="qr_error_missing_item">برچسب QR کد کالا ندارد</string>
-    <string name="pick_complete">پایان برداشت</string>
+    <string name="pick_complete">تأیید نهایی</string>
     <string name="pick_progress_summary">برداشت‌شده %1$s / %2$s</string>
-    <string name="pick_completed_message">همه ردیف‌های این لیست برداشت شد. برای ادامه، سند را ایجاد کنید.</string>
+    <string name="pick_completed_message">برداشت تأیید شد. پیش‌نویس سند ERPNext در حال ایجاد است.</string>
     <string name="pick_task_completed_title">کار انجام شد</string>
     <string name="pick_task_completed_message">ردیف‌های شما برداشت شد. سایر برداشت‌کننده‌ها هنوز روی این لیست کار می‌کنند.</string>
     <string name="pick_back_to_dashboard">بازگشت به داشبورد</string>
@@ -344,6 +347,22 @@
     <string name="pick_scanner_ready">اسکنر سخت‌افزاری آماده است — برای اسکن ماشه را بکشید</string>
     <string name="pick_scanner_camera">اسکنر سخت‌افزاری شناسایی نشد — برای اسکن دکمه دوربین را بزنید</string>
     <string name="pick_scan_camera_button">اسکن با دوربین</string>
+    <string name="pick_phase_draft">پیش‌نویس</string>
+    <string name="pick_phase_in_progress">در حال برداشت</string>
+    <string name="pick_phase_confirmed">تأییدشده</string>
+    <string name="pick_row_ready">آماده تأیید</string>
+    <string name="pick_workflow_hint">تا پیش از تأیید نهایی، تعداد و بچ قابل ویرایش است. برای تغییر تعداد یا حذف برداشت، مداد کنار ردیف را بزنید.</string>
+    <string name="pick_edit_title">اصلاح برداشت</string>
+    <string name="pick_edit_qty">تعداد برداشت‌شده</string>
+    <string name="pick_edit_required">مورد نیاز: %1$s %2$s</string>
+    <string name="pick_edit_batch_scanned">بچ با اسکن شما تعیین شده است</string>
+    <string name="pick_edit_confirmed_hint">این ردیف قبلاً تأیید شده است. برای اسکن دوباره، برداشت را حذف کنید.</string>
+    <string name="pick_edit_save">ذخیره</string>
+    <string name="pick_edit_remove">حذف برداشت</string>
+    <string name="pick_edit_remove_hint">حذف برداشت، تعداد و بچ اسکن‌شده را پاک می‌کند تا ردیف با بچ درست دوباره اسکن شود.</string>
+    <string name="pick_qty_updated">%1$s: تعداد روی %2$s تنظیم شد</string>
+    <string name="pick_removed">%1$s: برداشت حذف شد، ردیف را دوباره اسکن کنید</string>
+    <string name="pick_alert_no_stock_title">این بچ در انبار موجودی ندارد</string>
     <string name="scan_qty_title_pick">چند عدد برداشت کردید؟</string>
     <string name="scan_qty_title_receive">چند عدد دریافت کردید؟</string>
     <string name="scan_qty_batch">بچ %1$s</string>
@@ -417,6 +436,7 @@
     <string name="st_syncing">در حال همگام‌سازی…</string>
     <string name="st_saved_locally">روی دستگاه ذخیره شد · در انتظار همگام‌سازی</string>
     <string name="st_sync_refused">%1$s شمارش توسط ERPNext رد شد: %2$s</string>
+    <string name="st_sync_failed">همگام‌سازی ناموفق بود: %1$s شمارش روی دستگاه نگه داشته شد. برای تلاش دوباره، همگام‌سازی را بزنید.</string>
     <string name="st_item_label">کالا</string>
     <string name="st_batch_label">بچ</string>
     <string name="st_expiry_label">انقضا</string>
@@ -472,6 +492,7 @@
     <string name="error_stocktaking_session_not_found">انبارگردانی %1$s پیدا نشد</string>
     <string name="error_stocktaking_item_not_in_session">%1$s جزو این انبارگردانی نیست</string>
     <string name="error_stocktaking_offline_unknown_item">بدون اتصال شبکه نمی‌توان %1$s را شناسایی کرد</string>
+    <string name="error_pick_document_exists">%1$s قبلاً از این لیست برداشت ایجاد شده است؛ ردیف‌های آن دیگر قابل تغییر نیست</string>
 
     <!-- Receiving against draft Purchase Receipts, batch scanning, read-only profile -->
     <string name="kpi_receipts">رسیدها</string>

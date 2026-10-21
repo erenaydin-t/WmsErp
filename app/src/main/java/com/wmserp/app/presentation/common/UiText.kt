@@ -87,6 +87,7 @@ fun ErrorCode.stringRes(): Int = when (this) {
     ErrorCode.ROW_NOT_ASSIGNED -> R.string.error_row_not_assigned
     ErrorCode.PICK_LIST_NOT_FOUND -> R.string.error_pick_list_not_found
     ErrorCode.UNSUPPORTED_PICK_PURPOSE -> R.string.error_unsupported_pick_purpose
+    ErrorCode.PICK_DOCUMENT_EXISTS -> R.string.error_pick_document_exists
     ErrorCode.COUNT_QTY_INVALID -> R.string.error_count_qty_invalid
     ErrorCode.STOCKTAKING_SESSION_NOT_FOUND -> R.string.error_stocktaking_session_not_found
     ErrorCode.STOCKTAKING_ITEM_NOT_IN_SESSION -> R.string.error_stocktaking_item_not_in_session

@@ -243,6 +243,9 @@ enum class CountRejection(val serverValue: String) {
     FINALIZED("finalized"),
     VALIDATION("validation"),
     PERMISSION("permission"),
+
+    /** The server failed on this entry (bug, database error); the count stays queued and is retried. */
+    SERVER("server"),
     UNKNOWN("");
 
     companion object {

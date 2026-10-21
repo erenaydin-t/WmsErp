@@ -79,12 +79,29 @@ def validate_picked_qty(picked_qty, required_qty, item_code="") -> float:
     return picked
 
 
-def next_row_status(picked_qty, required_qty, current_status=None) -> str:
-    if is_row_complete(picked_qty, required_qty):
+def next_row_status(picked_qty, required_qty, current_status=None, hold=False) -> str:
+    """Status of a row after a progress save. With `hold` the row stays *Picking* even at the
+    required quantity: the app keeps quantities editable until the picker's final confirmation
+    (`complete_row`), which is the only step that marks a row *Picked*."""
+    if is_row_complete(picked_qty, required_qty) and not hold:
         return ROW_PICKED
     if _num(picked_qty) > QTY_TOLERANCE or current_status == ROW_PICKING:
         return ROW_PICKING
     return ROW_NOT_PICKED
+
+
+def stock_shortfalls(rows) -> list[dict]:
+    """Rows whose picked quantity exceeds what the warehouse holds. `rows` are dicts with
+    `picked` and `available` (None = not checked); the others keys are passed through."""
+    out = []
+    for row in rows or []:
+        available = row.get("available")
+        if available is None:
+            continue
+        picked = _num(row.get("picked"))
+        if picked > _num(available) + QTY_TOLERANCE:
+            out.append({**row, "short": picked - _num(available)})
+    return out
 
 
 def card_complete(row_statuses) -> bool:
