@@ -1,13 +1,16 @@
 package com.wmserp.app.domain.model
 
-/** KPI values shown on the dashboard. */
+/** KPI values shown on the dashboard. Counts only: warehouse users see no monetary data. */
 data class DashboardKpis(
     val totalItems: Int,
     val pendingOrders: Int,
-    val revenue: Double,
-    val currency: String,
+    /** Purchase Receipts submitted this month. */
+    val receipts: Int,
+    /** Delivery Notes submitted this month. */
     val dispatched: Int,
     val periodLabel: String,
+    /** ISO first day of the period the receipts / dispatched figures cover. */
+    val periodStart: String = "",
 )
 
 /** One row of the recent stock activity feed (ERPNext `Stock Ledger Entry`). */
@@ -28,6 +31,8 @@ data class InventoryKpis(
     val pendingDeliveries: Int,
     val receipts: Int,
     val pickLists: Int,
+    /** ISO first day the receipts figure counts from. */
+    val receiptsSince: String = "",
 )
 
 data class DeliveryDelay(
@@ -36,11 +41,10 @@ data class DeliveryDelay(
     val deliveryDate: String,
     val daysLate: Int,
     val status: String,
-    val grandTotal: Double,
-    val currency: String?,
 )
 
-data class DelayBucket(val label: String, val count: Int)
+/** Overdue orders late between [minDays] and [maxDays] days (null: open ended); the UI labels it. */
+data class DelayBucket(val minDays: Int, val maxDays: Int?, val count: Int)
 
 data class DeliveryDelayReport(
     val buckets: List<DelayBucket>,
@@ -55,6 +59,8 @@ data class ActivityHeatmap(
     val dayLabels: List<String>,
     val blockLabels: List<String>,
     val cells: List<List<Int>>,
+    /** ISO date of each row, so the UI can name the weekdays in its own language. */
+    val dates: List<String> = emptyList(),
 ) {
     val maxValue: Int get() = cells.maxOfOrNull { row -> row.maxOrNull() ?: 0 } ?: 0
     val total: Int get() = cells.sumOf { it.sum() }

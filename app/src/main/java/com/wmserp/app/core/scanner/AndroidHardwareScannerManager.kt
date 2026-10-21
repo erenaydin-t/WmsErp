@@ -146,13 +146,14 @@ class HardwareScannerManager @Inject constructor(
         receiver = null
     }
 
-    override fun feedback(beep: Boolean, vibrate: Boolean) {
+    override fun feedback(beep: Boolean, vibrate: Boolean, error: Boolean) {
         if (beep) {
             runCatching {
                 val tone = ToneGenerator(AudioManager.STREAM_MUSIC, TONE_VOLUME)
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP, TONE_DURATION_MS)
+                val duration = if (error) ERROR_TONE_DURATION_MS else TONE_DURATION_MS
+                tone.startTone(if (error) ToneGenerator.TONE_PROP_NACK else ToneGenerator.TONE_PROP_BEEP, duration)
                 scope.launch {
-                    delay(TONE_DURATION_MS.toLong() + 50)
+                    delay(duration.toLong() + 50)
                     tone.release()
                 }
             }
@@ -165,7 +166,12 @@ class HardwareScannerManager @Inject constructor(
                     @Suppress("DEPRECATION")
                     context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
                 }
-                vibrator?.vibrate(VibrationEffect.createOneShot(VIBRATION_MS, VibrationEffect.DEFAULT_AMPLITUDE))
+                val effect = if (error) {
+                    VibrationEffect.createWaveform(ERROR_VIBRATION_PATTERN, -1)
+                } else {
+                    VibrationEffect.createOneShot(VIBRATION_MS, VibrationEffect.DEFAULT_AMPLITUDE)
+                }
+                vibrator?.vibrate(effect)
             }
         }
     }
@@ -192,7 +198,11 @@ class HardwareScannerManager @Inject constructor(
         const val IDLE_FLUSH_DELAY_MS = 150L
         const val TONE_VOLUME = 80
         const val TONE_DURATION_MS = 120
+        const val ERROR_TONE_DURATION_MS = 350
         const val VIBRATION_MS = 60L
+
+        /** Two short pulses: distinguishable from the single confirmation pulse with gloves on. */
+        val ERROR_VIBRATION_PATTERN = longArrayOf(0, 90, 70, 90)
     }
 }
 

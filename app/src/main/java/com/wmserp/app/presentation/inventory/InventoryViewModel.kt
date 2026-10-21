@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.InventoryAnalytics
 import com.wmserp.app.domain.usecase.GetInventoryAnalyticsUseCase
+import com.wmserp.app.domain.usecase.ObserveAppLanguageUseCase
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -12,6 +13,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -33,6 +36,7 @@ data class InventoryUiState(
 @HiltViewModel
 class InventoryViewModel @Inject constructor(
     private val getInventoryAnalytics: GetInventoryAnalyticsUseCase,
+    observeAppLanguage: ObserveAppLanguageUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InventoryUiState())
@@ -41,6 +45,7 @@ class InventoryViewModel @Inject constructor(
 
     init {
         load()
+        viewModelScope.launch { observeAppLanguage().distinctUntilChanged().drop(1).collect { load(refresh = true) } }
     }
 
     fun selectTab(tab: AnalyticsTab) = _uiState.update { it.copy(selectedTab = tab) }

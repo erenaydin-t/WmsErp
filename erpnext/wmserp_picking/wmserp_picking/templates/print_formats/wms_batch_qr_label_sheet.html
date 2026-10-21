@@ -1,0 +1,64 @@
+{#-
+  WMS Batch QR Label Sheet - several batch labels per A4 page.
+
+  Used by Batch list > Actions > "Print QR Label Sheet" (wmserp_picking.api.labels), which renders
+  this template once with `docs` = the selected Batch documents, so twenty batches give two pages
+  (12 + 8 with the defaults below) instead of twenty.
+
+  Everything about the layout is configured HERE, in the Print Format (Setup > Print Format >
+  WMS Batch QR Label Sheet), nothing in the app: labels per page, label size, QR size, fonts and the
+  page margins. Edit the values, save, print again. `bench execute
+  wmserp_picking.setup.custom_fields.reset_label_print_formats` restores the shipped version.
+-#}
+{%- set columns = 3 -%}          {#- labels per row -#}
+{%- set rows = 4 -%}             {#- rows per page (columns x rows labels on a page) -#}
+{%- set label_width = 62 -%}     {#- mm -#}
+{%- set label_height = 66 -%}    {#- mm -#}
+{%- set gap = 2 -%}              {#- mm between labels -#}
+{%- set qr_size = 30 -%}         {#- mm, the printed size of the QR code -#}
+{%- set show_payload = true -%}  {#- print the JSON content under the code (helps when a scanner fails) -#}
+{%- set labels_per_page = columns * rows -%}
+<!-- wms-label-sheet -->
+<style>
+  /* Page margins and size are read from this rule by Frappe's PDF renderer. */
+  .print-format { margin-top: 8mm; margin-bottom: 8mm; margin-left: 8mm; margin-right: 8mm; page-size: A4; }
+  .wms-sheet { font-family: Helvetica, Arial, sans-serif; color: #000; }
+  .wms-sheet table.wms-page { border-collapse: separate; border-spacing: {{ gap }}mm; margin: -{{ gap }}mm; }
+  .wms-sheet table.wms-page.wms-break { page-break-after: always; }
+  .wms-sheet tr { page-break-inside: avoid; }
+  .wms-sheet td.wms-label {
+    width: {{ label_width }}mm; height: {{ label_height }}mm; max-height: {{ label_height }}mm;
+    border: 0.2mm dashed #bbb; padding: 2mm; text-align: center; vertical-align: top; overflow: hidden;
+  }
+  .wms-sheet .wms-item { font-size: 11pt; font-weight: 700; word-break: break-word; }
+  .wms-sheet .wms-name { font-size: 8pt; color: #444; word-break: break-word; max-height: 9mm; overflow: hidden; }
+  .wms-sheet .wms-qr { width: {{ qr_size }}mm; height: {{ qr_size }}mm; margin: 1.5mm auto 1mm auto; }
+  .wms-sheet .wms-qr svg { width: {{ qr_size }}mm; height: {{ qr_size }}mm; display: block; }
+  .wms-sheet .wms-batch { font-size: 10pt; font-weight: 700; word-break: break-all; }
+  .wms-sheet .wms-expiry { font-size: 8pt; }
+  .wms-sheet .wms-payload { font-size: 6pt; color: #777; word-break: break-all; margin-top: 0.5mm; }
+</style>
+<div class="wms-sheet">
+{%- for page in docs|batch(labels_per_page) %}
+  <table class="wms-page{% if not loop.last %} wms-break{% endif %}">
+  {%- for row in page|batch(columns) %}
+    <tr>
+    {%- for doc in row %}
+      <td class="wms-label">
+        <div class="wms-item">{{ doc.item }}</div>
+        <div class="wms-name">{{ doc.item_name or "" }}</div>
+        <div class="wms-qr">{{ wms_qr_svg(wms_batch_qr_payload(doc), 1, true) }}</div>
+        <div class="wms-batch">{{ _("Batch") }}: {{ doc.name }}</div>
+        {%- if doc.expiry_date %}
+        <div class="wms-expiry">{{ _("Expiry") }}: {{ frappe.format_date(doc.expiry_date) }}</div>
+        {%- endif %}
+        {%- if show_payload %}
+        <div class="wms-payload">{{ wms_batch_qr_payload(doc) }}</div>
+        {%- endif %}
+      </td>
+    {%- endfor %}
+    </tr>
+  {%- endfor %}
+  </table>
+{%- endfor %}
+</div>

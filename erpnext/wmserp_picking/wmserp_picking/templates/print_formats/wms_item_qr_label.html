@@ -1,0 +1,9 @@
+<div class="wms-item-label" style="width: 58mm; padding: 3mm; font-family: Helvetica, Arial, sans-serif; text-align: center; color: #000;">
+  <div style="font-size: 12pt; font-weight: 700; word-break: break-word;">{{ doc.item_code or doc.name }}</div>
+  <div style="font-size: 9pt; color: #444; word-break: break-word;">{{ doc.item_name or "" }}</div>
+  <div style="margin: 2mm auto 1mm auto;">{{ wms_item_qr_svg(doc, 4) }}</div>
+  {% if doc.item_group %}
+  <div style="font-size: 9pt;">{{ doc.item_group }}</div>
+  {% endif %}
+  <div style="font-size: 6.5pt; color: #777; word-break: break-all; margin-top: 1mm;">{{ wms_item_qr_payload(doc) }}</div>
+</div>
