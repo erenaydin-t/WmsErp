@@ -304,8 +304,13 @@ def ensure_label_print_formats():
     for name, file_name in label_rules.TEMPLATE_FILES.items():
         if not frappe.db.exists("Print Format", name):
             create_label_print_format(name, file_name)
-        elif frappe.db.get_value("Print Format", name, "disabled"):
+            continue
+        if frappe.db.get_value("Print Format", name, "disabled"):
             frappe.db.set_value("Print Format", name, "disabled", 0, update_modified=False)
+        # An earlier shipped template the site never edited is brought up to date (fixes reach it);
+        # an edited one stays as the site made it.
+        if label_rules.is_unedited_old_template(name, frappe.db.get_value("Print Format", name, "html")):
+            frappe.db.set_value("Print Format", name, "html", label_template_html(file_name), update_modified=False)
 
 
 def reset_label_print_formats(names=None):

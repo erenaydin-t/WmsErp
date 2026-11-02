@@ -213,6 +213,13 @@ class WarehouseLabelRuleTests(unittest.TestCase):
         self.assertFalse(rules.is_roll_template("<!-- wms-label-sheet -->"))
         self.assertEqual("Warehouse", rules.FORMAT_DOCTYPES[rules.ROLL_FORMAT])
 
+    def test_pdf_options_force_the_label_size(self):
+        options = rules.roll_pdf_options(50.0, 30.0)
+        self.assertEqual("Custom", options["page-size"], "Frappe keeps width / height only with a Custom page size")
+        self.assertEqual(("50mm", "30mm"), (options["page-width"], options["page-height"]))
+        self.assertEqual({"0mm"}, {options[k] for k in ("margin-top", "margin-bottom", "margin-left", "margin-right")})
+        self.assertEqual("62.5mm", rules.roll_pdf_options(62.5, 29)["page-width"])
+
 
 @unittest.skipUnless(jinja2, "jinja2 is not installed")
 class RollRenderingTests(SheetRenderingTests):
@@ -226,8 +233,9 @@ class RollRenderingTests(SheetRenderingTests):
         ]
         html = self.template(rules.ROLL_FORMAT).render(labels=labels, label_width=50, label_height=30, qr_size=rules.qr_size(50, 30), count=3)
         self.assertIn(rules.ROLL_MARKER, html)
-        self.assertEqual(3, html.count('<table class="wms-label'))
-        self.assertEqual(2, html.count('class="wms-label wms-break"'), "a page break after every label but the last")
+        self.assertEqual(3, html.count('<table class="wms-label"'))
+        self.assertEqual(2, html.count('class="wms-page wms-break"'), "a page break after every label but the last")
+        self.assertEqual(3, html.count('<div class="wms-page'), "every label in its own clipped page box")
         self.assertIn("width: 50mm; height: 29.4mm", html)
         self.assertIn("width: 25.0mm; height: 25.0mm", html)
         self.assertEqual([label["payload"] for label in labels], [call[0] for call in self.svg_calls])
@@ -235,4 +243,15 @@ class RollRenderingTests(SheetRenderingTests):
         self.assertIn("formatted(2026-12-01)", html)
         self.assertEqual(1, html.count(">Gauze<"), "the name is not repeated when it equals the code")
         self.assertIn(".print-format { margin-top: 0mm;", html)
+
+
+class TemplateUpgradeTests(unittest.TestCase):
+    def test_only_unedited_old_templates_are_upgraded(self):
+        current = open(os.path.join(TEMPLATES, rules.TEMPLATE_FILES[rules.ROLL_FORMAT]), encoding="utf-8").read()
+        self.assertFalse(rules.is_unedited_old_template(rules.ROLL_FORMAT, current), "the current template is not superseded")
+        self.assertFalse(rules.is_unedited_old_template(rules.ROLL_FORMAT, current + "<!-- site edit -->"))
+        self.assertFalse(rules.is_unedited_old_template("WMS Batch QR Label", current))
+        old = next(iter(rules.SUPERSEDED_TEMPLATES[rules.ROLL_FORMAT]))
+        self.assertEqual(64, len(old))
+        self.assertEqual(rules.template_hash("  <b>x</b>\n"), rules.template_hash("<b>x</b>"))
 
