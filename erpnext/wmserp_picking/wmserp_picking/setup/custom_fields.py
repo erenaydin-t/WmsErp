@@ -330,8 +330,9 @@ def reset_label_print_formats(names=None):
 
 
 def create_label_print_format(name, file_name):
-    doctype = "Batch" if name.startswith("WMS Batch") else "Item"
+    doctype = label_rules.FORMAT_DOCTYPES.get(name) or ("Batch" if name.startswith("WMS Batch") else "Item")
     is_sheet = name.endswith("Sheet")
+    is_roll = name == label_rules.ROLL_FORMAT
     frappe.get_doc(
         {
             "doctype": "Print Format",
@@ -345,10 +346,11 @@ def create_label_print_format(name, file_name):
             "font_size": 10,
             # Sheets carry their margins in the template (.print-format rule); single labels print
             # one per page with a small border.
-            "margin_top": 8 if is_sheet else 2,
-            "margin_bottom": 8 if is_sheet else 2,
-            "margin_left": 8 if is_sheet else 2,
-            "margin_right": 8 if is_sheet else 2,
+            # The label-printer roll has no margins at all: its PDF page is the label.
+            "margin_top": 0 if is_roll else 8 if is_sheet else 2,
+            "margin_bottom": 0 if is_roll else 8 if is_sheet else 2,
+            "margin_left": 0 if is_roll else 8 if is_sheet else 2,
+            "margin_right": 0 if is_roll else 8 if is_sheet else 2,
             "disabled": 0,
         }
     ).insert(ignore_permissions=True)

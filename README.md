@@ -120,6 +120,7 @@ All calls go through `ErpNextApi` (`app/src/main/java/com/wmserp/app/data/remote
 | Receiving | `wmserp_picking.api.purchase_receipt.*` – `get_receivable`, `get_receipt`, `receive` (counts with per-batch `batches` + `values` for required fields, `submit`, `remove_unreceived`), `find_batch`, `create_batch` (see [Receiving workflow](#receiving-workflow-purchase-receipts)) |
 | Batch scan | `GET /api/resource/Batch/{name}` (fallback `batch_id`) + `erpnext.stock.doctype.batch.batch.get_batch_qty` (`batch_no`) |
 | Required fields | answered through the `missing_fields` reply of `receive` / `generate_document` / `create_transfer`; Link values from `GET /api/resource/{doctype}`; fields flagged `remember: 0` (*Received By*) are asked on every document and never stored |
+| QR labels (desk) | *WMS QR Labels* page / *Warehouse > Print QR Labels*: every item / batch in stock in a warehouse, one item or one batch, one label per page for label printers (`wmserp_picking.api.labels.download_warehouse_labels`) |
 | Stock transfer | `wmserp_picking.api.stock_transfer.*` – `get_transfer_form` (which choices the site needs), `create_transfer` (draft Material Transfer: `department`, `received_by`, `batch_no`, `values`) |
 | Submit | `frappe.client.submit` |
 | Reports | `frappe.desk.query_report.run` (Stock Ageing; filter `range` "30, 60, 90", `ignore_prepared_report=1`) |

@@ -140,6 +140,7 @@ def get_settings():
             "multi_batch_picking",
             "pick_list_stock_reservation",
             "stock_transfer_api",
+            "warehouse_qr_labels",
         ],
     }
 

@@ -50,7 +50,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.8.0     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.9.0     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -61,17 +61,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.8.0                              # or pin a version
+# git checkout wmserp_picking-v0.9.0                              # or pin a version
 cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format, creates the stocktaking DocTypes
 bench restart                    # no `bench build` needed: the form / list / report scripts are served from the app folder
-bench version                    # should list wmserp_picking 0.8.0
+bench version                    # should list wmserp_picking 0.9.0
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.9.0 | `wmserp_picking-v0.9.0` | **QR labels from a warehouse, for label printers.** New desk page **WMS QR Labels** (awesome bar, or *Warehouse > Print QR Labels*): choose a warehouse (a group covers its warehouses) and print, in one PDF, the QR labels of **every item in stock** (batch tracked items: one label per batch in stock, earliest expiry first; stock no batch carries: an item label), of **one item** or of **one batch** with stock there, with copies. One label per PDF page, the page exactly the label size (50 x 30 mm by default, 15-200 mm), so a thermal / roll label printer feeds one label per page; preview of the list and of the first labels. The QR is the JSON the WMS app scans (`{"item_code"}` / `{"item_code", "batch_no"}`, keys of *WMS Settings*). Layout in the new editable Print Format *WMS Warehouse QR Labels* (created on migrate). API: `wmserp_picking.api.labels.warehouse_label_preview`, `download_warehouse_labels`, `get_roll_formats`, `stocked_item_query`, `stocked_batch_query`. `get_settings` features: `warehouse_qr_labels`. |
 | 0.8.0 | `wmserp_picking-v0.8.0` | **Picked Qty as the target, several batches per row, stock reservation.** A row's required quantity is now its *Picked Qty (in Stock UOM)* as the Senior Warehouse User set it on the Pick List (ERPNext fills it with the stock quantity on submit when left empty); the app no longer writes `picked_qty` (0.7.0 copied the picked quantity into it on completion and zeroed it on a reset). A batch tracked row the Pick List left without a batch is picked from any number of batches: `save_row_progress` / `complete_row` take `batches=[{batch_no, qty}]` (the row's full list, kept in the new `Pick List Item.custom_wms_picked_batches`; the picked quantity is their sum; every batch is checked for item, expiry and stock), the final confirmation records them in the row's *Serial and Batch Bundle* and `generate_document` writes one Delivery Note / Stock Entry row per batch. The call that completes a *Delivery* card reserves the picked stock through ERPNext's Pick List reservation when *Stock Settings > Enable Stock Reservation* is on (per batch from the bundle; a failure is logged and noted on the Pick List and never undoes the picking; response `reservation`); `reset_row` cancels the row's reservation and bundle. Rows read `multi_batch`, `batches`, `stock_qty`, `reserved_qty`. `get_settings` features: `picked_qty_target`, `multi_batch_picking`, `pick_list_stock_reservation`. Older apps keep working on single-batch rows. **Material Issue Stock Entries** take the department of their Material Request (request line, else request; header and rows, replacing *Warehouse Department*) and fill the field labelled *Received By (Employee)* with the employee who raised the request (an Employee link on the Material Request, else the Employee of its creator); rows linked only through `material_request_item` now carry their `material_request` too. **Stocktaking:** *Blind Count* now hides ERP quantities from everyone in the app, Stock / System Managers included (they review in the desk). *Include Zero Stock* rows are optional: a zero-stock row nobody counted is left out of the totals, does not block closing or approval and is not reconciled; rows carry `zero_stock`, the app hides uncounted ones behind a *Show zero-stock items* filter, and the *Stocktaking Uncounted Items* report behind *Show optional zero-stock rows*. A zero-stock item that is found and counted (ERP 0, counted 10) goes into the Stock Reconciliation like any other difference. **Mandatory fields, one approach:** the scan-menu transfer no longer inserts and submits a Stock Entry from the app: new `wmserp_picking.api.stock_transfer` (`get_transfer_form`, `create_transfer`) creates a **draft** Material Transfer with the department and *Received By (Employee)* the user picks in the app, the scanned batch or batches taken automatically (ERPNext's FEFO / FIFO order, reserved, expired and disabled batches left out, split over rows), the officer, and the site's other required fields filled or reported as `missing_fields`. Pick List *Material Transfer* / *Transfer for Manufacture* documents ask *Received By* on every document (`missing_fields` entry with `remember: 0`, never stored by the app). *Create Stock Reconciliation* in the desk opens a dialog for the department, difference account and cost center (prefilled with *Warehouse Department* and the company's stock adjustment account / cost center; `get_reconciliation_defaults`), fills the other required fields and names what is still missing. Follow-up receipts stay without an officer for the next person. `get_settings` features: `stock_transfer_api`. |
 | 0.7.0 | `wmserp_picking-v0.7.0` | **Picking corrections and stock checks.** `save_row_progress(hold=1)` keeps a row *Picking* at its required quantity (the app's draft → picking in progress → final confirmation flow: only `complete_row` marks rows *Picked*), new `reset_row` clears a row's quantity, timers and a batch the app assigned (`Pick List Item.custom_batch_from_wms`, replaceable while nothing is picked; refused once the document exists; a *Picked* card returns to *Picking*). A scanned batch must now hold the picked quantity in the row's warehouse (`InsufficientStockError`, batch balance through ERPNext's `get_batch_qty`, Bin quantity for items without batches) and `generate_document` re-checks every picked row before creating anything, so a Delivery Note that cannot be submitted is never created. Stocktaking: `submit_count` wrote `NULL` into `final_qty` when a second count was due, which Frappe 16's NOT NULL numeric columns refuse, so every offline sync failed with HTTP 500; `sync_counts` now also survives any error on one entry (`outcome: error`, `reason: server`, logged) and keeps replaying the rest. |
 | 0.6.2 | `wmserp_picking-v0.6.2` | Fix: a new *Stocktaking Session* could not be saved in the desk on Frappe 16.52 (`Unknown column 'company'`): the Company field carried the default `:Company`, which Frappe resolves by reading a `company` column from the Company record. The default is gone; the field is filled from the user's or the site's default company as on every other document. |
@@ -278,6 +279,26 @@ format of the Purchase Receipt: the values of every item row printed onto the pr
 and the batch QR). The app owns it: `apply_managed_print_formats` creates it and re-applies the template on
 every migrate, so the file in the app is the one place to change it (`OFFSET_X` / `OFFSET_Y` at the top move
 the print if the printer shifts).
+
+### QR labels from a warehouse (label printers)
+
+**WMS QR Labels** (search it in the awesome bar, or open a Warehouse and use **Print QR Labels**) prints the
+QR labels of what a warehouse holds on a label printer:
+
+| Print | What is printed |
+| --- | --- |
+| All items in stock | One label per item with stock in the warehouse (every warehouse of a group); for batch tracked items one label **per batch** in stock (earliest expiry first), plus an item label for stock no batch carries. *One label per batch* off: one item label per item. |
+| One item | One item label (QR with the item code only) for an item in stock there. |
+| One batch | One batch label (QR with item and batch) for a batch in stock there. |
+
+*Copies of each label* prints every label n times in a row. The PDF has **one label per page and the page
+is the label** (*Label Width / Height*, 50 x 30 mm by default), so print it to the label printer at 100 %
+with no margins and the printer feeds one label per page. The page shows the list and the first labels as
+they print before you print. The QR content is the JSON the app scans (`{"item_code": ...}` or
+`{"item_code": ..., "batch_no": ...}` with the keys of *WMS Settings*), so these labels work for picking,
+receiving, counting and the scan menu. Fonts and what the label shows live in the Print Format *WMS Warehouse
+QR Labels* (doc type Warehouse, marked `wms-label-roll`); duplicate it for other layouts, they appear under
+*Label Format*. `reset_label_print_formats` restores the shipped template.
 
 ### Label sheets
 

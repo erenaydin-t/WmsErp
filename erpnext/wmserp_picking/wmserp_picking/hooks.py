@@ -49,6 +49,8 @@ jinja = {
 # Material Transfer requests only).
 doctype_js = {
     "Material Request": "public/js/material_request.js",
+    # Print QR Labels: opens the WMS QR Labels page (wms_erp_picking/page/wms_qr_labels).
+    "Warehouse": "public/js/warehouse.js",
 }
 
 doctype_list_js = {

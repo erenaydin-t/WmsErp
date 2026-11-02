@@ -152,3 +152,87 @@ class SheetRenderingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WarehouseLabelRuleTests(unittest.TestCase):
+    """The label-printer labels of what a warehouse holds."""
+
+    items = {
+        "PCT": {"item_name": "Paracetamol", "has_batch_no": 1, "stock_uom": "Box"},
+        "GZ": {"item_name": "Gauze", "has_batch_no": 0, "stock_uom": "Nos"},
+    }
+    batches = {"B-LATE": {"expiry_date": "2028-01-01"}, "B-SOON": {"expiry_date": "2026-12-01"}, "B-EMPTY": {"expiry_date": None}}
+
+    def test_one_label_per_batch_in_stock_and_per_plain_item(self):
+        bins = [
+            {"item_code": "PCT", "warehouse": "W1", "actual_qty": 12},
+            {"item_code": "GZ", "warehouse": "W1", "actual_qty": 5},
+            {"item_code": "ZERO", "warehouse": "W1", "actual_qty": 0},
+        ]
+        balances = {("PCT", "W1", "B-LATE"): 7, ("PCT", "W1", "B-SOON"): 3, ("PCT", "W1", "B-EMPTY"): 0}
+        labels = rules.stocked_labels(bins, balances, self.items, self.batches)
+        self.assertEqual(
+            [("GZ", None, 5.0), ("PCT", "B-SOON", 3.0), ("PCT", "B-LATE", 7.0), ("PCT", None, 2.0)],
+            [(l["item_code"], l["batch_no"], l["qty"]) for l in labels],
+            "earliest expiry first; 2 units no batch carries get an item label; empty batches are skipped",
+        )
+        self.assertEqual("2026-12-01", labels[1]["expiry_date"])
+        self.assertEqual("Box", labels[1]["uom"])
+
+    def test_item_labels_only_and_group_warehouses_merge(self):
+        bins = [{"item_code": "PCT", "warehouse": "W1", "actual_qty": 4}, {"item_code": "PCT", "warehouse": "W2", "actual_qty": 6}]
+        balances = {("PCT", "W1", "B-SOON"): 4, ("PCT", "W2", "B-SOON"): 6}
+        merged = rules.stocked_labels(bins, balances, self.items, self.batches)
+        self.assertEqual([("PCT", "B-SOON", 10.0)], [(l["item_code"], l["batch_no"], l["qty"]) for l in merged])
+        plain = rules.stocked_labels(bins, balances, self.items, self.batches, per_batch=False)
+        self.assertEqual([("PCT", None, 10.0)], [(l["item_code"], l["batch_no"], l["qty"]) for l in plain])
+
+    def test_sizes_copies_modes(self):
+        self.assertEqual((50.0, 30.0), rules.label_size(None, ""))
+        self.assertEqual((100.0, 50.0), rules.label_size("100", 50))
+        self.assertEqual(25.0, rules.qr_size(50, 30), "half the width: the text keeps the other half")
+        self.assertEqual(26.0, rules.qr_size(100, 30), "label height minus margins")
+        self.assertEqual(10.0, rules.qr_size(15, 15))
+        self.assertEqual(3, rules.copies("3"))
+        self.assertEqual("batch", rules.label_mode(" Batch "))
+        for bad in ((5, 30), (50, 500), ("x", 30)):
+            with self.assertRaises(rules.LabelRuleError):
+                rules.label_size(*bad)
+        for bad in (0, 51, "x"):
+            with self.assertRaises(rules.LabelRuleError):
+                rules.copies(bad)
+        with self.assertRaises(rules.LabelRuleError):
+            rules.label_mode("everything")
+
+    def test_copies_are_consecutive_and_limited(self):
+        labels = [{"item_code": "A"}, {"item_code": "B"}]
+        self.assertEqual(["A", "A", "B", "B"], [l["item_code"] for l in rules.with_copies(labels, 2)])
+        with self.assertRaises(rules.LabelRuleError):
+            rules.with_copies([{"item_code": "A"}] * (rules.MAX_ROLL_LABELS + 1), 1)
+        self.assertTrue(rules.is_roll_template("<!-- wms-label-roll -->"))
+        self.assertFalse(rules.is_roll_template("<!-- wms-label-sheet -->"))
+        self.assertEqual("Warehouse", rules.FORMAT_DOCTYPES[rules.ROLL_FORMAT])
+
+
+@unittest.skipUnless(jinja2, "jinja2 is not installed")
+class RollRenderingTests(SheetRenderingTests):
+    """The label-printer template: one label per page, sized from the page's choice."""
+
+    def test_one_label_per_page_with_the_scanned_payloads(self):
+        labels = [
+            {"item_code": "PCT", "item_name": "Paracetamol", "batch_no": "B-SOON", "expiry_date": "2026-12-01", "payload": '{"item_code":"PCT","batch_no":"B-SOON"}'},
+            {"item_code": "GZ", "item_name": "Gauze", "batch_no": None, "expiry_date": None, "payload": '{"item_code":"GZ"}'},
+            {"item_code": "GZ", "item_name": "GZ", "batch_no": None, "expiry_date": None, "payload": '{"item_code":"GZ"}'},
+        ]
+        html = self.template(rules.ROLL_FORMAT).render(labels=labels, label_width=50, label_height=30, qr_size=rules.qr_size(50, 30), count=3)
+        self.assertIn(rules.ROLL_MARKER, html)
+        self.assertEqual(3, html.count('<table class="wms-label'))
+        self.assertEqual(2, html.count('class="wms-label wms-break"'), "a page break after every label but the last")
+        self.assertIn("width: 50mm; height: 29.4mm", html)
+        self.assertIn("width: 25.0mm; height: 25.0mm", html)
+        self.assertEqual([label["payload"] for label in labels], [call[0] for call in self.svg_calls])
+        self.assertIn('<div class="wms-batch">B-SOON</div>', html)
+        self.assertIn("formatted(2026-12-01)", html)
+        self.assertEqual(1, html.count(">Gauze<"), "the name is not repeated when it equals the code")
+        self.assertIn(".print-format { margin-top: 0mm;", html)
+
