@@ -61,6 +61,26 @@ data class PickListItemDto(
     @SerialName("row_completed_at") val rowCompletedAt: String? = null,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
     @SerialName("batch_from_wms") val batchFromWms: Int = 0,
+    @SerialName("multi_batch") val multiBatch: Int = 0,
+    val batches: List<PickedBatchDto> = emptyList(),
+    @SerialName("stock_qty") val stockQty: Double? = null,
+    @SerialName("reserved_qty") val reservedQty: Double = 0.0,
+)
+
+/** A batch picked on a row that takes several batches. */
+@Serializable
+data class PickedBatchDto(
+    @SerialName("batch_no") val batchNo: String,
+    val qty: Double = 0.0,
+    @SerialName("expiry_date") val expiryDate: String? = null,
+)
+
+/** `reservation` of a row update: the stock reservation run when the card was completed. */
+@Serializable
+data class StockReservationDto(
+    val reserved: Boolean = false,
+    val entries: Int = 0,
+    val error: String? = null,
 )
 
 /** Response of `start_row`, `save_row_progress`, `complete_row` and `reset_row`. */
@@ -71,6 +91,7 @@ data class RowUpdateDto(
     @SerialName("row_completed") val rowCompleted: Boolean = false,
     @SerialName("card_completed") val cardCompleted: Boolean = false,
     @SerialName("is_last_picker") val isLastPicker: Boolean = false,
+    val reservation: StockReservationDto? = null,
 )
 
 /** Response of `get_settings`. */

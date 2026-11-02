@@ -59,7 +59,7 @@ class StocktakingSession(Document):
         rows = frappe.get_all(
             ITEM,
             filters={"session": self.name},
-            fields=["status", "qty_difference", "value_difference"],
+            fields=["status", "qty_difference", "value_difference", "erp_qty"],
             limit_page_length=0,
         )
         return rules.progress(rows)

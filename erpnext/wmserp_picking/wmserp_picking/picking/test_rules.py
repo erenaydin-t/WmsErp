@@ -147,3 +147,66 @@ class HeldProgressTests(unittest.TestCase):
         self.assertAlmostEqual(short[0]["short"], 2)
         self.assertEqual(rules.stock_shortfalls([]), [])
 
+
+
+class TargetQtyTests(unittest.TestCase):
+    def test_picked_qty_set_by_the_senior_user_is_the_target(self):
+        self.assertEqual(6.0, rules.target_qty(6, 10, 10, 1))
+        self.assertEqual(12.0, rules.target_qty(12, 10, 10, 1))
+
+    def test_falls_back_to_the_stock_quantity(self):
+        self.assertEqual(10.0, rules.target_qty(0, 10, 10, 1))
+        self.assertEqual(24.0, rules.target_qty(None, None, 2, 12))
+        self.assertEqual(0.0, rules.target_qty(None, None, None, None))
+
+
+class MultiBatchTests(unittest.TestCase):
+    def test_which_rows_take_several_batches(self):
+        self.assertTrue(rules.accepts_several_batches(1, None))
+        self.assertTrue(rules.accepts_several_batches(1, " "))
+        self.assertTrue(rules.accepts_several_batches(1, "B-1", batch_from_wms=1))
+        self.assertFalse(rules.accepts_several_batches(1, "B-1"))
+        self.assertFalse(rules.accepts_several_batches(0, None))
+        self.assertFalse(rules.accepts_several_batches(1, None, foreign_bundle=True))
+
+    def test_parse_batches_merges_and_drops_empty_entries(self):
+        parsed = rules.parse_batches('[{"batch_no": " B-1 ", "qty": 3}, {"batch_no": "b-1", "qty": 2}, {"batch_no": "B-2", "qty": "5"}, {"batch_no": "B-3", "qty": 0}]')
+        self.assertEqual([{"batch_no": "B-1", "qty": 5.0}, {"batch_no": "B-2", "qty": 5.0}], parsed)
+        self.assertEqual(10.0, rules.batches_total(parsed))
+        self.assertEqual([], rules.parse_batches(None))
+        self.assertEqual([], rules.parse_batches("[]"))
+
+    def test_parse_batches_rejects_bad_entries(self):
+        for bad in ("nope", '{"batch_no": "B"}', '[{"batch_no": "B", "qty": -1}]', '[{"batch_no": "", "qty": 2}]', '[{"batch_no": "B", "qty": "x"}]', "[1]"):
+            with self.assertRaises(rules.PickingRuleError, msg=bad):
+                rules.parse_batches(bad)
+
+    def test_single_batch_calls_of_older_apps(self):
+        self.assertEqual([{"batch_no": "B-1", "qty": 4.0}], rules.single_batch_update([], "B-1", 4))
+        # A scan of another batch replaces a list that holds nothing else.
+        self.assertEqual([{"batch_no": "B-2", "qty": 4.0}], rules.single_batch_update([{"batch_no": "B-1", "qty": 0}], "B-2", 4))
+        self.assertEqual([{"batch_no": "B-1", "qty": 7.0}], rules.single_batch_update([{"batch_no": "B-1", "qty": 4}], "b-1", 7))
+        # A quantity correction without a batch applies to the only batch.
+        self.assertEqual([{"batch_no": "B-1", "qty": 2.0}], rules.single_batch_update([{"batch_no": "B-1", "qty": 4}], None, 2))
+        self.assertEqual([], rules.single_batch_update([{"batch_no": "B-1", "qty": 4}], None, 0))
+        with self.assertRaises(rules.PickingRuleError):
+            rules.single_batch_update([{"batch_no": "B-1", "qty": 4}], "B-2", 6)
+        with self.assertRaises(rules.PickingRuleError):
+            rules.single_batch_update([{"batch_no": "B-1", "qty": 4}, {"batch_no": "B-2", "qty": 2}], None, 6)
+        with self.assertRaises(rules.PickingRuleError):
+            rules.single_batch_update([], None, 3)
+
+
+class AllocateBatchesTests(unittest.TestCase):
+    def test_takes_batches_in_the_given_order(self):
+        available = [{"batch_no": "OLD", "qty": 4}, {"batch_no": "NEW", "qty": 10}]
+        self.assertEqual([{"batch_no": "OLD", "qty": 4.0}, {"batch_no": "NEW", "qty": 3.0}], rules.allocate_batches(available, 7))
+        self.assertEqual([{"batch_no": "OLD", "qty": 2.0}], rules.allocate_batches(available, 2))
+
+    def test_shortfall_and_bad_quantities(self):
+        with self.assertRaises(rules.PickingRuleError):
+            rules.allocate_batches([{"batch_no": "A", "qty": 1}], 2)
+        with self.assertRaises(rules.PickingRuleError):
+            rules.allocate_batches([{"batch_no": "A", "qty": 1}], 0)
+        # Entries of the same batch (one per warehouse ledger line) are merged.
+        self.assertEqual([{"batch_no": "A", "qty": 3.0}], rules.allocate_batches([{"batch_no": "A", "qty": 1}, {"batch_no": "A", "qty": 5}], 3))

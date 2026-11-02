@@ -146,6 +146,8 @@ data class MissingFieldDto(
     val label: String? = null,
     val fieldtype: String? = null,
     val options: String? = null,
+    /** 0: ask on every document, never remember the answer. */
+    val remember: Int? = null,
 )
 
 /** ERPNext `Sales Order` DocType (subset for the delivery delay analytics). */

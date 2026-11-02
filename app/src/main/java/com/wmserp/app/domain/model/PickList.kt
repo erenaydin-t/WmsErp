@@ -55,6 +55,21 @@ const val PICK_QTY_TOLERANCE = 1e-6
 fun isPickComplete(pickedQty: Double, requiredQty: Double): Boolean =
     requiredQty <= PICK_QTY_TOLERANCE || kotlin.math.abs(pickedQty - requiredQty) <= PICK_QTY_TOLERANCE
 
+/** One batch picked on a row that takes several batches, in the stock UOM. */
+data class PickedBatch(val batchNo: String, val qty: Double, val expiryDate: String? = null)
+
+/** Total picked over the batches. */
+val List<PickedBatch>.totalQty: Double get() = sumOf { it.qty }
+
+/** [qty] more of [batchNo] (case ignored): added to its entry, or a new entry at the end. */
+fun List<PickedBatch>.plusQty(batchNo: String, qty: Double): List<PickedBatch> {
+    val index = indexOfFirst { it.batchNo.equals(batchNo, ignoreCase = true) }
+    return if (index >= 0) mapIndexed { i, b -> if (i == index) b.copy(qty = b.qty + qty) else b } else this + PickedBatch(batchNo, qty)
+}
+
+/** Stock reservation made when the card was completed (`reservation` of `complete_row`). */
+data class StockReservation(val reserved: Boolean, val entries: Int = 0, val error: String? = null)
+
 /** Draft document generated from a picked card (Delivery Note or Stock Entry). */
 data class GeneratedDocument(
     val doctype: String,
@@ -63,7 +78,10 @@ data class GeneratedDocument(
     val docStatus: Int = 0,
 )
 
-/** One `Pick List Item` row. Quantities are in the stock UOM, as returned by the backend. */
+/**
+ * One `Pick List Item` row. Quantities are in the stock UOM, as returned by the backend.
+ * [requiredQty] is the target: the row's *Picked Qty (in Stock UOM)* set by the Senior Warehouse User.
+ */
 data class PickListItem(
     val rowName: String,
     val idx: Int,
@@ -71,7 +89,7 @@ data class PickListItem(
     val itemName: String,
     val sourceWarehouse: String?,
     val targetWarehouse: String?,
-    /** Batch allocated by ERPNext; the scanned label must carry exactly this batch. */
+    /** Batch allocated by ERPNext; the scanned label must carry exactly this batch. Null on a [multiBatch] row. */
     val batchNo: String?,
     val expiryDate: String?,
     val serialNo: String?,
@@ -92,6 +110,14 @@ data class PickListItem(
     val durationSeconds: Double? = null,
     /** The batch was assigned by a scan in the app (ERPNext left the row without one); a reset clears it. */
     val batchFromWms: Boolean = false,
+    /** Batch tracked row the Pick List left without a batch: picked from any number of batches. */
+    val multiBatch: Boolean = false,
+    /** The batches picked so far on a [multiBatch] row. */
+    val pickedBatches: List<PickedBatch> = emptyList(),
+    /** Stock quantity ordered on the row (the target may differ when the senior user changed Picked Qty). */
+    val stockQty: Double = requiredQty,
+    /** Stock reserved in ERPNext for this row. */
+    val reservedQty: Double = 0.0,
 ) {
     val isComplete: Boolean get() = rowStatus == PickRowStatus.PICKED || isPickComplete(pickedQty, requiredQty)
 }
@@ -141,6 +167,8 @@ data class RowUpdate(
     val cardCompleted: Boolean,
     /** True only for the request that completed the very last row of the card. */
     val isLastPicker: Boolean,
+    /** Stock reservation run by the request that completed the card; null when none was due. */
+    val reservation: StockReservation? = null,
 )
 
 /** JSON keys of the QR labels, configured in ERPNext > WMS Settings. */

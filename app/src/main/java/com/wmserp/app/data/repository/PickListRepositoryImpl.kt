@@ -13,13 +13,16 @@ import com.wmserp.app.domain.common.AppException
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
+import com.wmserp.app.domain.model.PickedBatch
 import com.wmserp.app.domain.model.PickerKpis
 import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.repository.PickListRepository
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 /**
  * Talks to the `wmserp_picking` custom app (`/api/method/wmserp_picking.api.pick_list.*`).
@@ -66,8 +69,9 @@ class PickListRepositoryImpl(
         batchNo: String?,
         elapsedSeconds: Double?,
         hold: Boolean,
+        batches: List<PickedBatch>?,
     ): AppResult<RowUpdate> = apiCaller.call {
-        dataSource.postMethod<RowUpdateDto>(method("save_row_progress"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds, hold)).toDomain()
+        dataSource.postMethod<RowUpdateDto>(method("save_row_progress"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds, hold, batches)).toDomain()
     }
 
     override suspend fun resetRow(name: String, rowName: String): AppResult<RowUpdate> = apiCaller.call {
@@ -87,8 +91,9 @@ class PickListRepositoryImpl(
         itemCode: String?,
         batchNo: String?,
         elapsedSeconds: Double?,
+        batches: List<PickedBatch>?,
     ): AppResult<RowUpdate> = apiCaller.call {
-        dataSource.postMethod<RowUpdateDto>(method("complete_row"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds)).toDomain()
+        dataSource.postMethod<RowUpdateDto>(method("complete_row"), rowBody(name, rowName, pickedQty, itemCode, batchNo, elapsedSeconds, batches = batches)).toDomain()
     }
 
     override suspend fun generateDocument(name: String, values: Map<String, String>): AppResult<GeneratedDocument> = apiCaller.call {
@@ -106,7 +111,16 @@ class PickListRepositoryImpl(
         dataSource.getMethod<PickerKpisDto>(method("get_picker_kpis")).toDomain()
     }
 
-    private fun rowBody(name: String, rowName: String, pickedQty: Double, itemCode: String?, batchNo: String?, elapsedSeconds: Double?, hold: Boolean = false): JsonObject =
+    private fun rowBody(
+        name: String,
+        rowName: String,
+        pickedQty: Double,
+        itemCode: String?,
+        batchNo: String?,
+        elapsedSeconds: Double?,
+        hold: Boolean = false,
+        batches: List<PickedBatch>? = null,
+    ): JsonObject =
         buildJsonObject {
             put("name", name)
             put("row", rowName)
@@ -115,6 +129,17 @@ class PickListRepositoryImpl(
             batchNo?.takeIf { it.isNotBlank() }?.let { put("batch_no", it) }
             elapsedSeconds?.let { put("elapsed_seconds", it) }
             if (hold) put("hold", 1)
+            // The complete list of a row picked from several batches; the server sums it.
+            batches?.let { list ->
+                putJsonArray("batches") {
+                    list.filter { it.qty > 0.0 }.forEach { batch ->
+                        addJsonObject {
+                            put("batch_no", batch.batchNo)
+                            put("qty", batch.qty)
+                        }
+                    }
+                }
+            }
         }
 
     companion object {

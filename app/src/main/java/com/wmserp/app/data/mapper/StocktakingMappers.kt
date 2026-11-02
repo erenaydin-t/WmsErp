@@ -92,6 +92,7 @@ fun StocktakingItemDto.toDomain(): StocktakingItem = StocktakingItem(
     countedBy = countedBy?.takeIf { it.isNotBlank() },
     countedByName = countedByName?.takeIf { it.isNotBlank() },
     countedAt = countedAt,
+    zeroStock = zeroStock,
     recountNote = recountNote?.takeIf { it.isNotBlank() },
     location = location?.takeIf { it.isNotBlank() },
     hasBatchNo = hasBatchNo,

@@ -142,8 +142,10 @@
     <string name="transfer_from">From warehouse</string>
     <string name="transfer_to">To warehouse</string>
     <string name="transfer_qty">Quantity</string>
-    <string name="transfer_submit">Submit Material Transfer</string>
-    <string name="transfer_success">Stock Entry %1$s submitted: moved %2$s × %3$s to %4$s</string>
+    <string name="transfer_submit">Create draft Material Transfer</string>
+    <string name="transfer_draft_created">Draft Material Transfer %1$s created: %2$s × %3$s to %4$s</string>
+    <string name="transfer_batch_scanned">Batch: %1$s</string>
+    <string name="transfer_batch_auto">Batches are taken automatically in ERPNext\'s picking order (first expiring first)</string>
     <string name="camera_permission_needed">Camera permission is needed for camera scanning.</string>
     <string name="camera_permission_denied">Camera access was denied. Allow it to scan with the camera, or use the hardware scanner.</string>
     <string name="camera_allow">Allow camera</string>
@@ -363,6 +365,16 @@
     <string name="pick_qty_updated">%1$s: quantity set to %2$s</string>
     <string name="pick_removed">%1$s: pick removed, scan the row again</string>
     <string name="pick_alert_no_stock_title">No stock for this batch</string>
+    <string name="pick_any_batch">Any batch — scan each batch you take</string>
+    <string name="pick_batches_picked">Batches picked</string>
+    <string name="pick_missing_batch">%1$s is picked from several batches: scan a QR label that carries the batch</string>
+    <string name="pick_alert_missing_batch_title">Batch missing on the label</string>
+    <string name="pick_edit_batches_hint">Change the quantity of a batch, or remove it. The total must not exceed the required quantity.</string>
+    <string name="pick_edit_batches_total">Total: %1$s / %2$s %3$s</string>
+    <string name="pick_edit_remove_batch">Remove batch</string>
+    <string name="pick_reserved">Reserved %1$s</string>
+    <string name="pick_reservation_done">Stock reserved in ERPNext for the picked batches.</string>
+    <string name="pick_reservation_failed">Stock could not be reserved: %1$s. A senior user can press Reserve on the Pick List in ERPNext.</string>
     <string name="scan_qty_title_pick">How many did you pick?</string>
     <string name="scan_qty_title_receive">How many did you receive?</string>
     <string name="scan_qty_batch">Batch %1$s</string>
@@ -445,6 +457,7 @@
     <string name="st_physical_count_label">Physical count</string>
     <string name="st_no_batch">No batch</string>
     <string name="st_blind_hint">Blind count — the ERP quantity is hidden</string>
+    <string name="st_show_zero_stock">Show zero-stock items (%1$d)</string>
     <string name="st_same_as_erp">Same as ERP (%1$s)</string>
     <string name="st_submit_count">Submit count</string>
     <string name="st_cancel_count">Cancel</string>

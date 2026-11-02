@@ -615,7 +615,7 @@ class ReceiveViewModel @Inject constructor(
         if (answers.isEmpty() || answers.values.any { it.isBlank() }) return
         _uiState.update { it.copy(requiredFields = emptyList()) }
         viewModelScope.launch {
-            saveFieldDefaults(answers)
+            saveFieldDefaults(answers.filterKeys { key -> state.requiredFields.firstOrNull { it.key == key }?.remember != false })
             perform(pendingSubmitAsDraft, answers)
         }
     }

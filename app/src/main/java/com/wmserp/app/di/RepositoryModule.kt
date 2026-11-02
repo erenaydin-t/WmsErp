@@ -18,6 +18,7 @@ import com.wmserp.app.data.repository.InventoryRepositoryImpl
 import com.wmserp.app.data.repository.PickListRepositoryImpl
 import com.wmserp.app.data.repository.ProfileRepositoryImpl
 import com.wmserp.app.data.repository.ReceiptRepositoryImpl
+import com.wmserp.app.data.repository.StockTransferRepositoryImpl
 import com.wmserp.app.data.repository.StocktakingRepositoryImpl
 import com.wmserp.app.data.util.DateProvider
 import com.wmserp.app.data.util.SystemDateProvider
@@ -30,6 +31,7 @@ import com.wmserp.app.domain.repository.ProfileRepository
 import com.wmserp.app.domain.repository.ReceiptRepository
 import com.wmserp.app.domain.repository.SettingsRepository
 import com.wmserp.app.domain.repository.StocktakingLocalStore
+import com.wmserp.app.domain.repository.StockTransferRepository
 import com.wmserp.app.domain.repository.StocktakingRepository
 import dagger.Module
 import dagger.Provides
@@ -78,6 +80,11 @@ object RepositoryModule {
     @Singleton
     fun providePickListRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): PickListRepository =
         PickListRepositoryImpl(dataSource, apiCaller)
+
+    @Provides
+    @Singleton
+    fun provideStockTransferRepository(dataSource: ErpNextDataSource, apiCaller: ApiCaller): StockTransferRepository =
+        StockTransferRepositoryImpl(dataSource, apiCaller)
 
     @Provides
     @Singleton

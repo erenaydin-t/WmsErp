@@ -142,8 +142,10 @@
     <string name="transfer_from">از انبار</string>
     <string name="transfer_to">به انبار</string>
     <string name="transfer_qty">مقدار</string>
-    <string name="transfer_submit">ثبت انتقال کالا</string>
-    <string name="transfer_success">سند موجودی %1$s ثبت شد: %2$s × %3$s به %4$s منتقل شد</string>
+    <string name="transfer_submit">ایجاد پیش‌نویس انتقال کالا</string>
+    <string name="transfer_draft_created">پیش‌نویس انتقال کالا %1$s ایجاد شد: %2$s × %3$s به %4$s</string>
+    <string name="transfer_batch_scanned">بچ: %1$s</string>
+    <string name="transfer_batch_auto">بچ‌ها به‌صورت خودکار به ترتیب برداشت ERPNext انتخاب می‌شوند (اول آنچه زودتر منقضی می‌شود)</string>
     <string name="camera_permission_needed">برای اسکن با دوربین، مجوز دوربین لازم است.</string>
     <string name="camera_permission_denied">دسترسی به دوربین رد شد. برای اسکن با دوربین آن را فعال کنید یا از اسکنر سخت‌افزاری استفاده کنید.</string>
     <string name="camera_allow">اجازه دسترسی به دوربین</string>
@@ -363,6 +365,16 @@
     <string name="pick_qty_updated">%1$s: تعداد روی %2$s تنظیم شد</string>
     <string name="pick_removed">%1$s: برداشت حذف شد، ردیف را دوباره اسکن کنید</string>
     <string name="pick_alert_no_stock_title">این بچ در انبار موجودی ندارد</string>
+    <string name="pick_any_batch">هر بچ — هر بچی را که برمی‌دارید اسکن کنید</string>
+    <string name="pick_batches_picked">بچ‌های برداشت‌شده</string>
+    <string name="pick_missing_batch">%1$s از چند بچ برداشت می‌شود: برچسب QR دارای شماره بچ را اسکن کنید</string>
+    <string name="pick_alert_missing_batch_title">شماره بچ روی برچسب نیست</string>
+    <string name="pick_edit_batches_hint">تعداد هر بچ را تغییر دهید یا آن را حذف کنید. جمع نباید از تعداد مورد نیاز بیشتر شود.</string>
+    <string name="pick_edit_batches_total">جمع: %1$s / %2$s %3$s</string>
+    <string name="pick_edit_remove_batch">حذف بچ</string>
+    <string name="pick_reserved">رزرو‌شده %1$s</string>
+    <string name="pick_reservation_done">موجودی بچ‌های برداشت‌شده در ERPNext رزرو شد.</string>
+    <string name="pick_reservation_failed">موجودی رزرو نشد: %1$s. کاربر ارشد می‌تواند در ERPNext دکمه Reserve را روی Pick List بزند.</string>
     <string name="scan_qty_title_pick">چند عدد برداشت کردید؟</string>
     <string name="scan_qty_title_receive">چند عدد دریافت کردید؟</string>
     <string name="scan_qty_batch">بچ %1$s</string>
@@ -445,6 +457,7 @@
     <string name="st_physical_count_label">شمارش فیزیکی</string>
     <string name="st_no_batch">بدون بچ</string>
     <string name="st_blind_hint">شمارش کور — موجودی ERP پنهان است</string>
+    <string name="st_show_zero_stock">نمایش اقلام با موجودی صفر (%1$d)</string>
     <string name="st_same_as_erp">برابر با ERP (%1$s)</string>
     <string name="st_submit_count">ثبت شمارش</string>
     <string name="st_cancel_count">لغو</string>

@@ -183,6 +183,7 @@ internal data class ItemFile(
     val hasBatchNo: Boolean = false,
     val addedDuringCount: Boolean = false,
     val modified: String? = null,
+    val zeroStock: Boolean = false,
 )
 
 internal fun CountSubmission.toFile() = PendingCountFile(clientRef, sessionName, itemName, itemCode, batchNo, warehouse, qty, deviceTime, note, attempts, lastError)
@@ -226,7 +227,7 @@ internal fun SessionFile.toDomain() = StocktakingSession(
 internal fun StocktakingItem.toFile() = ItemFile(
     name, itemCode, itemName, warehouse, batchNo, expiryDate, uom, erpQty, status.serverValue, nextCountType.serverValue, counter, counterName, isMine,
     count1, count2, recountQty, recountCount, finalQty, qtyDifference, valueDifference, countedBy, countedByName, countedAt, recountNote, location,
-    hasBatchNo, addedDuringCount, modified,
+    hasBatchNo, addedDuringCount, modified, zeroStock,
 )
 
 internal fun ItemFile.toDomain() = StocktakingItem(
@@ -254,6 +255,7 @@ internal fun ItemFile.toDomain() = StocktakingItem(
     countedByName = countedByName,
     countedAt = countedAt,
     recountNote = recountNote,
+    zeroStock = zeroStock,
     location = location,
     hasBatchNo = hasBatchNo,
     addedDuringCount = addedDuringCount,

@@ -179,6 +179,8 @@ data class RequiredField(
     /** Link target DocType, or the newline-separated options of a Select. */
     val options: String? = null,
     val default: String? = null,
+    /** False for fields the user answers on every document (e.g. *Received By*): never stored as a default. */
+    val remember: Boolean = true,
 ) {
     /** Key of stored answers: `Purchase Receipt Item.department`. */
     val key: String get() = "$doctype.$fieldname"

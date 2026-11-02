@@ -76,6 +76,7 @@ data class StocktakingItemDto(
     @SerialName("has_batch_no") val hasBatchNo: Boolean = false,
     val location: String? = null,
     @SerialName("added_during_count") val addedDuringCount: Boolean = false,
+    @SerialName("zero_stock") val zeroStock: Boolean = false,
     val status: String? = null,
     @SerialName("next_count_type") val nextCountType: String? = null,
     val counter: String? = null,

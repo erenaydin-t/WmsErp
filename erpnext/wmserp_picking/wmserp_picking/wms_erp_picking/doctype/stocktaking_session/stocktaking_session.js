@@ -21,6 +21,33 @@ frappe.ui.form.on("Stocktaking Session", {
 	},
 });
 
+// The manager chooses the department, the difference account and the cost center of the Stock
+// Reconciliation (prefilled with the warehouse department and the company's defaults).
+function reconciliation_dialog(frm) {
+	frappe.call({ method: STOCKTAKING_API + "get_reconciliation_defaults", args: { name: frm.doc.name } }).then((r) => {
+		const d = r.message || {};
+		const company_filter = () => ({ filters: { company: frm.doc.company, is_group: 0 } });
+		const fields = [];
+		if (d.has_department) {
+			fields.push({ fieldname: "department", label: __("Department"), fieldtype: "Link", options: "Department", reqd: 1, default: d.department });
+		}
+		fields.push(
+			{ fieldname: "expense_account", label: __("Difference Account"), fieldtype: "Link", options: "Account", reqd: 1, default: d.expense_account, get_query: company_filter },
+			{ fieldname: "cost_center", label: __("Cost Center"), fieldtype: "Link", options: "Cost Center", reqd: 1, default: d.cost_center, get_query: company_filter },
+			{ fieldtype: "HTML", options: `<p class="text-muted small">${__("A draft Stock Reconciliation is created with every approved difference. You submit it afterwards to post the stock changes.")}</p>` }
+		);
+		frappe.prompt(
+			fields,
+			(values) =>
+				call(frm, "create_reconciliation", Object.assign({ submit: 0 }, values), { message: __("Creating Stock Reconciliation...") }).then((res) => {
+					if (res && res.stock_reconciliation) frappe.set_route("Form", "Stock Reconciliation", res.stock_reconciliation);
+				}),
+			__("Create Stock Reconciliation"),
+			__("Create")
+		);
+	});
+}
+
 function call(frm, method, args, { freeze = true, message = null } = {}) {
 	return frappe
 		.call({
@@ -101,14 +128,7 @@ function add_buttons(frm) {
 		primary(__("Approve"), () => frappe.confirm(__("Give final approval to the counted quantities?"), () => call(frm, "approve_session")));
 	}
 	if (status === "Final Approval") {
-		primary(__("Create Stock Reconciliation"), () => {
-			frappe.confirm(
-				__("Create a draft Stock Reconciliation with every approved difference? You submit it afterwards to post the stock changes."),
-				() => call(frm, "create_reconciliation", { submit: 0 }, { message: __("Creating Stock Reconciliation...") }).then((r) => {
-					if (r && r.stock_reconciliation) frappe.set_route("Form", "Stock Reconciliation", r.stock_reconciliation);
-				})
-			);
-		});
+		primary(__("Create Stock Reconciliation"), () => reconciliation_dialog(frm));
 	}
 	if (status === "Reconciled") {
 		primary(__("Complete"), () => call(frm, "complete_session"));

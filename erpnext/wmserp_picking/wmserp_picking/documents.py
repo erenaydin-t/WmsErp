@@ -206,7 +206,12 @@ def officer_value(df, user=None):
     """What goes into the officer field: the Employee for a link to Employee, the user for a link
     to User, the employee's (else the user's) full name for a text field."""
     user = user or frappe.session.user
-    employee = employee_of(user)
+    return person_value(df, employee_of(user), user)
+
+
+def person_value(df, employee, user=None):
+    """`employee` (`{name, employee_name}`, may be None) / `user` written into a field of any kind:
+    the Employee for a link to Employee, the user for a link to User, the name for a text field."""
     if df.fieldtype in ("Link", "Dynamic Link"):
         if df.options == "Employee":
             return employee.name if employee else None
@@ -215,7 +220,103 @@ def officer_value(df, user=None):
         return None
     if employee and employee.employee_name:
         return employee.employee_name
-    return frappe.utils.get_fullname(user)
+    return frappe.utils.get_fullname(user) if user else None
+
+
+# --------------------------------------------------------------------------------------------
+# Material Issue: values that belong to the requesting side
+# --------------------------------------------------------------------------------------------
+
+RECEIVED_BY_LABELS = ("received by (employee)", "received by")
+REQUESTER_LABEL_HINTS = ("request", "employee")
+
+
+def field_by_labels(doctype, labels):
+    """The first field of `doctype` whose label is one of `labels` (case and spaces ignored)."""
+    wanted = [label.strip().lower() for label in labels]
+    fields = frappe.get_meta(doctype).fields
+    for label in wanted:
+        for df in fields:
+            if (df.label or "").strip().lower() == label:
+                return df
+    return None
+
+
+def material_request_requester(material_request):
+    """The employee who asked for a Material Request: a field of the request that links to
+    Employee (one whose label mentions the request / employee first), else the Employee of the
+    user who created it. `{name, employee_name}` plus `user`, or None."""
+    if not material_request:
+        return None
+    request = frappe.db.get_value("Material Request", material_request, ["name", "owner"], as_dict=True)
+    if not request:
+        return None
+    links = [df for df in frappe.get_meta("Material Request").fields if df.fieldtype == "Link" and df.options == "Employee"]
+    links.sort(key=lambda df: 0 if any(hint in (df.label or "").lower() for hint in REQUESTER_LABEL_HINTS) else 1)
+    for df in links:
+        employee_id = frappe.db.get_value("Material Request", material_request, df.fieldname)
+        if employee_id:
+            employee = frappe.db.get_value("Employee", employee_id, ["name", "employee_name", "user_id"], as_dict=True)
+            if employee:
+                return frappe._dict(name=employee.name, employee_name=employee.employee_name, user=employee.user_id)
+    employee = employee_of(request.owner)
+    if employee:
+        return frappe._dict(name=employee.name, employee_name=employee.employee_name, user=request.owner)
+    return frappe._dict(name=None, employee_name=None, user=request.owner)
+
+
+def material_request_department(material_request, material_request_item=None):
+    """The department of the request line when it carries one, else of the request."""
+    if material_request_item and frappe.get_meta("Material Request Item").has_field("department"):
+        department = frappe.db.get_value("Material Request Item", material_request_item, "department")
+        if department:
+            return department
+    if material_request and frappe.get_meta("Material Request").has_field("department"):
+        return frappe.db.get_value("Material Request", material_request, "department") or None
+    return None
+
+
+def ask_received_by(doc, values=None) -> list:
+    """The *Received By (Employee)* field of `doc` is answered by the user every time (never from
+    remembered answers or defaults): set from `values` when the app sent it, else returned as a
+    missing field flagged `remember: 0` so the app asks and does not store the answer."""
+    df = field_by_labels(doc.doctype, RECEIVED_BY_LABELS)
+    if df is None:
+        return []
+    value = rules.resolve_value(doc.doctype, df.fieldname, values or {})
+    if value not in (None, ""):
+        doc.set(df.fieldname, value)
+        return []
+    field = rules.describe(df, doc.doctype)
+    field["remember"] = 0
+    return [field]
+
+
+def apply_material_request_values(stock_entry, material_request):
+    """A Material Issue belongs to the department that requested it: the header and every row get
+    the department of their Material Request (line), replacing the warehouse department, and the
+    *Received By (Employee)* field names the employee who raised the request. Rows keep their own
+    `material_request` / `material_request_item`; the header uses `material_request` (the Pick
+    List's request, else the first row's). Fields the site does not have are skipped."""
+    rows = stock_entry.get("items") or []
+    material_request = material_request or next((row.get("material_request") for row in rows if row.get("material_request")), None)
+    if not material_request:
+        return
+    header_department = material_request_department(material_request)
+    if header_department and stock_entry.meta.has_field("department"):
+        stock_entry.set("department", header_department)
+    if rows and frappe.get_meta("Stock Entry Detail").has_field("department"):
+        for row in rows:
+            department = material_request_department(row.get("material_request") or material_request, row.get("material_request_item"))
+            if department:
+                row.set("department", department)
+
+    df = field_by_labels(stock_entry.doctype, RECEIVED_BY_LABELS)
+    requester = material_request_requester(material_request)
+    if df is not None and requester:
+        value = person_value(df, requester if requester.name else None, requester.user)
+        if value not in (None, ""):
+            stock_entry.set(df.fieldname, value)
 
 
 def stamp_officer(doc, user=None):

@@ -5,6 +5,8 @@ import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.common.ErrorCode
 import com.wmserp.app.domain.model.PickListPurpose
 import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickedBatch
+import com.wmserp.app.domain.model.QrLabel
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.repository.PickListRepository
@@ -133,6 +135,43 @@ class PickListUseCasesTest {
         val finished = pickList.withRow("prow1", 10.0, PickRowStatus.PICKED)
         coEvery { repository.completeRow(pickList.name, "prow1", 10.0, null, "B-001", 120.0) } returns AppResult.Success(rowUpdate(finished, "prow1", true))
         val ok = CompletePickRowUseCase(repository)(pickList, mine, 10.0, 120.0)
+        assertTrue(ok is AppResult.Success)
+    }
+
+    // ---- several batches on a row without an allocated batch --------------------------------
+
+    private val multi = mine.copy(batchNo = null, multiBatch = true)
+    private val multiList = pickList.copy(items = pickList.items.map { if (it.rowName == "prow1") multi else it })
+
+    @Test
+    fun `a multi batch row accepts any batch of the item but needs one on the label`() {
+        val first = validate(qrLabel("ITEM-001", "LOT-1"), WmsQrKeys.DEFAULT, multiList.items) as PickScanOutcome.Match
+        assertEquals("prow1", first.row.rowName)
+        assertEquals("LOT-1", first.label.batchNo)
+        val second = validate(qrLabel("ITEM-001", "LOT-2"), WmsQrKeys.DEFAULT, multiList.items) as PickScanOutcome.Match
+        assertEquals("LOT-2", second.label.batchNo)
+
+        val missing = validate(qrLabel("ITEM-001"), WmsQrKeys.DEFAULT, multiList.items) as PickScanOutcome.MissingBatch
+        assertEquals("prow1", missing.row.rowName)
+    }
+
+    @Test
+    fun `a multi batch row saves and completes its whole batch list`() = runTest {
+        val batches = listOf(PickedBatch("LOT-1", 5.0), PickedBatch("LOT-2", 5.0))
+        val progressed = multiList.withRow("prow1", 10.0, PickRowStatus.PICKING)
+        coEvery { repository.saveRowProgress(pickList.name, "prow1", 10.0, "ITEM-001", null, null, true, batches) } returns AppResult.Success(rowUpdate(progressed, "prow1", false))
+        val saved = SavePickRowProgressUseCase(repository)(multiList, multi, 0.0, QrLabel("ITEM-001", "LOT-2", ""), null, batches)
+        assertTrue(saved is AppResult.Success)
+
+        // The sum of the batches is checked against the target.
+        val over = SavePickRowProgressUseCase(repository)(multiList, multi, 0.0, null, null, batches + PickedBatch("LOT-3", 1.0))
+        assertEquals(ErrorCode.OVER_PICK, over.code())
+        val short = CompletePickRowUseCase(repository)(multiList, multi, 10.0, null, listOf(PickedBatch("LOT-1", 5.0)))
+        assertEquals(ErrorCode.ROW_INCOMPLETE, short.code())
+
+        val finished = multiList.withRow("prow1", 10.0, PickRowStatus.PICKED)
+        coEvery { repository.completeRow(pickList.name, "prow1", 10.0, null, null, null, batches) } returns AppResult.Success(rowUpdate(finished, "prow1", true))
+        val ok = CompletePickRowUseCase(repository)(multiList, multi, 0.0, null, batches)
         assertTrue(ok is AppResult.Success)
     }
 

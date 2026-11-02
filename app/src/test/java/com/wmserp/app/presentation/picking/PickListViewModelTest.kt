@@ -7,6 +7,8 @@ import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickedBatch
+import com.wmserp.app.domain.model.StockReservation
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.ScanSource
@@ -483,6 +485,99 @@ class PickListViewModelTest {
         assertNotNull(vm.line("prow1").startedAtMillis)
         assertTrue(vm.uiState.value.canScan)
         coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    // ---- several batches on a row without an allocated batch --------------------------------
+
+    private val multiReady = ready.copy(items = ready.items.map { if (it.rowName == "prow1") it.copy(batchNo = null, multiBatch = true) else it })
+
+    /** The server keeps the batch list it was sent. */
+    private fun mockMultiProgress(base: () -> PickList) {
+        coEvery { repository.saveRowProgress(name, "prow1", any(), any(), any(), any(), any(), any()) } answers {
+            val batches = arg<List<PickedBatch>?>(7).orEmpty()
+            val qty = batches.sumOf { it.qty }
+            val updated = base().withRow("prow1", qty, PickRowStatus.PICKING).let { pl ->
+                pl.copy(items = pl.items.map { if (it.rowName == "prow1") it.copy(pickedBatches = batches) else it })
+            }
+            AppResult.Success(rowUpdate(updated, "prow1", rowCompleted = false))
+        }
+    }
+
+    @Test
+    fun `a row without a batch is picked from two batches and confirmed with both`() = runTest {
+        settings = ScannerSettings()
+        mockMultiProgress { multiReady }
+        val vm = createViewModel(multiReady)
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "LOT-1"), ScanSource.HARDWARE_KEYBOARD))
+        assertEquals("LOT-1", vm.uiState.value.pendingScan?.batchNo)
+        vm.setPendingQty("5")
+        vm.confirmPendingScan()
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001", "LOT-2"), ScanSource.HARDWARE_KEYBOARD))
+        assertEquals(5.0, vm.uiState.value.pendingScan?.remaining ?: 0.0, 0.0)
+        vm.confirmPendingScan()
+
+        val both = listOf(PickedBatch("LOT-1", 5.0), PickedBatch("LOT-2", 5.0))
+        assertEquals(both, vm.line("prow1").batches)
+        assertEquals(10.0, vm.line("prow1").qty, 0.0)
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 5.0, "ITEM-001", null, any(), true, listOf(PickedBatch("LOT-1", 5.0))) }
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 10.0, "ITEM-001", null, any(), true, both) }
+
+        // Final confirmation sends the batch list; the server reserved the stock.
+        val prow1Counted = multiReady.withRow("prow1", 10.0, PickRowStatus.PICKING).let { pl ->
+            pl.copy(items = pl.items.map { if (it.rowName == "prow1") it.copy(pickedBatches = both) else it })
+        }
+        mockProgressFor("prow2", 5.0, { prow1Counted })
+        vm.onScanned(ScannedCode(qrLabel("ITEM-002"), ScanSource.HARDWARE_KEYBOARD))
+        vm.confirmPendingScan()
+        val done = multiReady.withRow("prow1", 10.0, PickRowStatus.PICKED).withRow("prow2", 5.0, PickRowStatus.PICKED)
+        coEvery { repository.completeRow(name, "prow1", 10.0, null, null, any(), both) } returns AppResult.Success(rowUpdate(multiReady.withRow("prow1", 10.0, PickRowStatus.PICKED), "prow1", rowCompleted = true))
+        coEvery { repository.completeRow(name, "prow2", 5.0, null, null, any(), null) } returns AppResult.Success(
+            rowUpdate(done, "prow2", rowCompleted = true, lastPicker = true).copy(reservation = StockReservation(reserved = true, entries = 2))
+        )
+        coEvery { repository.generateDocument(name, any()) } returns AppResult.Success(GeneratedDocument("Delivery Note", "DN-0001"))
+
+        vm.completePicking()
+
+        coVerify(exactly = 1) { repository.completeRow(name, "prow1", 10.0, null, null, any(), both) }
+        assertEquals(PickOutcome.CARD_COMPLETED, vm.uiState.value.outcome)
+        assertEquals(StockReservation(reserved = true, entries = 2), vm.uiState.value.reservation)
+    }
+
+    @Test
+    fun `a label without a batch is refused on a multi batch row`() = runTest {
+        val vm = createViewModel(multiReady)
+
+        vm.onScanned(ScannedCode(qrLabel("ITEM-001"), ScanSource.HARDWARE_KEYBOARD))
+
+        assertEquals(ScanAlertKind.MISSING_BATCH, vm.uiState.value.scanAlert?.kind)
+        coVerify(exactly = 0) { repository.saveRowProgress(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a batch is corrected or dropped in the correction dialog`() = runTest {
+        val picked = multiReady.withRow("prow1", 8.0, PickRowStatus.PICKING).let { pl ->
+            pl.copy(items = pl.items.map { if (it.rowName == "prow1") it.copy(pickedBatches = listOf(PickedBatch("LOT-1", 5.0), PickedBatch("LOT-2", 3.0))) else it })
+        }
+        mockMultiProgress { multiReady }
+        val vm = createViewModel(picked)
+
+        vm.openEdit("prow1")
+        val edit = vm.uiState.value.editLine!!
+        assertTrue(edit.multiBatch)
+        assertEquals(8.0, edit.qty, 0.0)
+
+        vm.setEditBatchQty("LOT-1", "7")
+        vm.removeEditBatch("LOT-2")
+        assertEquals(7.0, vm.uiState.value.editLine!!.qty, 0.0)
+        vm.setEditBatchQty("LOT-1", "11")
+        assertFalse(vm.uiState.value.editLine!!.isValid)
+        vm.setEditBatchQty("LOT-1", "7")
+        vm.confirmEdit()
+
+        coVerify(exactly = 1) { repository.saveRowProgress(name, "prow1", 7.0, null, null, any(), true, listOf(PickedBatch("LOT-1", 7.0))) }
+        assertEquals(listOf(PickedBatch("LOT-1", 7.0)), vm.line("prow1").batches)
     }
 
     @Test

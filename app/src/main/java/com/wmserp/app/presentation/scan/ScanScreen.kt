@@ -80,6 +80,8 @@ import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SectionHeader
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.WarehousePicker
+import com.wmserp.app.presentation.components.SuggestionField
+import com.wmserp.app.presentation.components.RequiredFieldsDialog
 import com.wmserp.app.presentation.components.scannerAwareFocus
 import com.wmserp.app.presentation.theme.WmsTheme
 
@@ -103,6 +105,11 @@ fun ScanRoute(onReceivePurchaseReceipt: (String) -> Unit, viewModel: ScanViewMod
         onTransferQtyChange = viewModel::onTransferQtyChange,
         onSubmitTransfer = viewModel::submitTransfer,
         onReceivePurchaseReceipt = onReceivePurchaseReceipt,
+        onTransferDepartmentChange = viewModel::onTransferDepartmentChange,
+        onTransferReceivedByChange = viewModel::onTransferReceivedByChange,
+        onTransferFieldAnswer = viewModel::setTransferFieldAnswer,
+        onConfirmTransferFields = viewModel::confirmTransferFields,
+        onDismissTransferFields = viewModel::dismissTransferFields,
     )
 }
 
@@ -123,6 +130,11 @@ fun ScanScreen(
     onTransferQtyChange: (String) -> Unit,
     onSubmitTransfer: () -> Unit,
     onReceivePurchaseReceipt: (String) -> Unit,
+    onTransferDepartmentChange: (String) -> Unit = {},
+    onTransferReceivedByChange: (String) -> Unit = {},
+    onTransferFieldAnswer: (String, String) -> Unit = { _, _ -> },
+    onConfirmTransferFields: () -> Unit = {},
+    onDismissTransferFields: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -204,7 +216,7 @@ fun ScanScreen(
                 when (lookup) {
                     is ScanLookup.ItemFound -> ItemResultCard(lookup.item, lookup.stock, onClear = onClearResult, onTransfer = onOpenTransfer)
                     is ScanLookup.WarehouseFound -> WarehouseResultCard(lookup.warehouse, lookup.stock, onClear = onClearResult)
-                    is ScanLookup.BatchFound -> BatchResultCard(lookup.batch, lookup.item, lookup.stock, onClear = onClearResult)
+                    is ScanLookup.BatchFound -> BatchResultCard(lookup.batch, lookup.item, lookup.stock, onClear = onClearResult, onTransfer = onOpenTransfer)
                     is ScanLookup.PurchaseReceiptFound -> PurchaseReceiptResultCard(lookup.receipt, onClear = onClearResult, onReceive = { onReceivePurchaseReceipt(lookup.receipt.name) })
                     is ScanLookup.NotFound -> NotFoundCard(lookup.code, lookup.target, onClear = onClearResult)
                 }
@@ -237,16 +249,27 @@ fun ScanScreen(
     }
 
     if (state.transfer.visible) {
-        val item = (state.result as? ScanLookup.ItemFound)?.item
         TransferSheet(
-            item = item,
             form = state.transfer,
             onDismiss = onCloseTransfer,
             onFromChange = onTransferFromChange,
             onToChange = onTransferToChange,
             onQtyChange = onTransferQtyChange,
+            onDepartmentChange = onTransferDepartmentChange,
+            onReceivedByChange = onTransferReceivedByChange,
             onSubmit = onSubmitTransfer,
         )
+        if (state.transfer.requiredFields.isNotEmpty()) {
+            RequiredFieldsDialog(
+                doctype = stringResource(R.string.doctype_stock_entry),
+                fields = state.transfer.requiredFields,
+                answers = state.transfer.requiredFieldAnswers,
+                linkOptions = state.transfer.linkOptions,
+                onAnswerChange = onTransferFieldAnswer,
+                onConfirm = onConfirmTransferFields,
+                onDismiss = onDismissTransferFields,
+            )
+        }
     }
 }
 
@@ -388,7 +411,7 @@ private fun WarehouseResultCard(warehouse: Warehouse, stock: List<StockLevel>, o
 
 /** A scanned batch label: the batch, its item, expiry and the stock per warehouse (quantities only). */
 @Composable
-private fun BatchResultCard(batch: Batch, item: Item?, stock: List<BatchWarehouseStock>, onClear: () -> Unit) {
+private fun BatchResultCard(batch: Batch, item: Item?, stock: List<BatchWarehouseStock>, onClear: () -> Unit, onTransfer: () -> Unit) {
     val today = remember { java.time.LocalDate.now().toString() }
     val expired = batch.isExpiredOn(today)
     ResultCard(
@@ -414,6 +437,13 @@ private fun BatchResultCard(batch: Batch, item: Item?, stock: List<BatchWarehous
             }
         } else {
             Text(stringResource(R.string.scan_no_stock), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (stock.isNotEmpty() && !expired && !batch.disabled) {
+            FilledTonalButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth().testTag("scan_move_batch")) {
+                Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.scan_move_stock))
+            }
         }
     }
 }
@@ -482,19 +512,24 @@ private fun NotFoundCard(code: String, target: ScanTarget, onClear: () -> Unit) 
 
 @Composable
 private fun TransferSheet(
-    item: Item?,
     form: TransferFormState,
     onDismiss: () -> Unit,
     onFromChange: (String) -> Unit,
     onToChange: (String) -> Unit,
     onQtyChange: (String) -> Unit,
+    onDepartmentChange: (String) -> Unit,
+    onReceivedByChange: (String) -> Unit,
     onSubmit: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(R.string.transfer_title), style = MaterialTheme.typography.titleLarge)
-            Text(item?.let { "${it.name} (${it.code})" } ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${form.itemName} (${form.itemCode})", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            when {
+                form.batchNo != null -> Text(stringResource(R.string.transfer_batch_scanned, form.batchNo), style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("transfer_batch"))
+                form.autoBatches -> Text(stringResource(R.string.transfer_batch_auto), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("transfer_batch_auto"))
+            }
             WarehousePicker(stringResource(R.string.transfer_from), form.fromWarehouse, form.warehouses, onFromChange)
             WarehousePicker(stringResource(R.string.transfer_to), form.toWarehouse, form.warehouses, onToChange)
             OutlinedTextField(
@@ -505,6 +540,13 @@ private fun TransferSheet(
                 modifier = Modifier.fillMaxWidth().scannerAwareFocus(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             )
+            form.form?.department?.let { field ->
+                SuggestionField(field.label, form.department, form.departmentOptions, onDepartmentChange, Modifier.testTag("transfer_department"))
+            }
+            form.form?.receivedBy?.let { field ->
+                SuggestionField(field.label, form.receivedBy, form.receivedByOptions, onReceivedByChange, Modifier.testTag("transfer_received_by"))
+            }
+            if (form.loadingForm) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             form.error?.let { ErrorBanner(it.asString()) }
             Button(onClick = onSubmit, enabled = form.canSubmit, modifier = Modifier.fillMaxWidth().height(50.dp)) {
                 if (form.submitting) {

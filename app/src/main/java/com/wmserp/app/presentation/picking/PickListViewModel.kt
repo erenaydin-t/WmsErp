@@ -13,14 +13,18 @@ import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PICK_QTY_TOLERANCE
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickedBatch
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.RequiredField
 import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.ScannerMode
+import com.wmserp.app.domain.model.StockReservation
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.model.isPickComplete
+import com.wmserp.app.domain.model.plusQty
+import com.wmserp.app.domain.model.totalQty
 import com.wmserp.app.domain.usecase.CompletePickRowUseCase
 import com.wmserp.app.domain.usecase.GeneratePickDocumentUseCase
 import com.wmserp.app.domain.usecase.GetPickListUseCase
@@ -50,6 +54,8 @@ import javax.inject.Inject
 data class PickLineState(
     val item: PickListItem,
     val qty: Double = item.pickedQty,
+    /** Batches counted on the device for a [PickListItem.multiBatch] row; their sum is [qty]. */
+    val batches: List<PickedBatch> = item.pickedBatches,
     /** Device clock when the row was started (hidden timer); null until the first scan/start. */
     val startedAtMillis: Long? = null,
     /** Number of server calls in flight for this row; the local count is ahead of the server while > 0. */
@@ -75,7 +81,7 @@ data class PickLineState(
     fun elapsedSeconds(now: Long): Double? = startedAtMillis?.let { ((now - it) / 1000.0).coerceAtLeast(0.0) }
 }
 
-enum class ScanAlertKind { WRONG_BATCH, NOT_ASSIGNED, ALREADY_COMPLETE, INVALID_QR, NO_STOCK }
+enum class ScanAlertKind { WRONG_BATCH, MISSING_BATCH, NOT_ASSIGNED, ALREADY_COMPLETE, INVALID_QR, NO_STOCK }
 
 /** Large red error shown after a rejected scan. */
 data class ScanAlert(val kind: ScanAlertKind, val message: UiText, val expected: String? = null, val scanned: String? = null)
@@ -92,7 +98,17 @@ enum class PickOutcome {
 /** The app-side workflow of a pick list: Draft -> Picking in progress -> Final confirmation. */
 enum class PickPhase { DRAFT, IN_PROGRESS, CONFIRMED }
 
-/** A row opened for correction before the final confirmation: the quantity can be changed, or the pick removed. */
+/** The quantity of one batch of a multi-batch row in the correction dialog. */
+data class BatchQtyEdit(val batchNo: String, val current: Double, val qtyText: String = ScanQuantityPrompt.formatQty(current)) {
+    val qty: Double get() = parseQty(qtyText)
+}
+
+private fun parseQty(text: String): Double = text.trim().replace(',', '.').toDoubleOrNull() ?: -1.0
+
+/**
+ * A row opened for correction before the final confirmation: the quantity can be changed, or the
+ * pick removed. A [multiBatch] row is corrected batch by batch (a batch set to 0 is dropped).
+ */
 data class PickLineEdit(
     val rowName: String,
     val itemCode: String,
@@ -105,10 +121,28 @@ data class PickLineEdit(
     /** Already confirmed on the server: only removing the pick (a reset) is possible. */
     val confirmed: Boolean,
     val qtyText: String = ScanQuantityPrompt.formatQty(current),
+    val multiBatch: Boolean = false,
+    val batches: List<BatchQtyEdit> = emptyList(),
 ) {
-    val qty: Double get() = qtyText.trim().replace(',', '.').toDoubleOrNull() ?: -1.0
+    val qty: Double
+        get() = if (multiBatch) {
+            if (batches.any { it.qty < 0.0 }) -1.0 else batches.sumOf { it.qty }
+        } else {
+            parseQty(qtyText)
+        }
     val isValid: Boolean get() = qty >= 0.0 && qty <= required + PICK_QTY_TOLERANCE
-    val changed: Boolean get() = isValid && kotlin.math.abs(qty - current) > PICK_QTY_TOLERANCE
+    val changed: Boolean
+        get() = isValid && if (multiBatch) {
+            batches.any { kotlin.math.abs(it.qty - it.current) > PICK_QTY_TOLERANCE }
+        } else {
+            kotlin.math.abs(qty - current) > PICK_QTY_TOLERANCE
+        }
+
+    /** The batches to save: those with a quantity left. */
+    val pickedBatches: List<PickedBatch> get() = batches.filter { it.qty > PICK_QTY_TOLERANCE }.map { PickedBatch(it.batchNo, it.qty) }
+
+    fun withBatchText(batchNo: String, text: String): PickLineEdit = copy(batches = batches.map { if (it.batchNo == batchNo) it.copy(qtyText = text) else it })
+    fun withoutBatch(batchNo: String): PickLineEdit = withBatchText(batchNo, "0")
 
     fun withText(text: String): PickLineEdit = copy(qtyText = text)
     fun plusOne(): PickLineEdit = copy(qtyText = ScanQuantityPrompt.formatQty((qty.coerceAtLeast(0.0) + 1.0).coerceAtMost(required)))
@@ -144,6 +178,8 @@ data class PickListUiState(
     /** The row being corrected (dialog), if any. */
     val editLine: PickLineEdit? = null,
     val isResetting: Boolean = false,
+    /** Stock reservation made when this picker completed the card (shown on the completion screen). */
+    val reservation: StockReservation? = null,
 ) {
     val cardStatus: PickingStatus? get() = pickList?.pickingStatus
 
@@ -290,6 +326,10 @@ class PickListViewModel @Inject constructor(
                 ),
                 highlight = outcome.row.rowName,
             )
+            is PickScanOutcome.MissingBatch -> reject(
+                ScanAlert(ScanAlertKind.MISSING_BATCH, UiText.Res(R.string.pick_missing_batch, listOf(outcome.label.itemCode)), scanned = outcome.label.raw.take(80)),
+                highlight = outcome.row.rowName,
+            )
             is PickScanOutcome.NotAssigned -> reject(
                 ScanAlert(ScanAlertKind.NOT_ASSIGNED, UiText.Res(R.string.pick_item_not_assigned, listOf(outcome.label.itemCode)))
             )
@@ -344,10 +384,13 @@ class PickListViewModel @Inject constructor(
         _uiState.update { it.copy(isCompleting = true, error = null, scanAlert = null) }
         viewModelScope.launch {
             var lastPicker = false
+            var reservation: StockReservation? = null
             for (line in pending) {
-                when (val result = completeRow(pickList, line.item, line.qty, line.elapsedSeconds(clock()))) {
+                val batches = if (line.item.multiBatch) line.batches else null
+                when (val result = completeRow(pickList, line.item, line.qty, line.elapsedSeconds(clock()), batches)) {
                     is AppResult.Success -> {
                         lastPicker = lastPicker || result.data.isLastPicker
+                        reservation = result.data.reservation ?: reservation
                         _uiState.update { it.withUpdate(result.data) }
                     }
                     is AppResult.Failure -> {
@@ -359,6 +402,7 @@ class PickListViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     isCompleting = false,
+                    reservation = reservation,
                     outcome = if (lastPicker) PickOutcome.CARD_COMPLETED else PickOutcome.TASK_COMPLETED,
                     message = UiText.Res(if (lastPicker) R.string.pick_completed_message else R.string.pick_task_completed_message),
                 )
@@ -392,6 +436,8 @@ class PickListViewModel @Inject constructor(
                     current = line.qty,
                     uom = line.item.uom,
                     confirmed = line.confirmed,
+                    multiBatch = line.item.multiBatch,
+                    batches = line.batches.map { BatchQtyEdit(it.batchNo, it.qty) },
                 ),
             )
         }
@@ -400,9 +446,11 @@ class PickListViewModel @Inject constructor(
     fun setEditQty(text: String) = _uiState.update { it.copy(editLine = it.editLine?.withText(text)) }
     fun editPlusOne() = _uiState.update { it.copy(editLine = it.editLine?.plusOne()) }
     fun editMinusOne() = _uiState.update { it.copy(editLine = it.editLine?.minusOne()) }
+    fun setEditBatchQty(batchNo: String, text: String) = _uiState.update { it.copy(editLine = it.editLine?.withBatchText(batchNo, text)) }
+    fun removeEditBatch(batchNo: String) = _uiState.update { it.copy(editLine = it.editLine?.withoutBatch(batchNo)) }
     fun cancelEdit() = _uiState.update { it.copy(editLine = null) }
 
-    /** Saves the corrected quantity (held on the server like a scan; the row's batch is kept). */
+    /** Saves the corrected quantity (held on the server like a scan; the row's batch is kept, a multi-batch row sends its corrected batches). */
     fun confirmEdit() {
         val state = _uiState.value
         val edit = state.editLine ?: return
@@ -415,6 +463,7 @@ class PickListViewModel @Inject constructor(
         }
         val now = clock()
         val newQty = edit.qty
+        val newBatches = if (edit.multiBatch) edit.pickedBatches else null
         val elapsed = line.elapsedSeconds(now)
         _uiState.update { s ->
             s.copy(
@@ -424,18 +473,22 @@ class PickListViewModel @Inject constructor(
                 message = null,
                 activeRowName = edit.rowName,
                 lines = s.lines.map {
-                    if (it.item.rowName == edit.rowName) it.copy(qty = newQty, startedAtMillis = it.startedAtMillis ?: now, pendingSyncs = it.pendingSyncs + 1, highlighted = true) else it.copy(highlighted = false)
+                    if (it.item.rowName == edit.rowName) {
+                        it.copy(qty = newQty, batches = newBatches ?: it.batches, startedAtMillis = it.startedAtMillis ?: now, pendingSyncs = it.pendingSyncs + 1, highlighted = true)
+                    } else {
+                        it.copy(highlighted = false)
+                    }
                 },
             )
         }
         viewModelScope.launch {
-            when (val result = saveRowProgress(pickList, line.item, newQty, null, elapsed)) {
+            when (val result = saveRowProgress(pickList, line.item, newQty, null, elapsed, newBatches)) {
                 is AppResult.Success -> _uiState.update { s ->
                     s.finishSync(edit.rowName).withUpdate(result.data).copy(message = UiText.Res(R.string.pick_qty_updated, listOf(edit.itemCode, newQty.format())))
                 }
                 is AppResult.Failure -> _uiState.update { s ->
                     s.finishSync(edit.rowName).let { m ->
-                        m.copy(error = result.error.toUiText(), lines = m.lines.map { if (it.item.rowName == edit.rowName && !it.syncing) it.copy(qty = it.item.pickedQty) else it })
+                        m.copy(error = result.error.toUiText(), lines = m.lines.map { if (it.item.rowName == edit.rowName && !it.syncing) it.copy(qty = it.item.pickedQty, batches = it.item.pickedBatches) else it })
                     }
                 }
             }
@@ -465,7 +518,7 @@ class PickListViewModel @Inject constructor(
                     merged.copy(
                         isResetting = false,
                         activeRowName = edit.rowName,
-                        lines = merged.lines.map { if (it.item.rowName == edit.rowName) it.copy(qty = 0.0, startedAtMillis = null, highlighted = true) else it.copy(highlighted = false) },
+                        lines = merged.lines.map { if (it.item.rowName == edit.rowName) it.copy(qty = 0.0, batches = emptyList(), startedAtMillis = null, highlighted = true) else it.copy(highlighted = false) },
                         message = UiText.Res(R.string.pick_removed, listOf(edit.itemCode)),
                     )
                 }
@@ -545,7 +598,7 @@ class PickListViewModel @Inject constructor(
         if (answers.isEmpty() || answers.values.any { it.isBlank() }) return
         _uiState.update { it.copy(requiredFields = emptyList()) }
         viewModelScope.launch {
-            saveFieldDefaults(answers)
+            saveFieldDefaults(answers.filterKeys { key -> state.requiredFields.firstOrNull { it.key == key }?.remember != false })
             generateDocument(answers)
         }
     }
@@ -576,7 +629,8 @@ class PickListViewModel @Inject constructor(
                     rowName = rowName,
                     itemCode = match.row.itemCode,
                     itemName = match.row.itemName,
-                    batchNo = match.row.batchNo,
+                    // A multi-batch row shows the batch just scanned: that is where the quantity goes.
+                    batchNo = match.row.batchNo ?: match.label.batchNo,
                     remaining = remaining,
                     uom = match.row.uom,
                 ),
@@ -591,8 +645,11 @@ class PickListViewModel @Inject constructor(
     private fun applyScan(pickList: PickList, match: PickScanOutcome.Match, add: Double) {
         val now = clock()
         val rowName = match.row.rowName
+        val multiBatch = match.row.multiBatch
+        val scannedBatch = match.label.batchNo
         var newQty = 0.0
         var added = 0.0
+        var newBatches: List<PickedBatch>? = null
         var elapsed: Double? = null
         _uiState.update { state ->
             val updatedLines = state.lines.map { line ->
@@ -601,7 +658,13 @@ class PickListViewModel @Inject constructor(
                     newQty = (line.qty + add).coerceAtMost(line.item.requiredQty)
                     added = newQty - line.qty
                     elapsed = ((now - started) / 1000.0).coerceAtLeast(0.0)
-                    line.copy(qty = newQty, startedAtMillis = started, pendingSyncs = line.pendingSyncs + 1, highlighted = true)
+                    // A multi-batch row counts the quantity on the scanned batch and sends the whole list.
+                    val batches = if (multiBatch && scannedBatch != null) line.batches.plusQty(scannedBatch, added) else line.batches
+                    if (multiBatch) {
+                        newBatches = batches
+                        newQty = batches.totalQty
+                    }
+                    line.copy(qty = newQty, batches = batches, startedAtMillis = started, pendingSyncs = line.pendingSyncs + 1, highlighted = true)
                 } else {
                     line.copy(highlighted = false)
                 }
@@ -615,7 +678,7 @@ class PickListViewModel @Inject constructor(
             )
         }
         viewModelScope.launch {
-            when (val result = saveRowProgress(pickList, match.row, newQty, match.label, elapsed)) {
+            when (val result = saveRowProgress(pickList, match.row, newQty, match.label, elapsed, newBatches)) {
                 is AppResult.Success -> {
                     val update = result.data
                     _uiState.update { state ->
@@ -632,7 +695,10 @@ class PickListViewModel @Inject constructor(
                     _uiState.update { state ->
                         // Roll the local count back so the device never shows more than the server holds.
                         state.finishSync(rowName).let { s ->
-                            s.copy(error = if (error.isInsufficientStock) null else error.toUiText(), lines = s.lines.map { if (it.item.rowName == rowName && !it.syncing) it.copy(qty = it.item.pickedQty) else it })
+                            s.copy(
+                                error = if (error.isInsufficientStock) null else error.toUiText(),
+                                lines = s.lines.map { if (it.item.rowName == rowName && !it.syncing) it.copy(qty = it.item.pickedQty, batches = it.item.pickedBatches) else it },
+                            )
                         }
                     }
                     // No stock for that batch in the row's warehouse: the same large red alert as a wrong batch.
@@ -669,9 +735,12 @@ class PickListViewModel @Inject constructor(
         val previous = lines.associateBy { it.item.rowName }
         val merged = fresh.myItems.map { item ->
             val old = previous[item.rowName]
+            // A row with calls in flight keeps the device's count while it is ahead of the server.
+            val local = old?.takeIf { it.syncing }
             PickLineState(
                 item = item,
-                qty = if (old != null && old.syncing) maxOf(item.pickedQty, old.qty) else item.pickedQty,
+                qty = if (local != null) maxOf(item.pickedQty, local.qty) else item.pickedQty,
+                batches = if (local != null && local.batches.totalQty >= item.pickedBatches.totalQty) local.batches else item.pickedBatches,
                 startedAtMillis = old?.startedAtMillis ?: if (item.rowStatus == PickRowStatus.PICKING) clock() else null,
                 pendingSyncs = old?.pendingSyncs ?: 0,
                 highlighted = old?.highlighted ?: false,

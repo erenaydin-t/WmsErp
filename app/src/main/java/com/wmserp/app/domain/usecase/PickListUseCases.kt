@@ -8,11 +8,13 @@ import com.wmserp.app.domain.model.PICK_QTY_TOLERANCE
 import com.wmserp.app.domain.model.PickList
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickedBatch
 import com.wmserp.app.domain.model.PickerKpis
 import com.wmserp.app.domain.model.QrLabel
 import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.WmsQrKeys
 import com.wmserp.app.domain.model.isPickComplete
+import com.wmserp.app.domain.model.totalQty
 import com.wmserp.app.domain.repository.PickListRepository
 import com.wmserp.app.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.first
@@ -71,7 +73,9 @@ class StartPickRowUseCase @Inject constructor(private val repository: PickListRe
 /**
  * Syncs a partial quantity; the scanned label (item + batch) is forwarded for server-side validation
  * (item, batch, expiry and stock in the row's warehouse). The quantity is *held*: the server keeps
- * the row editable until [CompletePickRowUseCase], the picker's final confirmation.
+ * the row editable until [CompletePickRowUseCase], the picker's final confirmation. A
+ * [PickListItem.multiBatch] row sends its complete [batches] list instead of one batch; the
+ * quantity is their sum.
  */
 class SavePickRowProgressUseCase @Inject constructor(private val repository: PickListRepository) {
     suspend operator fun invoke(
@@ -80,10 +84,13 @@ class SavePickRowProgressUseCase @Inject constructor(private val repository: Pic
         pickedQty: Double,
         label: QrLabel? = null,
         elapsedSeconds: Double? = null,
+        batches: List<PickedBatch>? = null,
     ): AppResult<RowUpdate> {
         if (!row.isMine) return AppResult.Failure(rowNotAssigned(row))
-        validateRowQty(row, pickedQty)?.let { return AppResult.Failure(it) }
-        return repository.saveRowProgress(pickList.name, row.rowName, pickedQty, label?.itemCode, label?.batchNo, elapsedSeconds, hold = true)
+        val qty = batches?.totalQty ?: pickedQty
+        validateRowQty(row, qty)?.let { return AppResult.Failure(it) }
+        val batchNo = if (batches == null) label?.batchNo else null
+        return repository.saveRowProgress(pickList.name, row.rowName, qty, label?.itemCode, batchNo, elapsedSeconds, hold = true, batches = batches)
     }
 }
 
@@ -100,26 +107,31 @@ class ResetPickRowUseCase @Inject constructor(private val repository: PickListRe
     }
 }
 
-/** Marks a row as picked; the quantity must equal the required quantity. */
+/**
+ * Marks a row as picked; the quantity must equal the required quantity (the row's Picked Qty). A
+ * [PickListItem.multiBatch] row sends its [batches], which the server records in the row's batch bundle.
+ */
 class CompletePickRowUseCase @Inject constructor(private val repository: PickListRepository) {
     suspend operator fun invoke(
         pickList: PickList,
         row: PickListItem,
         pickedQty: Double,
         elapsedSeconds: Double? = null,
+        batches: List<PickedBatch>? = null,
     ): AppResult<RowUpdate> {
         if (!row.isMine) return AppResult.Failure(rowNotAssigned(row))
-        validateRowQty(row, pickedQty)?.let { return AppResult.Failure(it) }
-        if (!isPickComplete(pickedQty, row.requiredQty)) {
+        val qty = batches?.totalQty ?: pickedQty
+        validateRowQty(row, qty)?.let { return AppResult.Failure(it) }
+        if (!isPickComplete(qty, row.requiredQty)) {
             return AppResult.Failure(
                 AppError.Validation(
-                    "${row.itemCode}: ${pickedQty.trimZeros()} of ${row.requiredQty.trimZeros()} picked",
+                    "${row.itemCode}: ${qty.trimZeros()} of ${row.requiredQty.trimZeros()} picked",
                     ErrorCode.ROW_INCOMPLETE,
-                    listOf(row.itemCode, pickedQty.trimZeros(), row.requiredQty.trimZeros()),
+                    listOf(row.itemCode, qty.trimZeros(), row.requiredQty.trimZeros()),
                 )
             )
         }
-        return repository.completeRow(pickList.name, row.rowName, pickedQty, null, row.batchNo, elapsedSeconds)
+        return repository.completeRow(pickList.name, row.rowName, qty, null, if (batches == null) row.batchNo else null, elapsedSeconds, batches)
     }
 }
 
@@ -156,6 +168,9 @@ sealed class PickScanOutcome {
     /** Item matches but the batch differs from the one ERPNext allocated to the row. */
     data class WrongBatch(val row: PickListItem, val expected: String, val scanned: String?, val label: QrLabel) : PickScanOutcome()
 
+    /** A row that takes several batches needs to know which one: the label carries no batch. */
+    data class MissingBatch(val row: PickListItem, val label: QrLabel) : PickScanOutcome()
+
     /** No row assigned to the picker carries this item. */
     data class NotAssigned(val label: QrLabel) : PickScanOutcome()
 
@@ -191,11 +206,21 @@ class ValidatePickScanUseCase @Inject constructor() {
                 ?: return PickScanOutcome.AlreadyComplete(exact.first(), label)
             return PickScanOutcome.Match(row, label)
         }
+        byItem.firstOrNull { it.multiBatch && label.batchNo == null }?.let { multi ->
+            val row = byItem.firstOrNull { it.multiBatch && it.rowName == activeRowName } ?: byItem.firstOrNull { it.multiBatch && !complete(it) } ?: multi
+            return PickScanOutcome.MissingBatch(row, label)
+        }
         val row = byItem.firstOrNull { it.rowName == activeRowName } ?: byItem.firstOrNull { !complete(it) } ?: byItem.first()
         return PickScanOutcome.WrongBatch(row, row.batchNo.orEmpty(), label.batchNo, label)
     }
 
-    /** Rows without an allocated batch accept any label of the item; batch rows need the exact batch. */
-    private fun batchMatches(row: PickListItem, label: QrLabel): Boolean =
-        row.batchNo == null || label.batchNo?.equals(row.batchNo, ignoreCase = true) == true
+    /**
+     * Rows without an allocated batch accept any label of the item (a [PickListItem.multiBatch] row
+     * any label that names a batch: it is picked from several); batch rows need the exact batch.
+     */
+    private fun batchMatches(row: PickListItem, label: QrLabel): Boolean = when {
+        row.multiBatch -> !label.batchNo.isNullOrBlank()
+        row.batchNo == null -> true
+        else -> label.batchNo?.equals(row.batchNo, ignoreCase = true) == true
+    }
 }

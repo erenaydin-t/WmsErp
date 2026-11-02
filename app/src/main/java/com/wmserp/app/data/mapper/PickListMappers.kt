@@ -8,6 +8,8 @@ import com.wmserp.app.data.remote.dto.RowUpdateDto
 import com.wmserp.app.data.remote.dto.WmsSettingsDto
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
+import com.wmserp.app.domain.model.PickedBatch
+import com.wmserp.app.domain.model.StockReservation
 import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickListPurpose
 import com.wmserp.app.domain.model.PickRowStatus
@@ -74,6 +76,10 @@ fun PickListItemDto.toDomain(): PickListItem = PickListItem(
     rowCompletedAt = rowCompletedAt,
     durationSeconds = durationSeconds,
     batchFromWms = batchFromWms != 0,
+    multiBatch = multiBatch != 0,
+    pickedBatches = batches.filter { it.batchNo.isNotBlank() }.map { PickedBatch(it.batchNo, it.qty, it.expiryDate?.takeIf { d -> d.isNotBlank() }) },
+    stockQty = stockQty ?: requiredQty,
+    reservedQty = reservedQty,
 )
 
 fun RowUpdateDto.toDomain(): RowUpdate = RowUpdate(
@@ -82,6 +88,7 @@ fun RowUpdateDto.toDomain(): RowUpdate = RowUpdate(
     rowCompleted = rowCompleted,
     cardCompleted = cardCompleted,
     isLastPicker = isLastPicker,
+    reservation = reservation?.let { StockReservation(it.reserved, it.entries, it.error?.takeIf { e -> e.isNotBlank() }) },
 )
 
 fun WmsSettingsDto.toDomain(): WmsQrKeys = WmsQrKeys(

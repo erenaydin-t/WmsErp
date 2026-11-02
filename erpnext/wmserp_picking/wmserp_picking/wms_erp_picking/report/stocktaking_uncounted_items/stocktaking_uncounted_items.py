@@ -35,6 +35,9 @@ def execute(filters=None):
         order_by="location asc, item_name asc, batch_no asc",
         limit_page_length=0,
     )
+    # Uncounted zero-stock rows are optional (*Include Zero Stock*): not work left unless asked for.
+    if not filters.get("include_zero_stock"):
+        rows = [r for r in rows if not rules.is_optional_zero(r)]
     totals = frappe.get_doc("Stocktaking Session", filters.session).totals()
     message = _("Total {0} · Counted {1} · Not counted {2} · Recount required {3}").format(
         totals["total_items"], totals["counted_items"], totals["uncounted_items"], totals["recount_required"]

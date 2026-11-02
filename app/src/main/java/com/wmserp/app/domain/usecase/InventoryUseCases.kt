@@ -3,13 +3,16 @@ package com.wmserp.app.domain.usecase
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.model.CreatedTransfer
 import com.wmserp.app.domain.model.Item
-import com.wmserp.app.domain.model.StockEntry
-import com.wmserp.app.domain.model.StockEntryItem
-import com.wmserp.app.domain.model.StockEntryType
 import com.wmserp.app.domain.model.StockLevel
+import com.wmserp.app.domain.model.TransferForm
+import com.wmserp.app.domain.model.TransferRequest
 import com.wmserp.app.domain.model.Warehouse
 import com.wmserp.app.domain.repository.InventoryRepository
+import com.wmserp.app.domain.repository.SettingsRepository
+import com.wmserp.app.domain.repository.StockTransferRepository
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 class SearchItemsUseCase @Inject constructor(private val inventoryRepository: InventoryRepository) {
@@ -27,47 +30,30 @@ class SearchWarehousesUseCase @Inject constructor(private val inventoryRepositor
         inventoryRepository.searchWarehouses(query.trim(), limit)
 }
 
-/** Creates a Material Transfer / Receipt / Issue stock entry after validating the input. */
-class CreateStockEntryUseCase @Inject constructor(private val inventoryRepository: InventoryRepository) {
-    suspend operator fun invoke(
-        type: StockEntryType,
-        itemCode: String,
-        qty: Double,
-        sourceWarehouse: String?,
-        targetWarehouse: String?,
-        submit: Boolean = true,
-        remarks: String? = null,
-    ): AppResult<StockEntry> {
-        if (itemCode.isBlank()) return AppResult.Failure(AppError.Validation("Item is required", ErrorCode.ITEM_REQUIRED))
-        if (qty <= 0.0) return AppResult.Failure(AppError.Validation("Quantity must be greater than zero", ErrorCode.QTY_MUST_BE_POSITIVE))
-        val source = sourceWarehouse?.trim()?.ifBlank { null }
-        val target = targetWarehouse?.trim()?.ifBlank { null }
-        when (type) {
-            StockEntryType.MATERIAL_TRANSFER -> {
-                if (source == null || target == null) {
-                    return AppResult.Failure(AppError.Validation("Source and target warehouses are required", ErrorCode.WAREHOUSES_REQUIRED))
-                }
-                if (source == target) return AppResult.Failure(AppError.Validation("Source and target must differ", ErrorCode.WAREHOUSES_MUST_DIFFER))
-            }
-            StockEntryType.MATERIAL_RECEIPT -> if (target == null) {
-                return AppResult.Failure(AppError.Validation("Target warehouse is required", ErrorCode.TARGET_WAREHOUSE_REQUIRED))
-            }
-            StockEntryType.MATERIAL_ISSUE -> if (source == null) {
-                return AppResult.Failure(AppError.Validation("Source warehouse is required", ErrorCode.SOURCE_WAREHOUSE_REQUIRED))
-            }
+/** What the scan-menu transfer sheet must ask on this site (Department, Received By, batch handling). */
+class GetTransferFormUseCase @Inject constructor(private val repository: StockTransferRepository) {
+    suspend operator fun invoke(itemCode: String): AppResult<TransferForm> = repository.getTransferForm(itemCode.trim())
+}
+
+/**
+ * Creates the scan-menu Material Transfer as a **draft** on the server (department, receiving
+ * employee, batches and the site's required fields handled there). Remembered answers to other
+ * required fields are sent along; the user's own choices win.
+ */
+class CreateStockTransferUseCase @Inject constructor(
+    private val repository: StockTransferRepository,
+    private val settingsRepository: SettingsRepository,
+) {
+    suspend operator fun invoke(request: TransferRequest, fieldValues: Map<String, String> = emptyMap()): AppResult<CreatedTransfer> {
+        if (request.itemCode.isBlank()) return AppResult.Failure(AppError.Validation("Item is required", ErrorCode.ITEM_REQUIRED))
+        if (request.qty <= 0.0) return AppResult.Failure(AppError.Validation("Quantity must be greater than zero", ErrorCode.QTY_MUST_BE_POSITIVE))
+        val source = request.sourceWarehouse.trim()
+        val target = request.targetWarehouse.trim()
+        if (source.isEmpty() || target.isEmpty()) {
+            return AppResult.Failure(AppError.Validation("Source and target warehouses are required", ErrorCode.WAREHOUSES_REQUIRED))
         }
-        val entry = StockEntry(
-            type = type,
-            items = listOf(
-                StockEntryItem(
-                    itemCode = itemCode.trim(),
-                    qty = qty,
-                    sourceWarehouse = if (type == StockEntryType.MATERIAL_RECEIPT) null else source,
-                    targetWarehouse = if (type == StockEntryType.MATERIAL_ISSUE) null else target,
-                )
-            ),
-            remarks = remarks,
-        )
-        return inventoryRepository.createStockEntry(entry, submit)
+        if (source == target) return AppResult.Failure(AppError.Validation("Source and target must differ", ErrorCode.WAREHOUSES_MUST_DIFFER))
+        val values = settingsRepository.documentFieldDefaults.first() + fieldValues
+        return repository.createTransfer(request.copy(itemCode = request.itemCode.trim(), sourceWarehouse = source, targetWarehouse = target), values)
     }
 }

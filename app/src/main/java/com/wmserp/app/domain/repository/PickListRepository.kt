@@ -3,6 +3,7 @@ package com.wmserp.app.domain.repository
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.GeneratedDocument
 import com.wmserp.app.domain.model.PickList
+import com.wmserp.app.domain.model.PickedBatch
 import com.wmserp.app.domain.model.PickerKpis
 import com.wmserp.app.domain.model.RowUpdate
 import com.wmserp.app.domain.model.WmsQrKeys
@@ -17,6 +18,7 @@ interface PickListRepository {
     /**
      * Saves a partial quantity. With [hold] the server keeps the row *Picking* even at the required
      * quantity, so it stays editable until [completeRow] (the picker's final confirmation).
+     * [batches] is the complete batch list of a row that takes several batches (the quantity is their sum).
      */
     suspend fun saveRowProgress(
         name: String,
@@ -26,6 +28,7 @@ interface PickListRepository {
         batchNo: String? = null,
         elapsedSeconds: Double? = null,
         hold: Boolean = false,
+        batches: List<PickedBatch>? = null,
     ): AppResult<RowUpdate>
 
     /** Clears the row's quantity, timers and a batch assigned by scan; refused once the document exists. */
@@ -37,6 +40,7 @@ interface PickListRepository {
         itemCode: String? = null,
         batchNo: String? = null,
         elapsedSeconds: Double? = null,
+        batches: List<PickedBatch>? = null,
     ): AppResult<RowUpdate>
     /**
      * Creates the Delivery Note / Stock Entry of a picked card. [values] answers required fields the

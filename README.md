@@ -56,9 +56,12 @@ amounts, costs or values** (no field of the kind is requested from ERPNext).
    Activity Heatmap (7 days × 3h blocks), Stock Aging (ERPNext *Stock Ageing* report; quantities per age range,
    the value columns are ignored; a row opens the item popup).
 4. **Scan** – *Item / Batch*, *Warehouse* and *Receipt* targets, viewfinder with status text, manual entry,
-   result cards, stock transfer (Material Transfer Stock Entry). Scanning a **batch** label (the JSON QR of a
-   batch, or a plain batch number) shows the batch: item, expiry, manufacturing date, supplier and the stock
-   per warehouse; an item label or barcode shows the item and its stock.
+   result cards and *Move stock* on an item or a batch: a **draft** Material Transfer Stock Entry created by the
+   backend (`stock_transfer.create_transfer`) with the department and the *Received By (Employee)* the user
+   picks in the sheet, the scanned batch or, for a batch tracked item, batches taken automatically in ERPNext's
+   picking order (FEFO / FIFO), and the site's other required fields asked once like everywhere else.
+   Scanning a **batch** label (the JSON QR of a batch, or a plain batch number) shows the batch: item, expiry,
+   manufacturing date, supplier and the stock per warehouse; an item label or barcode shows the item and its stock.
 5. **Profile / Settings** – read-only account card (name, email, username, phone, mobile, location, roles as
    stored in ERPNext; personal details are maintained there, never edited from the app), password change,
    scanner preferences, app language (System / English / فارسی), app updates, sign out.
@@ -77,7 +80,8 @@ amounts, costs or values** (no field of the kind is requested from ERPNext).
    picked row by row through strict JSON QR labels, with hidden timers and a context-aware "Create Delivery
    Note / Material Transfer / Material Issue" button for the last picker (see [Pick List workflow](#pick-list-workflow)).
 8. **Orders → Count** – the counter's open *Stocktaking Sessions*: scan-to-count with batch and expiry, the ERP
-   quantity (unless the session is blind), an immediate verdict (accepted / second count needed / manager review),
+   quantity (unless the session is blind: then hidden from everyone in the app), zero-stock rows behind a
+   *Show zero-stock items* filter (they are optional), an immediate verdict (accepted / second count needed / manager review),
    counts saved locally first and synced in the background (see [Stocktaking workflow](#stocktaking-workflow)).
 
 **Lists and popups.** A KPI card is a button: *Total Items* lists every active item, *Pending Orders* the
@@ -115,7 +119,8 @@ All calls go through `ErpNextApi` (`app/src/main/java/com/wmserp/app/data/remote
 | Counts | `frappe.client.get_count` (dashboard and analytics KPIs are document counts; no sums of amounts) |
 | Receiving | `wmserp_picking.api.purchase_receipt.*` – `get_receivable`, `get_receipt`, `receive` (counts with per-batch `batches` + `values` for required fields, `submit`, `remove_unreceived`), `find_batch`, `create_batch` (see [Receiving workflow](#receiving-workflow-purchase-receipts)) |
 | Batch scan | `GET /api/resource/Batch/{name}` (fallback `batch_id`) + `erpnext.stock.doctype.batch.batch.get_batch_qty` (`batch_no`) |
-| Required fields | answered through the `missing_fields` reply of `receive` / `generate_document`; Link values from `GET /api/resource/{doctype}` |
+| Required fields | answered through the `missing_fields` reply of `receive` / `generate_document` / `create_transfer`; Link values from `GET /api/resource/{doctype}`; fields flagged `remember: 0` (*Received By*) are asked on every document and never stored |
+| Stock transfer | `wmserp_picking.api.stock_transfer.*` – `get_transfer_form` (which choices the site needs), `create_transfer` (draft Material Transfer: `department`, `received_by`, `batch_no`, `values`) |
 | Submit | `frappe.client.submit` |
 | Reports | `frappe.desk.query_report.run` (Stock Ageing; filter `range` "30, 60, 90", `ignore_prepared_report=1`) |
 | Picking | `wmserp_picking.api.pick_list.*` – `get_settings`, `get_my_pick_lists`, `get_pick_list`, `start_row`, `save_row_progress`, `complete_row`, `generate_document` (`values` for required fields), `get_picker_kpis` (see [Pick List workflow](#pick-list-workflow)) |
@@ -235,6 +240,14 @@ document is created only after that confirmation.
   Bin quantity for items without batches). A batch with no stock there is refused with a large red *No stock
   for this batch* alert and nothing is recorded; `generate_document` repeats the check for every picked row,
   so a Delivery Note that could not be submitted is never created.
+* **Picked Qty is the target.** A row's required quantity is its *Picked Qty (in Stock UOM)* as the Senior
+  Warehouse User set it on the Pick List; the app never overwrites that field.
+* **Several batches per row.** A batch tracked row submitted without a batch is picked from any number of
+  batches (each scan adds to that batch); the final confirmation records them in the row's Serial and Batch
+  Bundle and the document gets one row per batch. When the last row of a *Delivery* card is confirmed and
+  stock reservation is enabled, the picked batches are reserved for the Sales Order.
+* **Material Issue / Transfer.** A Material Issue takes the department and *Received By (Employee)* of its
+  Material Request; a Material Transfer asks the picker who receives it.
 * **The last-picker rule.** When a row reaches its required quantity the backend marks it *Picked* and,
   under a row lock, checks whether every row of the card is picked. Exactly one request observes that
   transition and is answered with `is_last_picker: true`; that picker gets the document button, everyone

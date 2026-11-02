@@ -18,5 +18,6 @@ frappe.query_reports["Stocktaking Uncounted Items"] = {
 		{ fieldname: "counter", label: __("Counter"), fieldtype: "Link", options: "User" },
 		{ fieldname: "item_group", label: __("Item Group"), fieldtype: "Link", options: "Item Group" },
 		{ fieldname: "location", label: __("Location contains"), fieldtype: "Data" },
+		{ fieldname: "include_zero_stock", label: __("Show optional zero-stock rows"), fieldtype: "Check", default: 0 },
 	],
 };

@@ -169,9 +169,18 @@ data class StocktakingItem(
     val hasBatchNo: Boolean = false,
     val addedDuringCount: Boolean = false,
     val modified: String? = null,
+    /** ERP quantity zero (snapshotted with *Include Zero Stock*); known even in a blind count. */
+    val zeroStock: Boolean = false,
 ) {
     /** The latest quantity entered, whatever its type. */
     val lastCount: Double? get() = recountQty ?: count2 ?: count1
+
+    /**
+     * A zero-stock row nobody counted: it may be counted when stock is found, but it is not part of
+     * the work (hidden unless the counter shows zero-stock items; never blocks closing).
+     */
+    val isOptionalZero: Boolean
+        get() = zeroStock && (status == CountItemStatus.NOT_COUNTED || status == CountItemStatus.ASSIGNED || status == CountItemStatus.COUNTING)
 }
 
 data class StocktakingItemsPage(

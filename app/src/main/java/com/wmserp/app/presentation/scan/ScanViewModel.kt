@@ -5,16 +5,22 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wmserp.app.R
 import com.wmserp.app.core.scanner.ScannerController
+import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScanTarget
 import com.wmserp.app.domain.model.ScannedCode
 import com.wmserp.app.domain.model.ScannerMode
-import com.wmserp.app.domain.model.StockEntryType
+import com.wmserp.app.domain.model.RequiredField
+import com.wmserp.app.domain.model.TransferForm
+import com.wmserp.app.domain.model.TransferRequest
 import com.wmserp.app.domain.model.Warehouse
-import com.wmserp.app.domain.usecase.CreateStockEntryUseCase
+import com.wmserp.app.domain.usecase.CreateStockTransferUseCase
+import com.wmserp.app.domain.usecase.GetTransferFormUseCase
 import com.wmserp.app.domain.usecase.LookupScanUseCase
+import com.wmserp.app.domain.usecase.SaveDocumentFieldDefaultsUseCase
+import com.wmserp.app.domain.usecase.SearchLinkValuesUseCase
 import com.wmserp.app.domain.usecase.ObserveScannerSettingsUseCase
 import com.wmserp.app.domain.usecase.ScanCodeSanitizer
 import com.wmserp.app.domain.usecase.SearchWarehousesUseCase
@@ -38,18 +44,43 @@ data class ScanHistoryEntry(
     val timeMillis: Long,
 )
 
+/**
+ * The scan-menu transfer sheet. The draft Material Transfer is created on the server; the user
+ * chooses the department and who receives it (when the site's Stock Entry has those fields). A
+ * scanned batch is moved as is; a batch tracked item scanned without a batch gets its batches
+ * automatically.
+ */
 data class TransferFormState(
     val visible: Boolean = false,
+    val itemCode: String = "",
+    val itemName: String = "",
+    /** The scanned batch (transfer opened from a batch label); null: none, or picked automatically. */
+    val batchNo: String? = null,
     val fromWarehouse: String = "",
     val toWarehouse: String = "",
     val qtyText: String = "1",
     val warehouses: List<Warehouse> = emptyList(),
     val loadingWarehouses: Boolean = false,
+    val form: TransferForm? = null,
+    val loadingForm: Boolean = false,
+    val department: String = "",
+    val departmentOptions: List<String> = emptyList(),
+    val receivedBy: String = "",
+    val receivedByOptions: List<String> = emptyList(),
     val submitting: Boolean = false,
     val error: UiText? = null,
+    /** Other fields the site requires that still need a value (dialog while non-empty). */
+    val requiredFields: List<RequiredField> = emptyList(),
+    val requiredFieldAnswers: Map<String, String> = emptyMap(),
+    val linkOptions: Map<String, List<String>> = emptyMap(),
 ) {
     val qty: Double get() = qtyText.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val canSubmit: Boolean get() = !submitting && fromWarehouse.isNotBlank() && toWarehouse.isNotBlank() && fromWarehouse != toWarehouse && qty > 0
+    val needsDepartment: Boolean get() = form?.department != null
+    val needsReceivedBy: Boolean get() = form?.receivedBy != null
+    val autoBatches: Boolean get() = batchNo == null && form?.hasBatchNo == true
+    val canSubmit: Boolean
+        get() = !submitting && !loadingForm && form != null && fromWarehouse.isNotBlank() && toWarehouse.isNotBlank() && fromWarehouse != toWarehouse && qty > 0 &&
+            (!needsDepartment || department.isNotBlank()) && (!needsReceivedBy || receivedBy.isNotBlank())
 }
 
 data class ScanUiState(
@@ -81,7 +112,10 @@ data class ScanUiState(
 class ScanViewModel @Inject constructor(
     private val lookupScan: LookupScanUseCase,
     private val searchWarehouses: SearchWarehousesUseCase,
-    private val createStockEntry: CreateStockEntryUseCase,
+    private val getTransferForm: GetTransferFormUseCase,
+    private val createStockTransfer: CreateStockTransferUseCase,
+    private val searchLinkValues: SearchLinkValuesUseCase,
+    private val saveFieldDefaults: SaveDocumentFieldDefaultsUseCase,
     observeScannerSettings: ObserveScannerSettingsUseCase,
     private val scanner: ScannerController,
     savedStateHandle: SavedStateHandle,
@@ -98,6 +132,8 @@ class ScanViewModel @Inject constructor(
 
     private var lookupJob: Job? = null
     private var cameraOverride: Boolean? = null
+    private var departmentSearch: Job? = null
+    private var receivedBySearch: Job? = null
 
     init {
         viewModelScope.launch {
@@ -181,13 +217,38 @@ class ScanViewModel @Inject constructor(
 
     // ---- Stock transfer sheet -------------------------------------------------------------
 
+    /** Opens the transfer sheet for the scanned item, or for the scanned batch (moved as is). */
     fun openTransfer() {
-        val item = (_uiState.value.result as? ScanLookup.ItemFound) ?: return
-        val from = item.stock.maxByOrNull { it.actualQty }?.warehouse.orEmpty()
-        _uiState.update { it.copy(transfer = TransferFormState(visible = true, fromWarehouse = from, loadingWarehouses = true)) }
+        val sheet = when (val result = _uiState.value.result) {
+            is ScanLookup.ItemFound -> TransferFormState(
+                visible = true,
+                itemCode = result.item.code,
+                itemName = result.item.name,
+                fromWarehouse = result.stock.maxByOrNull { it.actualQty }?.warehouse.orEmpty(),
+            )
+            is ScanLookup.BatchFound -> TransferFormState(
+                visible = true,
+                itemCode = result.item?.code ?: result.batch.itemCode,
+                itemName = result.item?.name ?: result.batch.itemName ?: result.batch.itemCode,
+                batchNo = result.batch.name,
+                fromWarehouse = result.stock.maxByOrNull { it.qty }?.warehouse.orEmpty(),
+            )
+            else -> return
+        }
+        _uiState.update { it.copy(transfer = sheet.copy(loadingWarehouses = true, loadingForm = true)) }
         viewModelScope.launch {
             val warehouses = searchWarehouses("").getOrNull().orEmpty()
             _uiState.update { it.copy(transfer = it.transfer.copy(warehouses = warehouses, loadingWarehouses = false)) }
+        }
+        viewModelScope.launch {
+            when (val form = getTransferForm(sheet.itemCode)) {
+                is AppResult.Success -> {
+                    _uiState.update { it.copy(transfer = it.transfer.copy(form = form.data, loadingForm = false)) }
+                    form.data.department?.let { searchDepartments("") }
+                    form.data.receivedBy?.let { searchReceivers("") }
+                }
+                is AppResult.Failure -> _uiState.update { it.copy(transfer = it.transfer.copy(loadingForm = false, error = form.error.toUiText())) }
+            }
         }
     }
 
@@ -196,38 +257,112 @@ class ScanViewModel @Inject constructor(
     fun onTransferToChange(value: String) = _uiState.update { it.copy(transfer = it.transfer.copy(toWarehouse = value, error = null)) }
     fun onTransferQtyChange(value: String) = _uiState.update { it.copy(transfer = it.transfer.copy(qtyText = value, error = null)) }
 
-    fun submitTransfer() {
+    fun onTransferDepartmentChange(value: String) {
+        _uiState.update { it.copy(transfer = it.transfer.copy(department = value, error = null)) }
+        searchDepartments(value)
+    }
+
+    fun onTransferReceivedByChange(value: String) {
+        _uiState.update { it.copy(transfer = it.transfer.copy(receivedBy = value, error = null)) }
+        searchReceivers(value)
+    }
+
+    private fun searchDepartments(query: String) {
+        val doctype = _uiState.value.transfer.form?.department?.options ?: return
+        departmentSearch?.cancel()
+        departmentSearch = viewModelScope.launch {
+            searchLinkValues(doctype, query).getOrNull()?.let { names -> _uiState.update { it.copy(transfer = it.transfer.copy(departmentOptions = names)) } }
+        }
+    }
+
+    private fun searchReceivers(query: String) {
+        val doctype = _uiState.value.transfer.form?.receivedBy?.options ?: return
+        receivedBySearch?.cancel()
+        receivedBySearch = viewModelScope.launch {
+            searchLinkValues(doctype, query).getOrNull()?.let { names -> _uiState.update { it.copy(transfer = it.transfer.copy(receivedByOptions = names)) } }
+        }
+    }
+
+    /** Creates the draft Material Transfer on the server. */
+    fun submitTransfer() = submitTransfer(fieldValues = emptyMap())
+
+    private fun submitTransfer(fieldValues: Map<String, String>) {
         val state = _uiState.value
-        val item = (state.result as? ScanLookup.ItemFound)?.item ?: return
         val form = state.transfer
         if (!form.canSubmit) return
         _uiState.update { it.copy(transfer = it.transfer.copy(submitting = true, error = null)) }
         viewModelScope.launch {
-            val result = createStockEntry(
-                type = StockEntryType.MATERIAL_TRANSFER,
-                itemCode = item.code,
+            val request = TransferRequest(
+                itemCode = form.itemCode,
                 qty = form.qty,
                 sourceWarehouse = form.fromWarehouse,
                 targetWarehouse = form.toWarehouse,
-                submit = true,
-                remarks = "Created from WMS ERP mobile scan",
+                batchNo = form.batchNo,
+                department = form.department.trim().takeIf { form.needsDepartment && it.isNotEmpty() },
+                receivedBy = form.receivedBy.trim().takeIf { form.needsReceivedBy && it.isNotEmpty() },
             )
-            when (result) {
+            when (val result = createStockTransfer(request, fieldValues)) {
                 is AppResult.Success -> {
                     _uiState.update {
                         it.copy(
                             transfer = TransferFormState(),
                             message = UiText.Res(
-                                R.string.transfer_success,
-                                listOf(result.data.name.orEmpty(), form.qtyText, item.code, form.toWarehouse),
+                                R.string.transfer_draft_created,
+                                listOf(result.data.name, form.qtyText, form.itemCode, form.toWarehouse),
                             ),
                         )
                     }
-                    // Refresh stock levels for the item, keeping the confirmation message visible.
+                    // Refresh the result, keeping the confirmation message visible.
                     state.lastScan?.let { startLookup(it.copy(source = ScanSource.MANUAL), state.target, clearMessage = false) }
                 }
-                is AppResult.Failure -> _uiState.update { it.copy(transfer = it.transfer.copy(submitting = false, error = result.error.toUiText())) }
+                is AppResult.Failure -> {
+                    val error = result.error
+                    if (error is AppError.MissingRequiredFields) {
+                        askRequiredFields(error.fields)
+                    } else {
+                        _uiState.update { it.copy(transfer = it.transfer.copy(submitting = false, error = error.toUiText())) }
+                    }
+                }
             }
+        }
+    }
+
+    /** The site needs more values than the sheet asks: open the dialog and load the choices of its Link fields. */
+    private fun askRequiredFields(fields: List<RequiredField>) {
+        _uiState.update { s ->
+            s.copy(
+                transfer = s.transfer.copy(
+                    submitting = false,
+                    requiredFields = fields,
+                    requiredFieldAnswers = fields.associate { it.key to s.transfer.requiredFieldAnswers[it.key].orEmpty() },
+                    linkOptions = emptyMap(),
+                ),
+            )
+        }
+        viewModelScope.launch {
+            fields.filter { it.isLink }.forEach { field ->
+                val target = field.options ?: return@forEach
+                searchLinkValues(target, "").getOrNull()?.let { names ->
+                    _uiState.update { it.copy(transfer = it.transfer.copy(linkOptions = it.transfer.linkOptions + (field.key to names))) }
+                }
+            }
+        }
+    }
+
+    fun setTransferFieldAnswer(key: String, value: String) =
+        _uiState.update { it.copy(transfer = it.transfer.copy(requiredFieldAnswers = it.transfer.requiredFieldAnswers + (key to value))) }
+
+    fun dismissTransferFields() = _uiState.update { it.copy(transfer = it.transfer.copy(requiredFields = emptyList())) }
+
+    /** Remembers the answers (except those asked every time) and creates the transfer with them. */
+    fun confirmTransferFields() {
+        val form = _uiState.value.transfer
+        val answers = form.requiredFields.associate { it.key to form.requiredFieldAnswers[it.key].orEmpty().trim() }
+        if (answers.isEmpty() || answers.values.any { it.isBlank() }) return
+        _uiState.update { it.copy(transfer = it.transfer.copy(requiredFields = emptyList())) }
+        viewModelScope.launch {
+            saveFieldDefaults(answers.filterKeys { key -> form.requiredFields.firstOrNull { it.key == key }?.remember != false })
+            submitTransfer(answers)
         }
     }
 

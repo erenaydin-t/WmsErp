@@ -4,10 +4,13 @@ import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.AppResult
 import com.wmserp.app.domain.model.PickListPurpose
 import com.wmserp.app.domain.model.PickRowStatus
+import com.wmserp.app.domain.model.PickedBatch
+import com.wmserp.app.domain.model.StockReservation
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.WmsQrKeys
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -136,6 +139,35 @@ class PickListRepositoryImplTest {
         assertTrue(update.cardCompleted)
         assertTrue(update.isLastPicker)
         assertEquals("/api/method/wmserp_picking.api.pick_list.complete_row", harness.server.takeRequest().path)
+    }
+
+    @Test
+    fun `a multi batch row posts its batch list and reads batches and the reservation back`() = runTest {
+        val multiRow = """{"name":"prow1","idx":1,"item_code":"ITEM-001","item_name":"Steel Bolt M8","warehouse":"Stores - WM",
+            "batch_no":null,"batch_from_wms":1,"multi_batch":1,
+            "batches":[{"batch_no":"LOT-1","qty":5,"expiry_date":"2027-01-31"},{"batch_no":"LOT-2","qty":5,"expiry_date":null}],
+            "required_qty":10,"picked_qty":10,"stock_qty":12,"reserved_qty":10,"uom":"Nos","has_batch_no":1,"is_mine":true,"row_status":"Picked"}"""
+        harness.server.enqueue(
+            MockResponse().setBody(
+                """{"message":{"pick_list":$pickListJson,"row":$multiRow,"row_completed":true,"card_completed":true,"is_last_picker":true,
+                   "reservation":{"reserved":true,"entries":2,"error":null}}}"""
+            )
+        )
+        val batches = listOf(PickedBatch("LOT-1", 5.0), PickedBatch("LOT-2", 5.0))
+
+        val update = (repository.completeRow("STO-PICK-2026-00012", "prow1", 10.0, null, null, 300.0, batches) as AppResult.Success).data
+
+        val body = Json.parseToJsonElement(harness.server.takeRequest().body.readUtf8()).jsonObject
+        val sent = body["batches"]!!.jsonArray.map { it.jsonObject["batch_no"]!!.jsonPrimitive.content to it.jsonObject["qty"]!!.jsonPrimitive.content.toDouble() }
+        assertEquals(listOf("LOT-1" to 5.0, "LOT-2" to 5.0), sent)
+        assertNull(body["batch_no"])
+        val row = update.row!!
+        assertTrue(row.multiBatch)
+        assertNull(row.batchNo)
+        assertEquals(listOf(PickedBatch("LOT-1", 5.0, "2027-01-31"), PickedBatch("LOT-2", 5.0)), row.pickedBatches)
+        assertEquals(12.0, row.stockQty, 0.0)
+        assertEquals(10.0, row.reservedQty, 0.0)
+        assertEquals(StockReservation(reserved = true, entries = 2), update.reservation)
     }
 
     @Test

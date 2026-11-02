@@ -85,7 +85,7 @@ fun RequiredFieldsDialog(
 
 /** Text field with a filtered suggestion list; free text stays allowed for values the list does not show. */
 @Composable
-private fun SuggestionField(
+fun SuggestionField(
     label: String,
     value: String,
     options: List<String>,

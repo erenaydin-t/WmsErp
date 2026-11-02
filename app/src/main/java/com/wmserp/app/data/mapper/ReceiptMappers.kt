@@ -129,6 +129,7 @@ fun MissingFieldsDto.toRequiredFields(): List<RequiredField> = missingFields.map
         label = field.label?.takeIf { it.isNotBlank() } ?: field.fieldname,
         fieldtype = field.fieldtype ?: "Data",
         options = field.options?.takeIf { it.isNotBlank() },
+        remember = field.remember != 0,
     )
 }
 

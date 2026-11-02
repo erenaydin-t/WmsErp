@@ -8,10 +8,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -33,7 +35,8 @@ import com.wmserp.app.presentation.theme.WmsTheme
 /**
  * Correction of one pick before the final confirmation: the picked quantity can be changed (0 up
  * to the required quantity) or the pick removed, which also clears a batch the picker scanned so
- * the row can be scanned again with the right one. A row the server already confirmed only
+ * the row can be scanned again with the right one. A row picked from several batches is
+ * corrected batch by batch (a batch can be dropped). A row the server already confirmed only
  * offers the removal.
  */
 @Composable
@@ -45,6 +48,8 @@ fun PickLineEditDialog(
     onSave: () -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
+    onBatchQtyChange: (String, String) -> Unit = { _, _ -> },
+    onRemoveBatch: (String) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -66,6 +71,30 @@ fun PickLineEditDialog(
                 )
                 if (edit.confirmed) {
                     Text(stringResource(R.string.pick_edit_confirmed_hint), style = MaterialTheme.typography.bodyMedium, color = WmsTheme.colors.warning)
+                } else if (edit.multiBatch) {
+                    Text(stringResource(R.string.pick_edit_batches_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    edit.batches.forEach { batch ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = batch.qtyText,
+                                onValueChange = { onBatchQtyChange(batch.batchNo, it) },
+                                label = { Text(batch.batchNo, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                singleLine = true,
+                                isError = batch.qty < 0.0 || !edit.isValid,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f).testTag("pick_edit_batch_qty_${batch.batchNo}"),
+                            )
+                            IconButton(onClick = { onRemoveBatch(batch.batchNo) }, modifier = Modifier.testTag("pick_edit_batch_remove_${batch.batchNo}")) {
+                                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.pick_edit_remove_batch), tint = WmsTheme.colors.danger)
+                            }
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.pick_edit_batches_total, Formatters.qty(edit.qty.coerceAtLeast(0.0)), Formatters.qty(edit.required), edit.uom ?: ""),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (edit.isValid) MaterialTheme.colorScheme.onSurface else WmsTheme.colors.danger,
+                        modifier = Modifier.testTag("pick_edit_batches_total"),
+                    )
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = onDecrement, modifier = Modifier.testTag("pick_edit_minus")) {

@@ -38,6 +38,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -114,6 +115,7 @@ fun CountingRoute(onBack: () -> Unit, viewModel: CountingViewModel = hiltViewMod
         onRetry = viewModel::load,
         onToggleSearch = viewModel::toggleSearch,
         onQueryChange = viewModel::setQuery,
+        onToggleZeroStock = viewModel::toggleZeroStock,
         onManualCode = { viewModel.onScanned(ScannedCode(it, ScanSource.MANUAL)) },
     )
 }
@@ -141,6 +143,7 @@ fun CountingScreen(
     onToggleSearch: () -> Unit = {},
     onQueryChange: (String) -> Unit = {},
     onManualCode: (String) -> Unit = {},
+    onToggleZeroStock: () -> Unit = {},
 ) {
     val session = state.session
     if (session != null && state.cameraActive && state.canScan) {
@@ -251,16 +254,20 @@ fun CountingScreen(
                     is CountingPhase.Counting -> item { CountCard(phase, state, onQtyChange, onUseErpQty, onSubmit) }
                     is CountingPhase.ChoosingBatch -> {
                         item { BatchChooserHeader(phase) }
-                        items(phase.rows, key = { it.name }) { row -> BatchRowCard(row, onClick = { onSelectRow(row.name) }) }
+                        val chooserRows = state.visibleRows(phase.rows, keepWhenAllHidden = true)
+                        if (chooserRows.size < phase.rows.size || state.showZeroStock) {
+                            item { ZeroStockFilterChip(state, phase.rows.count { it.isOptionalZero }, onToggleZeroStock) }
+                        }
+                        items(chooserRows, key = { it.name }) { row -> BatchRowCard(row, blind = state.session?.blindCount == true, onClick = { onSelectRow(row.name) }) }
                     }
                     CountingPhase.Scanning -> {
                         if (state.showSearch) {
-                            item { SearchPanel(state, onQueryChange, onManualCode) }
+                            item { SearchPanel(state, onQueryChange, onManualCode, onToggleZeroStock) }
                             val results = state.searchResults
                             if (state.query.isNotBlank() && results.isEmpty()) {
                                 item { Text(stringResource(R.string.st_search_empty), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
-                            items(results, key = { it.name }) { row -> BatchRowCard(row, onClick = { onSelectRow(row.name) }, tag = "st_search_result_${row.name}") }
+                            items(results, key = { it.name }) { row -> BatchRowCard(row, blind = state.session?.blindCount == true, onClick = { onSelectRow(row.name) }, tag = "st_search_result_${row.name}") }
                         } else {
                             if (state.sessionOpen) item { ReadyPanel(state) }
                             item { ProgressCard(state) }
@@ -367,7 +374,7 @@ private fun LastCountCard(item: StocktakingItem) {
 }
 
 @Composable
-private fun SearchPanel(state: CountingUiState, onQueryChange: (String) -> Unit, onManualCode: (String) -> Unit) {
+private fun SearchPanel(state: CountingUiState, onQueryChange: (String) -> Unit, onManualCode: (String) -> Unit, onToggleZeroStock: () -> Unit = {}) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SearchField(
             value = state.query,
@@ -376,6 +383,9 @@ private fun SearchPanel(state: CountingUiState, onQueryChange: (String) -> Unit,
             leadingIcon = Icons.Outlined.Search,
             modifier = Modifier.testTag("st_search"),
         )
+        if (state.optionalZeroCount > 0) {
+            ZeroStockFilterChip(state, state.optionalZeroCount, onToggleZeroStock)
+        }
         if (state.query.isNotBlank() && state.searchResults.isEmpty() && state.sessionOpen) {
             TextButton(onClick = { onManualCode(state.query) }, modifier = Modifier.testTag("st_search_lookup")) { Text(stringResource(R.string.st_find_item) + ": " + state.query.trim()) }
         }
@@ -515,9 +525,9 @@ private fun BatchChooserHeader(phase: CountingPhase.ChoosingBatch) {
     }
 }
 
-/** One row (batch / warehouse) as a tappable card; also used for search results. */
+/** One row (batch / warehouse) as a tappable card; also used for search results. A blind count never shows the ERP quantity. */
 @Composable
-private fun BatchRowCard(row: StocktakingItem, onClick: () -> Unit, tag: String = "st_batch_${row.name}") {
+private fun BatchRowCard(row: StocktakingItem, blind: Boolean, onClick: () -> Unit, tag: String = "st_batch_${row.name}") {
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -547,11 +557,25 @@ private fun BatchRowCard(row: StocktakingItem, onClick: () -> Unit, tag: String 
                 }
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                row.erpQty?.let { Text("${Formatters.qty(it)} ${row.uom.orEmpty()}".trim(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+                row.erpQty?.takeUnless { blind }?.let { Text("${Formatters.qty(it)} ${row.uom.orEmpty()}".trim(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("st_row_erp_qty_${row.name}")) }
                 StatusChip(stringResource(row.status.labelRes()), rowStatusColor(row.status), modifier = Modifier.testTag("st_row_status_${row.name}"))
             }
         }
     }
+}
+
+/**
+ * Filter for zero-stock rows nobody counted (*Include Zero Stock*): hidden by default, shown on
+ * demand when stock of such an item is found.
+ */
+@Composable
+private fun ZeroStockFilterChip(state: CountingUiState, hidden: Int, onToggle: () -> Unit) {
+    FilterChip(
+        selected = state.showZeroStock,
+        onClick = onToggle,
+        label = { Text(stringResource(R.string.st_show_zero_stock, hidden)) },
+        modifier = Modifier.testTag("st_zero_stock_filter"),
+    )
 }
 
 // ---- shared pieces ------------------------------------------------------------------------------

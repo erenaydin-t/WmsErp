@@ -104,13 +104,25 @@ data class CountingUiState(
     /** The last row counted on this device (shown under the scan panel). */
     val lastCount: StocktakingItem? = null,
     val error: UiText? = null,
+    /** Filter: also list zero-stock rows nobody counted (*Include Zero Stock*). Off by default. */
+    val showZeroStock: Boolean = false,
 ) {
     val counting: CountingPhase.Counting? get() = phase as? CountingPhase.Counting
     val totals: StocktakingTotals get() = session?.totals ?: StocktakingTotals()
 
     /** In Assigned mode the counter's own rows; in Open mode what this user counted. */
-    val myTotal: Int get() = if (session?.mode == CountingMode.OPEN) items.count { it.countedBy == userId } else items.count { it.isMine }
-    val myOpen: Int get() = if (session?.mode == CountingMode.OPEN) 0 else items.count { it.isMine && it.status.needsCount }
+    val myTotal: Int get() = if (session?.mode == CountingMode.OPEN) items.count { it.countedBy == userId } else items.count { it.isMine && !it.isOptionalZero }
+    val myOpen: Int get() = if (session?.mode == CountingMode.OPEN) 0 else items.count { it.isMine && it.status.needsCount && !it.isOptionalZero }
+
+    /** Zero-stock rows nobody counted: optional, listed only with [showZeroStock]. */
+    val optionalZeroCount: Int get() = items.count { it.isOptionalZero }
+
+    /** [rows] as the filter shows them; a scanned item whose rows are all zero-stock still shows them (the stock was found). */
+    fun visibleRows(rows: List<StocktakingItem>, keepWhenAllHidden: Boolean = false): List<StocktakingItem> {
+        if (showZeroStock) return rows
+        val shown = rows.filterNot { it.isOptionalZero }
+        return if (shown.isEmpty() && keepWhenAllHidden) rows else shown
+    }
     val pendingCount: Int get() = pending.size
     val sessionOpen: Boolean get() = session?.status?.acceptsCounts == true
 
@@ -124,9 +136,11 @@ data class CountingUiState(
         get() {
             val q = query.trim()
             if (q.isEmpty()) return emptyList()
-            return items.filter {
-                it.itemCode.contains(q, ignoreCase = true) || it.itemName.contains(q, ignoreCase = true) || it.batchNo?.contains(q, ignoreCase = true) == true
-            }.take(50)
+            return visibleRows(
+                items.filter {
+                    it.itemCode.contains(q, ignoreCase = true) || it.itemName.contains(q, ignoreCase = true) || it.batchNo?.contains(q, ignoreCase = true) == true
+                },
+            ).take(50)
         }
 }
 
@@ -239,6 +253,7 @@ class CountingViewModel @Inject constructor(
     fun dismissFeedback() = _uiState.update { it.copy(feedback = null, error = null) }
     fun toggleSearch() = _uiState.update { it.copy(showSearch = !it.showSearch, query = if (it.showSearch) "" else it.query) }
     fun setQuery(value: String) = _uiState.update { it.copy(query = value) }
+    fun toggleZeroStock() = _uiState.update { it.copy(showZeroStock = !it.showZeroStock) }
 
     // ---- identification ----------------------------------------------------------------------
 

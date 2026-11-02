@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
 import com.wmserp.app.domain.model.PickList
+import com.wmserp.app.domain.model.PickListItem
 import com.wmserp.app.domain.model.PickRowStatus
 import com.wmserp.app.domain.model.PickingStatus
 import com.wmserp.app.domain.model.ScanSource
@@ -111,6 +112,8 @@ fun PickListRoute(onBack: () -> Unit, onDone: () -> Unit, viewModel: PickListVie
         onEditSave = viewModel::confirmEdit,
         onEditRemove = viewModel::removePick,
         onEditCancel = viewModel::cancelEdit,
+        onEditBatchQty = viewModel::setEditBatchQty,
+        onEditRemoveBatch = viewModel::removeEditBatch,
     )
 }
 
@@ -153,6 +156,8 @@ fun PickListScreen(
     onEditSave: () -> Unit = {},
     onEditRemove: () -> Unit = {},
     onEditCancel: () -> Unit = {},
+    onEditBatchQty: (String, String) -> Unit = { _, _ -> },
+    onEditRemoveBatch: (String) -> Unit = {},
 ) {
     val pickList = state.pickList
     state.editLine?.let { edit ->
@@ -164,6 +169,8 @@ fun PickListScreen(
             onSave = onEditSave,
             onRemove = onEditRemove,
             onDismiss = onEditCancel,
+            onBatchQtyChange = onEditBatchQty,
+            onRemoveBatch = onEditRemoveBatch,
         )
     }
     if (pickList != null && state.cameraActive && state.outcome == null) {
@@ -368,8 +375,8 @@ private fun NextToScanCard(line: PickLineState, state: PickListUiState, modifier
             }
             Text(item.itemName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                item.batchNo ?: stringResource(R.string.pick_no_batch),
-                style = MaterialTheme.typography.headlineSmall,
+                expectedBatchText(item),
+                style = if (item.multiBatch) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.testTag("pick_next_batch"),
             )
@@ -389,8 +396,15 @@ private fun NextToScanSummary(line: PickLineState) {
     Column {
         Text(stringResource(R.string.pick_next_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(line.item.itemName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(line.item.batchNo ?: stringResource(R.string.pick_no_batch), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(expectedBatchText(line.item), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     }
+}
+
+/** The batch the label must carry, "any batch" on a row picked from several, or "no batch". */
+@Composable
+private fun expectedBatchText(item: PickListItem): String = when {
+    item.multiBatch -> stringResource(R.string.pick_any_batch)
+    else -> item.batchNo ?: stringResource(R.string.pick_no_batch)
 }
 
 // ---- Task completed (other pickers still working) ---------------------------------------------
@@ -430,6 +444,25 @@ private fun LazyListScope.cardCompletedContent(state: PickListUiState, pickList:
     item {
         OutcomeCard(title = stringResource(R.string.pick_picked_title), subtitle = stringResource(R.string.pick_picked_subtitle), tag = "pick_picked_title")
     }
+    state.reservation?.let { reservation ->
+        item {
+            val error = reservation.error
+            when {
+                error != null -> InfoBanner(
+                    stringResource(R.string.pick_reservation_failed, error),
+                    container = WmsTheme.colors.warningContainer,
+                    content = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.testTag("pick_reservation"),
+                )
+                reservation.reserved -> InfoBanner(
+                    stringResource(R.string.pick_reservation_done),
+                    container = WmsTheme.colors.successContainer,
+                    content = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.testTag("pick_reservation"),
+                )
+            }
+        }
+    }
     pickList.generatedDocument?.let { doc ->
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = MaterialTheme.shapes.large, elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)) {
@@ -468,6 +501,7 @@ private fun GenerateBar(state: PickListUiState, pickList: PickList, onGenerate: 
 private fun ScanAlertBanner(alert: ScanAlert, onDismiss: () -> Unit) {
     val title = when (alert.kind) {
         ScanAlertKind.WRONG_BATCH -> R.string.pick_alert_wrong_batch_title
+        ScanAlertKind.MISSING_BATCH -> R.string.pick_alert_missing_batch_title
         ScanAlertKind.NOT_ASSIGNED -> R.string.pick_alert_not_assigned_title
         ScanAlertKind.ALREADY_COMPLETE -> R.string.pick_alert_complete_title
         ScanAlertKind.INVALID_QR -> R.string.pick_alert_invalid_title
@@ -586,17 +620,21 @@ private fun PickRowCard(line: PickLineState, active: Boolean, onClick: (() -> Un
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Column {
-                Text(stringResource(R.string.pick_expected_batch), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    item.batchNo ?: stringResource(R.string.pick_no_batch),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (item.batchNo != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("pick_expected_batch_${item.rowName}"),
-                )
-                item.expiryDate?.let {
-                    Text(stringResource(R.string.label_expiry) + " " + Formatters.date(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (item.multiBatch) {
+                PickedBatchesColumn(line)
+            } else {
+                Column {
+                    Text(stringResource(R.string.pick_expected_batch), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        item.batchNo ?: stringResource(R.string.pick_no_batch),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (item.batchNo != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("pick_expected_batch_${item.rowName}"),
+                    )
+                    item.expiryDate?.let {
+                        Text(stringResource(R.string.label_expiry) + " " + Formatters.date(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -606,6 +644,13 @@ private fun PickRowCard(line: PickLineState, active: Boolean, onClick: (() -> Un
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f).testTag("pick_qty_${item.rowName}"),
                 )
+                if (item.reservedQty > 0.0) {
+                    StatusChip(
+                        stringResource(R.string.pick_reserved, Formatters.qty(item.reservedQty)),
+                        WmsTheme.colors.success,
+                        modifier = Modifier.padding(end = 6.dp).testTag("pick_reserved_${item.rowName}"),
+                    )
+                }
                 if (line.syncing) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 }
@@ -615,6 +660,38 @@ private fun PickRowCard(line: PickLineState, active: Boolean, onClick: (() -> Un
                 modifier = Modifier.fillMaxWidth(),
                 color = rowStatusColor(line.status),
             )
+        }
+    }
+}
+
+/** A row picked from several batches: every batch scanned so far with its quantity, or "any batch" before the first scan. */
+@Composable
+private fun PickedBatchesColumn(line: PickLineState) {
+    val item = line.item
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("pick_batches_${item.rowName}")) {
+        Text(stringResource(R.string.pick_batches_picked), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (line.batches.isEmpty()) {
+            Text(
+                stringResource(R.string.pick_any_batch),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("pick_expected_batch_${item.rowName}"),
+            )
+        }
+        line.batches.forEach { batch ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(batch.batchNo, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(
+                    Formatters.qty(batch.qty) + " " + (item.uom ?: ""),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.testTag("pick_batch_qty_${item.rowName}_${batch.batchNo}"),
+                )
+            }
+            val expiry = batch.expiryDate ?: item.pickedBatches.firstOrNull { it.batchNo.equals(batch.batchNo, ignoreCase = true) }?.expiryDate
+            expiry?.let {
+                Text(stringResource(R.string.label_expiry) + " " + Formatters.date(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
