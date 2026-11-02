@@ -1,0 +1,428 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-30 08:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "session",
+  "item_code",
+  "item_name",
+  "warehouse",
+  "batch_no",
+  "expiry_date",
+  "column_break_main",
+  "status",
+  "counter",
+  "next_count_type",
+  "erp_qty",
+  "stock_uom",
+  "valuation_rate",
+  "classification_section",
+  "item_group",
+  "brand",
+  "has_batch_no",
+  "column_break_class",
+  "location",
+  "added_during_count",
+  "counts_section",
+  "count_1",
+  "count_1_by",
+  "count_1_at",
+  "column_break_count2",
+  "count_2",
+  "count_2_by",
+  "count_2_at",
+  "column_break_recount",
+  "recount_qty",
+  "recount_by",
+  "recount_at",
+  "recount_count",
+  "result_section",
+  "final_qty",
+  "qty_difference",
+  "value_difference",
+  "column_break_result",
+  "counted_by",
+  "counted_at",
+  "review_section",
+  "recount_requested_by",
+  "recount_requested_at",
+  "recount_note",
+  "column_break_review",
+  "reviewed_by",
+  "reviewed_at",
+  "review_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Stocktaking Session",
+   "options": "Stocktaking Session",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fetch_from": "item_code.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "batch_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Batch",
+   "options": "Batch",
+   "search_index": 1
+  },
+  {
+   "fieldname": "expiry_date",
+   "fieldtype": "Date",
+   "label": "Expiry Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Counted",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Not Counted\nAssigned\nCounting\nCounted\nRecount Required\nRecounted\nManager Review\nApproved\nFinalized",
+   "read_only": 1
+  },
+  {
+   "description": "The user who counts this row (Assigned mode). Use Assign Items on the session, or Edit on a selection in the list view, to set it in bulk.",
+   "fieldname": "counter",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Counter",
+   "options": "User"
+  },
+  {
+   "default": "Count 1",
+   "fieldname": "next_count_type",
+   "fieldtype": "Select",
+   "label": "Next Count",
+   "options": "Count 1\nCount 2\nRecount",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Quantity in ERPNext when the session started (reference quantity).",
+   "fieldname": "erp_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "ERP Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "Stock UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Valuation rate at the start of the session; used for the value variance.",
+   "fieldname": "valuation_rate",
+   "fieldtype": "Currency",
+   "label": "Valuation Rate",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "classification_section",
+   "fieldtype": "Section Break",
+   "label": "Classification"
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Item Group",
+   "options": "Item Group",
+   "read_only": 1
+  },
+  {
+   "fieldname": "brand",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Brand",
+   "options": "Brand",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_batch_no",
+   "fieldtype": "Check",
+   "label": "Batch Tracked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_class",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Free text: aisle / shelf / zone. Use it to assign whole areas to a counter.",
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Location"
+  },
+  {
+   "default": "0",
+   "description": "The row was not in the ERP snapshot: a counter found stock the system did not expect (ERP Qty 0).",
+   "fieldname": "added_during_count",
+   "fieldtype": "Check",
+   "label": "Added During Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "counts_section",
+   "fieldtype": "Section Break",
+   "label": "Counts"
+  },
+  {
+   "fieldname": "count_1",
+   "fieldtype": "Float",
+   "label": "Count #1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "count_1_by",
+   "fieldtype": "Link",
+   "label": "Count #1 By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "count_1_at",
+   "fieldtype": "Datetime",
+   "label": "Count #1 At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_count2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "count_2",
+   "fieldtype": "Float",
+   "label": "Count #2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "count_2_by",
+   "fieldtype": "Link",
+   "label": "Count #2 By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "count_2_at",
+   "fieldtype": "Datetime",
+   "label": "Count #2 At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_recount",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Latest recount (the full history is in Stocktaking Count).",
+   "fieldname": "recount_qty",
+   "fieldtype": "Float",
+   "label": "Recount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recount_by",
+   "fieldtype": "Link",
+   "label": "Recount By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recount_at",
+   "fieldtype": "Datetime",
+   "label": "Recount At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "recount_count",
+   "fieldtype": "Int",
+   "label": "Number of Recounts",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "description": "The quantity that will go into the Stock Reconciliation (latest accepted count).",
+   "fieldname": "final_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Final Qty",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "qty_difference",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty Difference",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "value_difference",
+   "fieldtype": "Currency",
+   "label": "Value Difference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "counted_by",
+   "fieldtype": "Link",
+   "label": "Last Counted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "counted_at",
+   "fieldtype": "Datetime",
+   "label": "Last Counted At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Manager Review"
+  },
+  {
+   "fieldname": "recount_requested_by",
+   "fieldtype": "Link",
+   "label": "Recount Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recount_requested_at",
+   "fieldtype": "Datetime",
+   "label": "Recount Requested At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recount_note",
+   "fieldtype": "Small Text",
+   "label": "Recount Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_at",
+   "fieldtype": "Datetime",
+   "label": "Reviewed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-30 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WMS ERP Picking",
+ "name": "Stocktaking Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Stock User"
+  }
+ ],
+ "search_fields": "item_code,item_name,batch_no,counter",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "item_name",
+ "track_changes": 1
+}

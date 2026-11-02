@@ -15,6 +15,7 @@ class UpdateScannerSettingsUseCase @Inject constructor(private val settingsRepos
     suspend fun setMode(mode: ScannerMode) = settingsRepository.setScannerMode(mode)
     suspend fun setBeep(enabled: Boolean) = settingsRepository.setBeepOnScan(enabled)
     suspend fun setVibrate(enabled: Boolean) = settingsRepository.setVibrateOnScan(enabled)
+    suspend fun setAskQuantity(enabled: Boolean) = settingsRepository.setAskQuantityOnScan(enabled)
 }
 
 class ObserveAppLanguageUseCase @Inject constructor(private val settingsRepository: SettingsRepository) {

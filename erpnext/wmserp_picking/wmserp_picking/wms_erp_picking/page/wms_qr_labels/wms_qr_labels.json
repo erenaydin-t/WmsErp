@@ -1,0 +1,30 @@
+{
+ "content": null,
+ "creation": "2026-11-03 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "printer",
+ "idx": 0,
+ "modified": "2026-11-03 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WMS ERP Picking",
+ "name": "wms-qr-labels",
+ "owner": "Administrator",
+ "page_name": "wms-qr-labels",
+ "roles": [
+  {
+   "role": "Stock User"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "WMS QR Labels"
+}

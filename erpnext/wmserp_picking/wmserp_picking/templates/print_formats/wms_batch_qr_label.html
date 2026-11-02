@@ -1,0 +1,10 @@
+<div class="wms-batch-label" style="width: 58mm; padding: 3mm; font-family: Helvetica, Arial, sans-serif; text-align: center; color: #000;">
+  <div style="font-size: 12pt; font-weight: 700; word-break: break-word;">{{ doc.item }}</div>
+  <div style="font-size: 9pt; color: #444; word-break: break-word;">{{ doc.item_name or "" }}</div>
+  <div style="margin: 2mm auto 1mm auto;">{{ wms_batch_qr_svg(doc, 4) }}</div>
+  <div style="font-size: 11pt; font-weight: 700;">{{ _("Batch") }}: {{ doc.name }}</div>
+  {% if doc.expiry_date %}
+  <div style="font-size: 9pt;">{{ _("Expiry") }}: {{ frappe.format_date(doc.expiry_date) }}</div>
+  {% endif %}
+  <div style="font-size: 6.5pt; color: #777; word-break: break-all; margin-top: 1mm;">{{ wms_batch_qr_payload(doc) }}</div>
+</div>

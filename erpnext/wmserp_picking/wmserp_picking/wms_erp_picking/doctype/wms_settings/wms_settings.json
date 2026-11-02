@@ -1,0 +1,183 @@
+{
+ "actions": [],
+ "creation": "2026-09-28 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "qr_section",
+  "qr_item_key",
+  "qr_batch_key",
+  "qr_help",
+  "receiving_section",
+  "receipt_workflow_states",
+  "receiving_column",
+  "warehouse_department",
+  "officer_field",
+  "create_followup_receipt",
+  "followup_receipt_state",
+  "receipt_field_values",
+  "receiving_help",
+  "batch_section",
+  "batch_no_field",
+  "batch_id_pattern",
+  "qc_no_field",
+  "require_batch_qc_no",
+  "batch_help"
+ ],
+ "fields": [
+  {
+   "fieldname": "qr_section",
+   "fieldtype": "Section Break",
+   "label": "QR Label Keys"
+  },
+  {
+   "default": "item_code",
+   "description": "JSON key that carries the Item Code in printed QR labels.",
+   "fieldname": "qr_item_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "QR Item Key",
+   "reqd": 1
+  },
+  {
+   "default": "batch_no",
+   "description": "JSON key that carries the Batch No in printed QR labels.",
+   "fieldname": "qr_batch_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "QR Batch Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "qr_help",
+   "fieldtype": "HTML",
+   "label": "Help",
+   "options": "<p>The WMS app only accepts QR labels whose content is a JSON object using these keys, for example <code>{\"item_code\": \"ITEM-001\", \"batch_no\": \"B-2026-01\"}</code> (batch label) or <code>{\"item_code\": \"ITEM-001\"}</code> (item label). Print them with the <b>WMS Batch QR Label</b> / <b>WMS Item QR Label</b> print formats, or many per A4 page with <b>Batch</b> / <b>Item</b> list &gt; Actions &gt; <b>Print QR Label Sheet</b> (layout in the <b>WMS Batch QR Label Sheet</b> / <b>WMS Item QR Label Sheet</b> print formats).</p>"
+  },
+  {
+   "fieldname": "receiving_section",
+   "fieldtype": "Section Break",
+   "label": "Receiving (Purchase Receipts)"
+  },
+  {
+   "fieldname": "receipt_workflow_states",
+   "fieldtype": "Small Text",
+   "label": "Receipt Workflow States",
+   "description": "Optional. Workflow states (one per line) of draft Purchase Receipts that the warehouse may receive in the app. Leave empty to list the draft states in which one of the user's roles may edit (or every draft when Purchase Receipt has no workflow)."
+  },
+  {
+   "fieldname": "receiving_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warehouse_department",
+   "fieldtype": "Link",
+   "options": "Department",
+   "label": "Warehouse Department",
+   "description": "Optional. Department written on every row (and on the header when it has the field) of documents the app confirms or creates: Purchase Receipts, Stock Entries and Delivery Notes from picking, Stock Reconciliations from stocktaking. For site rules that require the warehouse's department on each row."
+  },
+  {
+   "fieldname": "officer_field",
+   "fieldtype": "Data",
+   "label": "Officer Field",
+   "description": "Optional. Fieldname of the field (on Purchase Receipt, Stock Entry, Delivery Note, Stock Reconciliation...) that names the warehouse employee who processed the document; the app fills it with the Employee of the user confirming or creating the document. Empty: the field labelled \"Warehouse Document Processing Officer\" when the DocType has one."
+  },
+  {
+   "fieldname": "create_followup_receipt",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Follow-up Receipt for Short Deliveries",
+   "description": "A receipt confirmed with rows missing or below the expected quantity gets a draft follow-up Purchase Receipt per Purchase Order for the undelivered quantity (capped by what the order still has to receive minus other drafts), placed in the warehouse stage."
+  },
+  {
+   "fieldname": "followup_receipt_state",
+   "fieldtype": "Data",
+   "label": "Follow-up Receipt State",
+   "depends_on": "create_followup_receipt",
+   "description": "Optional. Workflow state of the follow-up receipt. Empty: the first state in which the app lists receipts (the warehouse stage)."
+  },
+  {
+   "fieldname": "receipt_field_values",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Receipt Field Values",
+   "description": "Optional. JSON of values written onto a Purchase Receipt when the app confirms it: keys \"Purchase Receipt.<fieldname>\" for the header and \"Purchase Receipt Item.<fieldname>\" for every row, e.g. {\"Purchase Receipt Item.department\": \"Warehouse - E\"}. They overwrite what the draft carries, for site rules that require the warehouse's own values on submit."
+  },
+  {
+   "fieldname": "receiving_help",
+   "fieldtype": "HTML",
+   "label": "Help",
+   "options": "<p>The app's <b>Orders &gt; Receive</b> lists <i>draft</i> Purchase Receipts at the warehouse stage: the states above, or, when empty, the draft states from which the user's role may submit (e.g. <i>Pending for Warehouse Approval</i>). The warehouse counts the goods against the rows; confirming writes the counted quantities, drops rows that were not received, stamps the warehouse department, the processing officer and the posting date/time of the confirmation, submits the receipt through the workflow action that submits it (or directly without a workflow) and creates a follow-up draft for what was not delivered.</p>"
+  },
+  {
+   "fieldname": "batch_section",
+   "fieldtype": "Section Break",
+   "label": "Batches created while receiving"
+  },
+  {
+   "fieldname": "batch_no_field",
+   "fieldtype": "Data",
+   "label": "Batch No Field",
+   "description": "Optional. Fieldname of the Batch field that holds the supplier's batch number as printed on the material (the app looks batches up by it, spaces and case ignored). Empty: custom_batch_no when the site has it, else the Batch ID is the batch number."
+  },
+  {
+   "fieldname": "batch_id_pattern",
+   "fieldtype": "Data",
+   "label": "Batch ID Pattern",
+   "description": "Optional. How the app names a Batch it creates while receiving: placeholders {batch_no}, {item} and {counter} (numeric prefix of the last batch + 1). Empty: {counter}-{item}-{batch_no} when a Batch No Field exists, else {batch_no}."
+  },
+  {
+   "fieldname": "qc_no_field",
+   "fieldtype": "Data",
+   "label": "QC No Field",
+   "description": "Optional. Fieldname of the Batch field that holds the quality-control number assigned to a delivery; the app asks for it when it creates a batch and shows it when several batches carry one supplier number. Empty: custom_qc_no when the site has it, else none."
+  },
+  {
+   "fieldname": "require_batch_qc_no",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Require QC No",
+   "description": "Refuse to create a batch without a QC number. Off: the QC number is asked for but may stay empty."
+  },
+  {
+   "fieldname": "batch_help",
+   "fieldtype": "HTML",
+   "label": "Help",
+   "options": "<p>Batch tracked items whose batches ERPNext does not create itself (<i>Has Batch No</i> without <i>Automatically Create New Batch</i>) need a Batch before the receipt is submitted. The app reads the batch number off the material, finds the Batch or creates it (<code>find_batch</code> / <code>create_batch</code>, Stock User needs <i>create</i> on Batch), and counts each batch under its row; a row received in several batches is split into one Purchase Receipt Item per batch when the receipt is confirmed. The expiry date defaults to the manufacturing date plus the item's shelf life. Sites that give every delivery a quality-control number keep it in the QC No Field: the app asks for it when creating a batch (required only with <i>Require QC No</i>), and the same supplier number under another QC number is another Batch.</p>"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-21 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WMS ERP Picking",
+ "name": "WMS Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Stock User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

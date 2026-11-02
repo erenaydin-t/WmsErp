@@ -10,6 +10,7 @@ import com.wmserp.app.domain.model.UserSession
 import com.wmserp.app.domain.repository.AuthRepository
 import com.wmserp.app.domain.usecase.ObserveAppLanguageUseCase
 import com.wmserp.app.domain.usecase.RestoreSessionUseCase
+import com.wmserp.app.presentation.common.LocaleDefaults
 import com.wmserp.app.presentation.common.UiText
 import com.wmserp.app.presentation.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -51,6 +52,9 @@ class MainViewModel @Inject constructor(
     private var recovering = false
 
     init {
+        // Dates (Jalali in Persian), month and day names are formatted from the process locale:
+        // set it as soon as the stored language is known, before any screen loads its data.
+        viewModelScope.launch { language.collect { LocaleDefaults.apply(it) } }
         viewModelScope.launch {
             val status = when (val result = restoreSession()) {
                 is AppResult.Success -> result.data?.let { SessionStatus.SignedIn(it) } ?: SessionStatus.SignedOut()

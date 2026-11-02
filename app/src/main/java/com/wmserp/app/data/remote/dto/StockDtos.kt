@@ -3,7 +3,7 @@ package com.wmserp.app.data.remote.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** ERPNext `Item` DocType (subset). */
+/** ERPNext `Item` DocType (subset; no prices or valuation, the app shows no monetary data). */
 @Serializable
 data class ItemDto(
     val name: String,
@@ -15,8 +15,8 @@ data class ItemDto(
     val image: String? = null,
     val disabled: Int = 0,
     @SerialName("is_stock_item") val isStockItem: Int = 1,
-    @SerialName("valuation_rate") val valuationRate: Double? = null,
-    @SerialName("standard_rate") val standardRate: Double? = null,
+    @SerialName("has_batch_no") val hasBatchNo: Int = 0,
+    @SerialName("has_serial_no") val hasSerialNo: Int = 0,
     val brand: String? = null,
     val barcodes: List<ItemBarcodeDto> = emptyList(),
 )
@@ -26,6 +26,29 @@ data class ItemDto(
 data class ItemBarcodeDto(
     val barcode: String,
     @SerialName("barcode_type") val barcodeType: String? = null,
+)
+
+/** ERPNext `Batch` DocType (subset). */
+@Serializable
+data class BatchDto(
+    val name: String,
+    @SerialName("batch_id") val batchId: String? = null,
+    val item: String? = null,
+    @SerialName("item_name") val itemName: String? = null,
+    @SerialName("expiry_date") val expiryDate: String? = null,
+    @SerialName("manufacturing_date") val manufacturingDate: String? = null,
+    val disabled: Int = 0,
+    @SerialName("stock_uom") val stockUom: String? = null,
+    val supplier: String? = null,
+    val description: String? = null,
+)
+
+/** One row returned by `erpnext.stock.doctype.batch.batch.get_batch_qty(batch_no)`: stock per warehouse. */
+@Serializable
+data class BatchWarehouseQtyDto(
+    val warehouse: String? = null,
+    @SerialName("batch_no") val batchNo: String? = null,
+    val qty: Double = 0.0,
 )
 
 /** ERPNext `Bin` DocType. */
@@ -88,7 +111,3 @@ data class StockLedgerEntryDto(
     @SerialName("posting_date") val postingDate: String? = null,
     @SerialName("posting_time") val postingTime: String? = null,
 )
-
-/** Result row of an aggregate query such as `sum(grand_total) as total`. */
-@Serializable
-data class AggregateDto(val total: Double? = null, val count: Int? = null)

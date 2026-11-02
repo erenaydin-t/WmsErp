@@ -28,8 +28,11 @@ interface ScannerController {
     /** Publishes a code from the camera or manual entry so all listeners are notified uniformly. */
     fun publish(code: ScannedCode)
 
-    /** Audible / haptic confirmation of a scan. */
-    fun feedback(beep: Boolean, vibrate: Boolean)
+    /**
+     * Audible / haptic confirmation of a scan. With [error] the device plays the rejection tone and
+     * a double vibration instead, so a wrong batch is felt without looking at the screen.
+     */
+    fun feedback(beep: Boolean, vibrate: Boolean, error: Boolean = false)
 }
 
 /** Used for previews and UI tests. */
@@ -40,5 +43,5 @@ object NoOpScannerController : ScannerController {
     override fun releaseCapture() = Unit
     override fun setTextInputActive(active: Boolean) = Unit
     override fun publish(code: ScannedCode) = Unit
-    override fun feedback(beep: Boolean, vibrate: Boolean) = Unit
+    override fun feedback(beep: Boolean, vibrate: Boolean, error: Boolean) = Unit
 }

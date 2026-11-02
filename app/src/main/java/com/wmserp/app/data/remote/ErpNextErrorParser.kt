@@ -2,6 +2,7 @@ package com.wmserp.app.data.remote
 
 import com.wmserp.app.domain.common.AppError
 import com.wmserp.app.domain.common.ErrorCode
+import com.wmserp.app.domain.common.ServerErrorTypes
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -40,7 +41,7 @@ object ErpNextErrorParser {
             excType == "PermissionError" -> AppError.Forbidden(message, code(ErrorCode.FORBIDDEN))
             excType == "DoesNotExistError" -> AppError.NotFound(message, code(ErrorCode.NOT_FOUND))
             excType == "CSRFTokenError" -> AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
-            excType != null && excType in VALIDATION_TYPES -> AppError.Validation(message, code(ErrorCode.BAD_REQUEST))
+            excType != null && excType in VALIDATION_TYPES -> AppError.Validation(message, code(ErrorCode.BAD_REQUEST), serverType = excType)
             httpCode == 401 -> AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
             httpCode == 403 -> if (looksLikeAuthFailure(message)) {
                 AppError.Unauthorized(message, code(ErrorCode.UNAUTHORIZED))
@@ -48,7 +49,7 @@ object ErpNextErrorParser {
                 AppError.Forbidden(message, code(ErrorCode.FORBIDDEN))
             }
             httpCode == 404 -> AppError.NotFound(message, code(ErrorCode.NOT_FOUND))
-            httpCode == 417 || httpCode == 400 || httpCode == 409 || httpCode == 422 -> AppError.Validation(message, code(ErrorCode.BAD_REQUEST))
+            httpCode == 417 || httpCode == 400 || httpCode == 409 || httpCode == 422 -> AppError.Validation(message, code(ErrorCode.BAD_REQUEST), serverType = excType)
             httpCode in 502..504 -> AppError.Server(message, httpCode, code(ErrorCode.SERVER_UNAVAILABLE))
             else -> AppError.Server(message, httpCode, code(ErrorCode.SERVER_ERROR))
         }
@@ -126,6 +127,8 @@ object ErpNextErrorParser {
         "NegativeStockError", "SerialNoQtyError", "OverAllowanceError", "InvalidStatusError",
         "DocstatusTransitionError", "ImplicitCommitError", "UniqueValidationError", "OutgoingEmailError",
         "TypeError", "KeyError", "AttributeError", "ValueError",
+        // raised by the wmserp_picking backend
+        ServerErrorTypes.INSUFFICIENT_STOCK,
     )
 
     /** Convenience for tests / callers that only have a raw JSON body. */

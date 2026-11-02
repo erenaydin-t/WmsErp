@@ -2,8 +2,11 @@ package com.wmserp.app.core.util
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.LocalDate
 import java.time.Month
 import java.time.format.TextStyle
 import java.util.Locale
@@ -44,11 +47,34 @@ class FormattersTest {
 
     @Test
     fun `month names follow the app language while digits stay ascii`() {
-        val persian = Locale.forLanguageTag("fa")
-        Locale.setDefault(persian)
+        val german = Locale.GERMAN
+        Locale.setDefault(german)
 
-        val september = Month.SEPTEMBER.getDisplayName(TextStyle.SHORT, persian)
+        val september = Month.SEPTEMBER.getDisplayName(TextStyle.SHORT, german)
         assertEquals("28 $september 2026", Formatters.date("2026-09-28"))
         assertEquals("1,000.25", Formatters.qty(1000.25))
+    }
+
+    @Test
+    fun `the Persian UI shows Jalali dates with Persian month names and ascii digits`() {
+        Locale.setDefault(Locale.forLanguageTag("fa"))
+
+        assertTrue(Formatters.usesJalali)
+        assertEquals("24 مهر 1405", Formatters.date("2026-10-16"))
+        assertEquals("1 فروردین 1405", Formatters.date("2026-03-21"))
+        assertEquals("24 مهر، 14:05", Formatters.dateTime("2026-10-16", "14:05:33.123456"))
+        assertEquals("مهر 1405", Formatters.monthYear(LocalDate.of(2026, 10, 16)))
+        // "This month" on the dashboard starts on the first of Mehr, not on 1 October.
+        assertEquals(LocalDate.of(2026, 9, 23), Formatters.startOfMonth(LocalDate.of(2026, 10, 16)))
+        assertEquals("1,000.25", Formatters.qty(1000.25))
+        assertEquals("-", Formatters.date(null))
+        assertEquals("not-a-date", Formatters.date("not-a-date"))
+    }
+
+    @Test
+    fun `other languages keep the Gregorian calendar`() {
+        assertFalse(Formatters.usesJalali)
+        assertEquals("Oct 2026", Formatters.monthYear(LocalDate.of(2026, 10, 16)))
+        assertEquals(LocalDate.of(2026, 10, 1), Formatters.startOfMonth(LocalDate.of(2026, 10, 16)))
     }
 }

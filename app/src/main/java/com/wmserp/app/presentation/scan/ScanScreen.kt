@@ -1,12 +1,5 @@
 package com.wmserp.app.presentation.scan
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,11 +45,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -68,8 +60,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wmserp.app.R
 import com.wmserp.app.core.util.Formatters
+import com.wmserp.app.domain.model.Batch
+import com.wmserp.app.domain.model.BatchWarehouseStock
 import com.wmserp.app.domain.model.Item
-import com.wmserp.app.domain.model.PurchaseOrder
+import com.wmserp.app.domain.model.PurchaseReceipt
 import com.wmserp.app.domain.model.ScanLookup
 import com.wmserp.app.domain.model.ScanSource
 import com.wmserp.app.domain.model.ScanTarget
@@ -81,15 +75,18 @@ import com.wmserp.app.presentation.common.labelRes
 import com.wmserp.app.presentation.components.ErrorBanner
 import com.wmserp.app.presentation.components.InfoBanner
 import com.wmserp.app.presentation.components.LabelValue
+import com.wmserp.app.presentation.components.ScanFrameOverlay
 import com.wmserp.app.presentation.components.ScannerListener
 import com.wmserp.app.presentation.components.SectionHeader
 import com.wmserp.app.presentation.components.StatusChip
 import com.wmserp.app.presentation.components.WarehousePicker
+import com.wmserp.app.presentation.components.SuggestionField
+import com.wmserp.app.presentation.components.RequiredFieldsDialog
 import com.wmserp.app.presentation.components.scannerAwareFocus
 import com.wmserp.app.presentation.theme.WmsTheme
 
 @Composable
-fun ScanRoute(onReceivePurchaseOrder: (String) -> Unit, viewModel: ScanViewModel = hiltViewModel()) {
+fun ScanRoute(onReceivePurchaseReceipt: (String) -> Unit, viewModel: ScanViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     ScannerListener(enabled = !state.transfer.visible) { viewModel.onScanned(it) }
     ScanScreen(
@@ -107,7 +104,12 @@ fun ScanRoute(onReceivePurchaseOrder: (String) -> Unit, viewModel: ScanViewModel
         onTransferToChange = viewModel::onTransferToChange,
         onTransferQtyChange = viewModel::onTransferQtyChange,
         onSubmitTransfer = viewModel::submitTransfer,
-        onReceivePurchaseOrder = onReceivePurchaseOrder,
+        onReceivePurchaseReceipt = onReceivePurchaseReceipt,
+        onTransferDepartmentChange = viewModel::onTransferDepartmentChange,
+        onTransferReceivedByChange = viewModel::onTransferReceivedByChange,
+        onTransferFieldAnswer = viewModel::setTransferFieldAnswer,
+        onConfirmTransferFields = viewModel::confirmTransferFields,
+        onDismissTransferFields = viewModel::dismissTransferFields,
     )
 }
 
@@ -127,7 +129,12 @@ fun ScanScreen(
     onTransferToChange: (String) -> Unit,
     onTransferQtyChange: (String) -> Unit,
     onSubmitTransfer: () -> Unit,
-    onReceivePurchaseOrder: (String) -> Unit,
+    onReceivePurchaseReceipt: (String) -> Unit,
+    onTransferDepartmentChange: (String) -> Unit = {},
+    onTransferReceivedByChange: (String) -> Unit = {},
+    onTransferFieldAnswer: (String, String) -> Unit = { _, _ -> },
+    onConfirmTransferFields: () -> Unit = {},
+    onDismissTransferFields: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -209,7 +216,8 @@ fun ScanScreen(
                 when (lookup) {
                     is ScanLookup.ItemFound -> ItemResultCard(lookup.item, lookup.stock, onClear = onClearResult, onTransfer = onOpenTransfer)
                     is ScanLookup.WarehouseFound -> WarehouseResultCard(lookup.warehouse, lookup.stock, onClear = onClearResult)
-                    is ScanLookup.PurchaseOrderFound -> PurchaseOrderResultCard(lookup.purchaseOrder, onClear = onClearResult, onReceive = { onReceivePurchaseOrder(lookup.purchaseOrder.name) })
+                    is ScanLookup.BatchFound -> BatchResultCard(lookup.batch, lookup.item, lookup.stock, onClear = onClearResult, onTransfer = onOpenTransfer)
+                    is ScanLookup.PurchaseReceiptFound -> PurchaseReceiptResultCard(lookup.receipt, onClear = onClearResult, onReceive = { onReceivePurchaseReceipt(lookup.receipt.name) })
                     is ScanLookup.NotFound -> NotFoundCard(lookup.code, lookup.target, onClear = onClearResult)
                 }
             }
@@ -241,16 +249,27 @@ fun ScanScreen(
     }
 
     if (state.transfer.visible) {
-        val item = (state.result as? ScanLookup.ItemFound)?.item
         TransferSheet(
-            item = item,
             form = state.transfer,
             onDismiss = onCloseTransfer,
             onFromChange = onTransferFromChange,
             onToChange = onTransferToChange,
             onQtyChange = onTransferQtyChange,
+            onDepartmentChange = onTransferDepartmentChange,
+            onReceivedByChange = onTransferReceivedByChange,
             onSubmit = onSubmitTransfer,
         )
+        if (state.transfer.requiredFields.isNotEmpty()) {
+            RequiredFieldsDialog(
+                doctype = stringResource(R.string.doctype_stock_entry),
+                fields = state.transfer.requiredFields,
+                answers = state.transfer.requiredFieldAnswers,
+                linkOptions = state.transfer.linkOptions,
+                onAnswerChange = onTransferFieldAnswer,
+                onConfirm = onConfirmTransferFields,
+                onDismiss = onDismissTransferFields,
+            )
+        }
     }
 }
 
@@ -297,36 +316,6 @@ private fun Viewfinder(state: ScanUiState, onCameraBarcode: (String, String?) ->
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ScanFrameOverlay(accent: Color, animate: Boolean) {
-    val transition = rememberInfiniteTransition(label = "scanline")
-    val progress by transition.animateFloat(
-        initialValue = 0.12f,
-        targetValue = 0.88f,
-        animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Reverse),
-        label = "scanline_progress",
-    )
-    Canvas(modifier = Modifier.fillMaxSize().padding(28.dp)) {
-        val w = size.width
-        val h = size.height
-        val len = minOf(w, h) * 0.14f
-        val stroke = 5.dp.toPx()
-        val corners = listOf(
-            Offset(0f, 0f) to listOf(Offset(len, 0f), Offset(0f, len)),
-            Offset(w, 0f) to listOf(Offset(w - len, 0f), Offset(w, len)),
-            Offset(0f, h) to listOf(Offset(len, h), Offset(0f, h - len)),
-            Offset(w, h) to listOf(Offset(w - len, h), Offset(w, h - len)),
-        )
-        corners.forEach { (origin, ends) ->
-            ends.forEach { end -> drawLine(Color.White, origin, end, strokeWidth = stroke, cap = StrokeCap.Round) }
-        }
-        if (animate) {
-            val y = h * progress
-            drawLine(accent.copy(alpha = 0.9f), Offset(len * 0.6f, y), Offset(w - len * 0.6f, y), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
         }
     }
 }
@@ -420,26 +409,81 @@ private fun WarehouseResultCard(warehouse: Warehouse, stock: List<StockLevel>, o
     }
 }
 
+/** A scanned batch label: the batch, its item, expiry and the stock per warehouse (quantities only). */
 @Composable
-private fun PurchaseOrderResultCard(po: PurchaseOrder, onClear: () -> Unit, onReceive: () -> Unit) {
-    ResultCard(title = po.name, subtitle = po.supplierName, chip = po.status, chipColor = WmsTheme.colors.warning, onClear = onClear) {
+private fun BatchResultCard(batch: Batch, item: Item?, stock: List<BatchWarehouseStock>, onClear: () -> Unit, onTransfer: () -> Unit) {
+    val today = remember { java.time.LocalDate.now().toString() }
+    val expired = batch.isExpiredOn(today)
+    ResultCard(
+        title = batch.name,
+        subtitle = item?.let { "${it.name} (${it.code})" } ?: batch.itemName ?: batch.itemCode,
+        chip = stringResource(if (expired) R.string.scan_chip_expired else if (batch.disabled) R.string.scan_chip_disabled else R.string.scan_chip_batch),
+        chipColor = if (expired || batch.disabled) WmsTheme.colors.danger else WmsTheme.colors.kpiTeal,
+        onClear = onClear,
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LabelValue(stringResource(R.string.scan_label_ordered), Formatters.date(po.transactionDate), Modifier.weight(1f))
-            LabelValue(stringResource(R.string.scan_label_expected), Formatters.date(po.scheduleDate), Modifier.weight(1f))
-            LabelValue(stringResource(R.string.scan_label_total), Formatters.money(po.grandTotal, po.currency), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_expiry), Formatters.date(batch.expiryDate), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_manufactured), Formatters.date(batch.manufacturingDate), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.scan_label_batch_qty), Formatters.qty(stock.sumOf { it.qty }), Modifier.weight(1f))
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        po.items.take(6).forEach { line ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(line.itemName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${Formatters.qty(line.receivedQty)} / ${Formatters.qty(line.qty)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        batch.supplier?.takeIf { it.isNotBlank() }?.let { LabelValue(stringResource(R.string.scan_label_supplier), it) }
+        if (stock.isNotEmpty()) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            stock.take(6).forEach { level ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(level.warehouse, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(Formatters.qty(level.qty), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        } else {
+            Text(stringResource(R.string.scan_no_stock), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (stock.isNotEmpty() && !expired && !batch.disabled) {
+            FilledTonalButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth().testTag("scan_move_batch")) {
+                Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.scan_move_stock))
             }
         }
-        if (po.items.size > 6) {
-            Text(stringResource(R.string.scan_more_items, po.items.size - 6), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** A scanned Purchase Receipt: stage, rows and expected quantities, and the way into receiving it. */
+@Composable
+private fun PurchaseReceiptResultCard(receipt: PurchaseReceipt, onClear: () -> Unit, onReceive: () -> Unit) {
+    val receivable = receipt.isDraft && receipt.canReceive
+    ResultCard(
+        title = receipt.name,
+        subtitle = receipt.supplierName,
+        chip = receipt.workflowState?.takeIf { it.isNotBlank() } ?: receipt.status ?: stringResource(R.string.receive_stage_draft),
+        chipColor = if (receivable) WmsTheme.colors.warning else WmsTheme.colors.info,
+        onClear = onClear,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            LabelValue(stringResource(R.string.label_posting_date), Formatters.date(receipt.postingDate), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.label_items), Formatters.int(receipt.items.size), Modifier.weight(1f))
+            LabelValue(stringResource(R.string.label_expected_qty), Formatters.qty(receipt.items.sumOf { it.qty }), Modifier.weight(1f))
         }
-        Button(onClick = onReceive, enabled = !po.isFullyReceived, modifier = Modifier.fillMaxWidth().testTag("scan_receive_po")) {
-            Text(stringResource(if (po.isFullyReceived) R.string.scan_fully_received else R.string.scan_receive_items))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        receipt.items.take(6).forEach { line ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(line.itemName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${Formatters.qty(line.qty)} ${line.uom.orEmpty()}".trim(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        if (receipt.items.size > 6) {
+            Text(stringResource(R.string.scan_more_items, receipt.items.size - 6), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Button(onClick = onReceive, enabled = receivable, modifier = Modifier.fillMaxWidth().testTag("scan_receive_pr")) {
+            Text(
+                stringResource(
+                    when {
+                        receivable -> R.string.scan_receive_items
+                        receipt.isSubmitted -> R.string.scan_receipt_submitted
+                        else -> R.string.scan_receipt_not_receivable
+                    }
+                )
+            )
         }
     }
 }
@@ -468,19 +512,24 @@ private fun NotFoundCard(code: String, target: ScanTarget, onClear: () -> Unit) 
 
 @Composable
 private fun TransferSheet(
-    item: Item?,
     form: TransferFormState,
     onDismiss: () -> Unit,
     onFromChange: (String) -> Unit,
     onToChange: (String) -> Unit,
     onQtyChange: (String) -> Unit,
+    onDepartmentChange: (String) -> Unit,
+    onReceivedByChange: (String) -> Unit,
     onSubmit: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(R.string.transfer_title), style = MaterialTheme.typography.titleLarge)
-            Text(item?.let { "${it.name} (${it.code})" } ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${form.itemName} (${form.itemCode})", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            when {
+                form.batchNo != null -> Text(stringResource(R.string.transfer_batch_scanned, form.batchNo), style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("transfer_batch"))
+                form.autoBatches -> Text(stringResource(R.string.transfer_batch_auto), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("transfer_batch_auto"))
+            }
             WarehousePicker(stringResource(R.string.transfer_from), form.fromWarehouse, form.warehouses, onFromChange)
             WarehousePicker(stringResource(R.string.transfer_to), form.toWarehouse, form.warehouses, onToChange)
             OutlinedTextField(
@@ -491,6 +540,13 @@ private fun TransferSheet(
                 modifier = Modifier.fillMaxWidth().scannerAwareFocus(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             )
+            form.form?.department?.let { field ->
+                SuggestionField(field.label, form.department, form.departmentOptions, onDepartmentChange, Modifier.testTag("transfer_department"))
+            }
+            form.form?.receivedBy?.let { field ->
+                SuggestionField(field.label, form.receivedBy, form.receivedByOptions, onReceivedByChange, Modifier.testTag("transfer_received_by"))
+            }
+            if (form.loadingForm) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             form.error?.let { ErrorBanner(it.asString()) }
             Button(onClick = onSubmit, enabled = form.canSubmit, modifier = Modifier.fillMaxWidth().height(50.dp)) {
                 if (form.submitting) {
