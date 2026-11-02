@@ -57,6 +57,12 @@ DEFAULT_LABEL_SIZE = (50.0, 30.0)  # mm, a common thermal label
 MIN_LABEL_MM, MAX_LABEL_MM = 15.0, 200.0
 MAX_COPIES = 50
 MAX_ROLL_LABELS = 3000
+
+# SHA-256 of earlier shipped templates (stripped). A site whose format still holds one of them never
+# edited it, so a migrate brings it up to the current template; an edited format is left alone.
+SUPERSEDED_TEMPLATES = {
+    "WMS Warehouse QR Labels": {"0303b7b590d3edb3346dc203e8d97736f31e7e10a6672b555f14aadbed56a88b"},  # 0.9.0
+}
 QTY_TOLERANCE = 1e-6
 
 # Site document labels the app ships and owns: Print Format name -> (DocType, template file).
@@ -142,6 +148,17 @@ def wrap_page(body, css="", title="Labels") -> str:
     )
 
 
+def template_hash(html) -> str:
+    import hashlib
+
+    return hashlib.sha256((html or "").strip().encode("utf-8")).hexdigest()
+
+
+def is_unedited_old_template(name, html) -> bool:
+    """True when `html` is an earlier shipped version of format `name`, untouched by the site."""
+    return template_hash(html) in SUPERSEDED_TEMPLATES.get(name, set())
+
+
 def is_roll_template(html) -> bool:
     return bool(html) and ROLL_MARKER in html
 
@@ -174,6 +191,21 @@ def qr_size(width, height) -> float:
     """The printed QR size (mm) for a label: as tall as the label allows (2 mm margins), and at most
     half its width so the text beside it stays readable; never below 10 mm."""
     return round(max(10.0, min(height - 4.0, width * 0.5)), 1)
+
+
+def roll_pdf_options(width, height) -> dict:
+    """wkhtmltopdf options for a label roll: the page is exactly the label, no margins.
+    `page-size: Custom` makes Frappe's `get_pdf` keep the explicit width / height instead of adding
+    the Print Settings page size (A4) next to them."""
+    return {
+        "page-size": "Custom",
+        "page-width": f"{width:g}mm",
+        "page-height": f"{height:g}mm",
+        "margin-top": "0mm",
+        "margin-bottom": "0mm",
+        "margin-left": "0mm",
+        "margin-right": "0mm",
+    }
 
 
 def copies(value) -> int:

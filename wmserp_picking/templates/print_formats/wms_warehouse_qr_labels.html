@@ -22,11 +22,11 @@
   .print-format { margin-top: 0mm; margin-bottom: 0mm; margin-left: 0mm; margin-right: 0mm; }
   html, body { margin: 0; padding: 0; }
   .wms-roll { font-family: Helvetica, Arial, sans-serif; color: #000; }
-  .wms-roll table.wms-label {
-    width: {{ label_width }}mm; height: {{ label_height - 0.6 }}mm; border-collapse: collapse; table-layout: fixed;
-    page-break-inside: avoid; overflow: hidden;
-  }
-  .wms-roll table.wms-label.wms-break { page-break-after: always; }
+  /* One box per page, a little shorter than the page and clipped, so long text or rounding never
+     spills a label onto an extra (blank) page. */
+  .wms-roll div.wms-page { width: {{ label_width }}mm; height: {{ label_height - 0.6 }}mm; overflow: hidden; page-break-inside: avoid; }
+  .wms-roll div.wms-page.wms-break { page-break-after: always; }
+  .wms-roll table.wms-label { width: {{ label_width }}mm; height: {{ label_height - 0.6 }}mm; border-collapse: collapse; table-layout: fixed; }
   .wms-roll td.wms-qr { width: {{ qr_size + pad }}mm; padding: {{ pad }}mm 0 {{ pad }}mm {{ pad }}mm; vertical-align: middle; }
   .wms-roll td.wms-qr svg { width: {{ qr_size }}mm; height: {{ qr_size }}mm; display: block; }
   .wms-roll td.wms-text { padding: {{ pad }}mm; vertical-align: middle; overflow: hidden; }
@@ -40,7 +40,7 @@
 </style>
 <div class="wms-roll">
 {%- for label in labels %}
-  <table class="wms-label{% if not loop.last %} wms-break{% endif %}">
+  <div class="wms-page{% if not loop.last %} wms-break{% endif %}"><table class="wms-label">
     <tr>
       <td class="wms-qr">{{ wms_qr_svg(label.payload, 1, true) }}</td>
       <td class="wms-text">
@@ -60,6 +60,6 @@
         {%- endif %}
       </td>
     </tr>
-  </table>
+  </table></div>
 {%- endfor %}
 </div>

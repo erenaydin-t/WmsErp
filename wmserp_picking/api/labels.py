@@ -15,7 +15,7 @@ Print Formats on install / migrate (see setup/custom_fields.py).
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import cint, flt
 from frappe.utils.pdf import get_pdf
 
 from wmserp_picking.labels import rules
@@ -162,35 +162,34 @@ def warehouse_label_preview(warehouse, mode=None, item_code=None, batch_no=None,
     labels, options = warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, label_width, label_height)
     fmt = roll_format(print_format)
     unique = labels[:: options["copies"]] if options["copies"] > 1 else labels
-    return {
-        "count": len(labels),
-        "labels": len(unique),
-        "items": len({label["item_code"] for label in unique}),
-        "batches": len({label["batch_no"] for label in unique if label["batch_no"]}),
-        "rows": [{k: label[k] for k in ("item_code", "item_name", "batch_no", "expiry_date", "qty", "uom")} for label in unique[:200]],
-        "html": render_roll(labels[: 6 * options["copies"]], fmt, options),
-        "label_width": options["label_width"],
-        "label_height": options["label_height"],
-        "print_format": fmt.name,
-    }
+    summary = label_summary(labels, options)
+    summary.update(
+        {
+            "rows": [{k: label[k] for k in ("item_code", "item_name", "batch_no", "expiry_date", "qty", "uom")} for label in unique[:200]],
+            "html": render_roll(labels[: 6 * options["copies"]], fmt, options),
+            "print_format": fmt.name,
+        }
+    )
+    return summary
+
+
+@frappe.whitelist()
+def count_warehouse_labels(warehouse, mode=None, item_code=None, batch_no=None, per_batch=1, copies=1, label_width=None, label_height=None, print_format=None):
+    """Validates a print request without rendering anything (the page calls it before it opens the
+    PDF, so errors show as messages instead of a raw error page) and returns its totals."""
+    labels, options = warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, label_width, label_height, for_print=True)
+    roll_format(print_format)
+    return label_summary(labels, options)
 
 
 @frappe.whitelist()
 def download_warehouse_labels(warehouse, mode=None, item_code=None, batch_no=None, per_batch=1, copies=1, label_width=None, label_height=None, print_format=None):
     """The labels as one PDF, one label per page sized for the label printer."""
-    labels, options = warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, label_width, label_height)
+    labels, options = warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, label_width, label_height, for_print=True)
     fmt = roll_format(print_format)
     html = render_roll(labels, fmt, options)
-    pdf_options = {
-        "page-width": f"{options['label_width']}mm",
-        "page-height": f"{options['label_height']}mm",
-        "margin-top": "0mm",
-        "margin-bottom": "0mm",
-        "margin-left": "0mm",
-        "margin-right": "0mm",
-    }
     frappe.local.response.filename = rules.file_name("Warehouse", len(labels))
-    frappe.local.response.filecontent = get_pdf(html, options=pdf_options)
+    frappe.local.response.filecontent = get_pdf(html, options=rules.roll_pdf_options(options["label_width"], options["label_height"]))
     frappe.local.response.type = "pdf"
 
 
@@ -198,9 +197,7 @@ def download_warehouse_labels(warehouse, mode=None, item_code=None, batch_no=Non
 def stocked_item_query(doctype, txt, searchfield, start, page_len, filters):
     """Link field query of the page: items with stock in the chosen warehouse."""
     filters = frappe.parse_json(filters) or {}
-    warehouses = stock_warehouses(filters.get("warehouse"))
-    if not warehouses:
-        return []
+    warehouses = accessible_stock_warehouses(filters.get("warehouse"))
     like = f"%{txt or ''}%"
     return frappe.db.sql(
         """
@@ -212,31 +209,33 @@ def stocked_item_query(doctype, txt, searchfield, start, page_len, filters):
         order by bin.item_code
         limit %(start)s, %(page_len)s
         """,
-        {"warehouses": warehouses, "like": like, "start": int(start or 0), "page_len": int(page_len or 20)},
+        {"warehouses": warehouses, "like": like, "start": cint(start), "page_len": cint(page_len) or 20},
     )
 
 
 @frappe.whitelist()
 def stocked_batch_query(doctype, txt, searchfield, start, page_len, filters):
-    """Link field query of the page: batches with stock in the chosen warehouse (of the chosen item)."""
+    """Link field query of the page: batches with stock in the chosen warehouse (of the chosen
+    item), filtered and paged in the database."""
     filters = frappe.parse_json(filters) or {}
-    warehouses = stock_warehouses(filters.get("warehouse"))
-    if not warehouses:
-        return []
-    item_code = filters.get("item_code")
-    text = (txt or "").lower()
-    totals = {}
-    for (item, _warehouse, batch_no), qty in batch_balances(warehouses).items():
-        if item_code and item != item_code:
-            continue
-        totals[(batch_no, item)] = totals.get((batch_no, item), 0.0) + qty
-    rows = [(batch_no, item, qty) for (batch_no, item), qty in totals.items() if qty > rules.QTY_TOLERANCE and (not text or text in batch_no.lower() or text in item.lower())]
-    rows.sort()
-    start, page_len = int(start or 0), int(page_len or 20)
-    return rows[start : start + page_len]
+    warehouses = accessible_stock_warehouses(filters.get("warehouse"))
+    rows = batch_stock(warehouses, item_code=filters.get("item_code") or None, txt=txt, start=cint(start), limit=cint(page_len) or 20)
+    return [(row.batch_no, row.item_code, row.qty) for row in rows]
 
 
-def warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, label_width, label_height):
+def label_summary(labels, options) -> dict:
+    unique = labels[:: options["copies"]] if options["copies"] > 1 else labels
+    return {
+        "count": len(labels),
+        "labels": len(unique),
+        "items": len({label["item_code"] for label in unique}),
+        "batches": len({label["batch_no"] for label in unique if label["batch_no"]}),
+        "label_width": options["label_width"],
+        "label_height": options["label_height"],
+    }
+
+
+def warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, label_width, label_height, for_print=False):
     """The labels to print (each with its QR payload, copies expanded) and the layout options."""
     try:
         mode = rules.label_mode(mode)
@@ -244,18 +243,20 @@ def warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, la
         count = rules.copies(copies)
     except rules.LabelRuleError as exc:
         frappe.throw(_(str(exc)))
-    check_label_permissions()
-    warehouses = stock_warehouses(warehouse)
-    if not warehouses:
-        frappe.throw(_("Warehouse {0} has no enabled warehouses to print from.").format(warehouse))
+    warehouses = accessible_stock_warehouses(warehouse, for_print=for_print)
+    item_code = (item_code or "").strip() or None
+    batch_no = (batch_no or "").strip() or None
 
     if mode == rules.MODE_BATCH:
         if not batch_no:
             frappe.throw(_("Choose the batch to print."))
-        item_code = frappe.db.get_value("Batch", batch_no, "item")
-        if not item_code:
+        batch_item = frappe.db.get_value("Batch", batch_no, "item")
+        if not batch_item:
             frappe.throw(_("Batch {0} does not exist.").format(batch_no))
-    if mode == rules.MODE_ITEM and not item_code:
+        if item_code and item_code != batch_item:
+            frappe.throw(_("Batch {0} belongs to item {1}, not {2}.").format(batch_no, batch_item, item_code))
+        item_code = batch_item
+    elif mode == rules.MODE_ITEM and not item_code:
         frappe.throw(_("Choose the item to print."))
 
     bin_filters = {"warehouse": ["in", warehouses], "actual_qty": [">", 0]}
@@ -267,30 +268,29 @@ def warehouse_labels(warehouse, mode, item_code, batch_no, per_batch, copies, la
     if codes:
         for item in frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "item_name", "has_batch_no", "stock_uom"], limit_page_length=0):
             items[item.name] = {"item_name": item.item_name, "has_batch_no": cint(item.has_batch_no), "stock_uom": item.stock_uom}
-    with_batches = mode == rules.MODE_BATCH or (mode == rules.MODE_WAREHOUSE and cint(per_batch))
-    balances = batch_balances(warehouses) if with_batches and any(info["has_batch_no"] for info in items.values()) else {}
-    if mode == rules.MODE_BATCH:
-        balances = {key: qty for key, qty in balances.items() if key[2] == batch_no}
-    batch_names = {key[2] for key in balances}
-    batches = {}
-    if batch_names:
-        for batch in frappe.get_all("Batch", filters={"name": ["in", list(batch_names)]}, fields=["name", "expiry_date"], limit_page_length=0):
-            batches[batch.name] = {"expiry_date": batch.expiry_date}
 
-    labels = rules.stocked_labels(bins, balances, items, batches, per_batch=with_batches)
-    if mode == rules.MODE_BATCH:
-        labels = [label for label in labels if label["batch_no"] == batch_no]
-        if not labels:
-            frappe.throw(_("Batch {0} has no stock in {1}.").format(batch_no, warehouse))
-    elif mode == rules.MODE_ITEM:
-        # One item label (item code only in the QR), whatever batches the item is held in.
-        total = sum(label["qty"] for label in labels)
-        labels = labels[:1]
+    if mode == rules.MODE_ITEM:
+        # One item label (the QR names the item only), whatever batches the stock is held in.
+        labels = rules.stocked_labels(bins, {}, items, {}, per_batch=False)
         if not labels:
             frappe.throw(_("{0} has no stock in {1}.").format(item_code, warehouse))
-        labels[0].update({"batch_no": None, "expiry_date": None, "qty": total})
-    elif not labels:
-        frappe.throw(_("Nothing is in stock in {0}.").format(warehouse))
+    else:
+        with_batches = mode == rules.MODE_BATCH or bool(cint(per_batch))
+        balances = {}
+        if with_batches and any(info["has_batch_no"] for info in items.values()):
+            if mode == rules.MODE_BATCH:
+                rows = batch_stock(warehouses, item_code=item_code, batch_no=batch_no, by_warehouse=True)
+            else:
+                rows = batch_stock(warehouses, by_warehouse=True)
+            balances = {(row.item_code, row.warehouse, row.batch_no): flt(row.qty) for row in rows}
+        batches = batch_expiries({key[2] for key in balances})
+        labels = rules.stocked_labels(bins, balances, items, batches, per_batch=with_batches)
+        if mode == rules.MODE_BATCH:
+            labels = [label for label in labels if label["batch_no"] == batch_no]
+            if not labels:
+                frappe.throw(_("Batch {0} has no stock in {1}.").format(batch_no, warehouse))
+        elif not labels:
+            frappe.throw(_("Nothing is in stock in {0}.").format(warehouse))
 
     keys = wms_qr_keys()
     for label in labels:
@@ -312,27 +312,92 @@ def qr_payload(keys, item_code, batch_no=None) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
-def check_label_permissions():
-    if not frappe.has_permission("Item", "read") or not frappe.has_permission("Bin", "read"):
-        frappe.throw(_("Not permitted to print stock labels."), frappe.PermissionError)
-
-
-def stock_warehouses(warehouse) -> list:
+def accessible_stock_warehouses(warehouse, for_print=False) -> list:
+    """The warehouses whose stock may be labelled: the warehouse itself or the enabled leaf
+    warehouses of a group, limited to what the user may read (roles and User Permissions on
+    Warehouse). Printing also needs print permission on Item, as the label sheets do."""
+    warehouse = (warehouse or "").strip()
     if not warehouse:
-        return []
-    from wmserp_picking.stocktaking.service import leaf_warehouses
+        frappe.throw(_("Choose the warehouse."))
+    info = frappe.db.get_value("Warehouse", warehouse, ["name", "lft", "rgt", "is_group", "disabled"], as_dict=True)
+    if not info:
+        frappe.throw(_("Warehouse {0} does not exist.").format(warehouse), frappe.DoesNotExistError)
+    if not frappe.has_permission("Warehouse", "read", doc=warehouse):
+        frappe.throw(_("Not permitted to read Warehouse {0}.").format(warehouse), frappe.PermissionError)
+    if not frappe.has_permission("Item", "read") or not frappe.has_permission("Bin", "read"):
+        frappe.throw(_("Not permitted to read stock."), frappe.PermissionError)
+    if for_print and not frappe.has_permission("Item", "print"):
+        frappe.throw(_("Not permitted to print {0}.").format(_("Item")), frappe.PermissionError)
+    if cint(info.disabled):
+        frappe.throw(_("Warehouse {0} is disabled.").format(warehouse))
+    if not cint(info.is_group):
+        return [warehouse]
+    # get_list applies the user's permissions, so a group only covers the warehouses they may see.
+    leaves = frappe.get_list(
+        "Warehouse",
+        filters={"lft": [">", info.lft], "rgt": ["<", info.rgt], "is_group": 0, "disabled": 0},
+        pluck="name",
+        order_by="lft asc",
+        limit_page_length=0,
+    )
+    if not leaves:
+        frappe.throw(_("Warehouse {0} has no enabled warehouses you may print from.").format(warehouse))
+    return leaves
 
-    return leaf_warehouses(warehouse)
+
+def batch_stock(warehouses, item_code=None, batch_no=None, txt=None, start=0, limit=None, by_warehouse=False) -> list:
+    """Batch balances held in `warehouses`, computed and filtered in the database: per (item,
+    warehouse, batch) with `by_warehouse`, else per (item, batch) for the Link search (`txt` matches
+    the batch or the item, paged with `start` / `limit`). Ledger entries made before Serial and Batch
+    Bundles carry `batch_no` themselves; both kinds are added up, none counted twice."""
+    params = {"warehouses": warehouses, "item_code": item_code, "batch_no": batch_no, "like": f"%{txt or ''}%"}
+    conditions = "sle.warehouse in %(warehouses)s and sle.is_cancelled = 0"
+    if item_code:
+        conditions += " and sle.item_code = %(item_code)s"
+    legacy_batch, bundle_batch = "sle.batch_no", "sbe.batch_no"
+    legacy_where, bundle_where = conditions, conditions
+    if batch_no:
+        legacy_where += f" and {legacy_batch} = %(batch_no)s"
+        bundle_where += f" and {bundle_batch} = %(batch_no)s"
+    if txt:
+        legacy_where += f" and ({legacy_batch} like %(like)s or sle.item_code like %(like)s)"
+        bundle_where += f" and ({bundle_batch} like %(like)s or sle.item_code like %(like)s)"
+    group = "item_code, warehouse, batch_no" if by_warehouse else "item_code, batch_no"
+    paging = ""
+    if limit:
+        paging = " limit %(start)s, %(limit)s"
+        params.update({"start": cint(start), "limit": cint(limit)})
+    return frappe.db.sql(
+        f"""
+        select {group}, sum(qty) as qty from (
+            select sle.item_code, sle.warehouse, sle.batch_no, sle.actual_qty as qty
+            from `tabStock Ledger Entry` sle
+            where {legacy_where} and ifnull(sle.batch_no, '') != '' and ifnull(sle.serial_and_batch_bundle, '') = ''
+            union all
+            select sle.item_code, sle.warehouse, sbe.batch_no, sbe.qty
+            from `tabStock Ledger Entry` sle
+            inner join `tabSerial and Batch Entry` sbe on sbe.parent = sle.serial_and_batch_bundle
+            where {bundle_where} and ifnull(sle.serial_and_batch_bundle, '') != '' and ifnull(sbe.batch_no, '') != ''
+        ) moves
+        group by {group}
+        having sum(qty) > 0
+        order by batch_no, item_code{paging}
+        """,
+        params,
+        as_dict=True,
+    )
 
 
-def batch_balances(warehouses) -> dict:
-    from wmserp_picking.stocktaking.service import batch_balances as balances
-
-    return balances(warehouses)
+def batch_expiries(batch_nos) -> dict:
+    batch_nos = [b for b in batch_nos or [] if b]
+    if not batch_nos:
+        return {}
+    return {b.name: {"expiry_date": b.expiry_date} for b in frappe.get_all("Batch", filters={"name": ["in", batch_nos]}, fields=["name", "expiry_date"], limit_page_length=0)}
 
 
 def roll_format(name=None):
-    """The requested (or the shipped) label-printer Print Format, created if a site lost it."""
+    """The requested (or the shipped) label-printer Print Format, created if a site lost it. Only an
+    enabled Warehouse format marked as a label-printer layout is accepted."""
     name = (name or "").strip() or rules.ROLL_FORMAT
     if not frappe.db.exists(PRINT_FORMAT, name):
         if name != rules.ROLL_FORMAT:
@@ -341,9 +406,14 @@ def roll_format(name=None):
 
         ensure_label_print_formats()
     fmt = frappe.get_doc(PRINT_FORMAT, name)
+    if fmt.doc_type != rules.FORMAT_DOCTYPES[rules.ROLL_FORMAT]:
+        frappe.throw(_("Print Format {0} belongs to {1}, not {2}.").format(name, _(fmt.doc_type), _("Warehouse")))
     if not rules.is_roll_template(fmt.html):
         frappe.throw(_("Print Format {0} is not a label-printer format (it must contain the '{1}' marker).").format(name, rules.ROLL_MARKER))
-    if fmt.disabled and name == rules.ROLL_FORMAT:
+    if fmt.disabled:
+        if name != rules.ROLL_FORMAT:
+            frappe.throw(_("Print Format {0} is disabled.").format(name))
+        # The shipped format is the page's fallback: a disabled one is brought back.
         frappe.db.set_value(PRINT_FORMAT, name, "disabled", 0, update_modified=False)
     return fmt
 

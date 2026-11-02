@@ -154,8 +154,10 @@ class WmsQrLabels {
 	preview(quiet) {
 		const args = this.args();
 		if (!args) return;
+		// Only the answer to the latest request is shown: a slow earlier one must not replace it.
+		const request = (this.preview_request = (this.preview_request || 0) + 1);
 		frappe.call({ method: WMS_LABELS_API + "warehouse_label_preview", args, freeze: !quiet }).then((r) => {
-			if (r && r.message) this.show_preview(r.message);
+			if (request === this.preview_request && r && r.message) this.show_preview(r.message);
 		});
 	}
 
@@ -200,7 +202,30 @@ class WmsQrLabels {
 		const query = Object.keys(args)
 			.map((key) => encodeURIComponent(key) + "=" + encodeURIComponent(args[key]))
 			.join("&");
-		const w = window.open("/api/method/" + WMS_LABELS_API + "download_warehouse_labels?" + query);
-		if (!w) frappe.msgprint(__("Please enable pop-ups"));
+		// The tab is opened by the click itself (so no pop-up blocker stops it) and only pointed at the
+		// PDF once the request is valid; an error (nothing in stock, too many labels, permissions) is
+		// shown here as a message and the empty tab is closed.
+		const tab = window.open("", "_blank");
+		if (!tab) {
+			frappe.msgprint(__("Please enable pop-ups"));
+			return;
+		}
+		frappe
+			.call({
+				method: WMS_LABELS_API + "count_warehouse_labels",
+				args,
+				freeze: true,
+				freeze_message: __("Preparing labels..."),
+				error: () => tab.close(),
+			})
+			.then((r) => {
+				if (!r || !r.message) {
+					tab.close();
+					return;
+				}
+				tab.location.href = "/api/method/" + WMS_LABELS_API + "download_warehouse_labels?" + query;
+				frappe.show_alert({ message: __("{0} labels sent to the PDF", [r.message.count]), indicator: "green" });
+			})
+			.catch(() => tab.close());
 	}
 }
