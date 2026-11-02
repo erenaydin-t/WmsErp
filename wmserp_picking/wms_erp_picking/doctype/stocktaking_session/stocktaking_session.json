@@ -179,7 +179,7 @@
   },
   {
    "default": "0",
-   "description": "Also list items whose ERP quantity is zero (they are always addable during counting).",
+   "description": "Also snapshot items / batches whose ERP quantity is zero, so they can be counted when stock is found. They are optional: the app hides them until the counter shows zero-stock items, and an uncounted one neither blocks closing nor changes stock. (Any stock item can also be added by scanning it.)",
    "fieldname": "include_zero_stock",
    "fieldtype": "Check",
    "label": "Include Zero Stock"

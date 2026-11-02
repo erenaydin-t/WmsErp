@@ -99,8 +99,11 @@ def current_roles():
 
 
 def is_blind_for(doc, roles=None) -> bool:
-    """Counters do not see ERP quantities in a blind count; managers always do."""
-    return bool(cint(doc.blind_count)) and not rules.is_supervisor(roles or current_roles())
+    """Nobody sees ERP quantities in the app during a blind count, managers who count included
+    (before 0.8.0 Stock / System Managers did, so a manager counting in the app saw them). Managers
+    review the quantities in the desk: the session form and the variance reports read the
+    session directly, not through these app methods."""
+    return bool(cint(doc.blind_count))
 
 
 def full_names(users) -> dict:
@@ -390,8 +393,38 @@ def approve_session(name):
     return serialize_session(doc, totals=doc.refresh_totals())
 
 
-def create_reconciliation(name, submit=False):
-    """Final Approval -> Reconciled: one draft Stock Reconciliation with every approved difference."""
+def reconciliation_defaults(name) -> dict:
+    doc = manager_session(name)
+    company = frappe.db.get_value("Company", doc.company, ["stock_adjustment_account", "cost_center"], as_dict=True) or {}
+    has_department = frappe.get_meta("Stock Reconciliation").has_field("department") or frappe.get_meta("Stock Reconciliation Item").has_field("department")
+    return {
+        "company": doc.company,
+        "has_department": bool(has_department),
+        "department": documents.warehouse_department() if has_department else None,
+        "expense_account": company.get("stock_adjustment_account"),
+        "cost_center": company.get("cost_center"),
+    }
+
+
+def apply_reconciliation_choices(reconciliation, department=None, expense_account=None, cost_center=None):
+    """What the manager chose in the desk dialog, on the header and on every row that has the field."""
+    choices = {"department": department, "expense_account": expense_account, "cost_center": cost_center}
+    row_meta = frappe.get_meta("Stock Reconciliation Item")
+    for fieldname, value in choices.items():
+        value = (value or "").strip() if isinstance(value, str) else value
+        if not value:
+            continue
+        set_if_field(reconciliation, fieldname, value)
+        if row_meta.has_field(fieldname):
+            for row in reconciliation.get("items") or []:
+                row.set(fieldname, value)
+
+
+def create_reconciliation(name, submit=False, department=None, expense_account=None, cost_center=None):
+    """Final Approval -> Reconciled: one draft Stock Reconciliation with every approved difference.
+    The department, difference account and cost center are the manager's choices; any other field
+    the site made mandatory is filled like every document the app creates, and what is still
+    missing is named in the error instead of an anonymous mandatory-field failure."""
     doc = manager_session(name)
     if doc.stock_reconciliation and cint(frappe.db.get_value("Stock Reconciliation", doc.stock_reconciliation, "docstatus")) != 2:
         return {
@@ -430,7 +463,17 @@ def create_reconciliation(name, submit=False):
         if row.batch_no:
             item.batch_no = row.batch_no
             set_if_field(item, "use_serial_batch_fields", 1)
-    reconciliation.insert()
+    apply_reconciliation_choices(reconciliation, department, expense_account, cost_center)
+    missing = documents.fill_required(reconciliation, company=doc.company)
+    if missing:
+        frappe.throw(_("The Stock Reconciliation needs: {0}. Fill them in the dialog or set defaults, then try again.").format(", ".join(f["label"] for f in missing)))
+    try:
+        reconciliation.insert()
+    except frappe.MandatoryError as exc:
+        fields = documents.missing_from_exception("Stock Reconciliation", exc)
+        if not fields:
+            raise
+        frappe.throw(_("The Stock Reconciliation needs: {0}.").format(", ".join(f["label"] for f in fields)))
     doc.db_set({"stock_reconciliation": reconciliation.name, "status": rules.SESSION_RECONCILED, "reconciled_at": now_datetime()})
     finalize_rows(name)
     freeze.invalidate()
@@ -1112,6 +1155,8 @@ def serialize_item(row, user=None, blind=False, names=None) -> dict:
         "expiry_date": str_or_none(row.get("expiry_date")),
         "stock_uom": row.get("stock_uom"),
         "erp_qty": None if blind else flt(row.get("erp_qty")),
+        # Zero ERP stock: optional, hidden in the app unless the counter shows zero-stock items.
+        "zero_stock": abs(flt(row.get("erp_qty"))) <= rules.QTY_TOLERANCE,
         "valuation_rate": None if blind else flt(row.get("valuation_rate")),
         "item_group": row.get("item_group"),
         "brand": row.get("brand"),
@@ -1145,7 +1190,7 @@ def serialize_session(doc, user=None, totals=None) -> dict:
     counters = doc.counter_users
     keys = get_qr_keys()
     totals = totals or doc.totals()
-    blind = bool(cint(doc.blind_count)) and not supervisor
+    blind = is_blind_for(doc)
     can_count = doc.status in rules.COUNTING_SESSION_STATUSES and (supervisor or user in counters or doc.counting_mode == rules.MODE_OPEN)
     return {
         "name": doc.name,

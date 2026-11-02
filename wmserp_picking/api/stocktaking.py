@@ -134,8 +134,17 @@ def approve_session(name):
 
 
 @frappe.whitelist()
-def create_reconciliation(name, submit=0):
-    return service.create_reconciliation(name, submit=cint(submit))
+def create_reconciliation(name, submit=0, department=None, expense_account=None, cost_center=None):
+    """`department`, `expense_account` (difference account) and `cost_center` are chosen by the
+    manager in the desk dialog; empty ones fall back to ERPNext's own defaults."""
+    return service.create_reconciliation(name, submit=cint(submit), department=department, expense_account=expense_account, cost_center=cost_center)
+
+
+@frappe.whitelist()
+def get_reconciliation_defaults(name):
+    """Prefills the desk dialog: the warehouse department and the company's stock adjustment
+    account and cost center, plus which of the fields the site's Stock Reconciliation has."""
+    return service.reconciliation_defaults(name)
 
 
 @frappe.whitelist()

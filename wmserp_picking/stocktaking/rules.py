@@ -300,9 +300,21 @@ def can_cancel(session_status, reconciliation_docstatus=None) -> None:
 # ---- aggregation ----------------------------------------------------------------------------------
 
 
+def is_optional_zero(row) -> bool:
+    """A row whose ERP quantity is zero (snapshotted with *Include Zero Stock*) and that nobody
+    counted: it may be counted when the stock is found, but it is not part of the work. It neither
+    blocks closing / approval nor goes into the Stock Reconciliation (ERP 0, nothing counted).
+    Rows without an `erp_qty` value are never optional."""
+    erp_qty = row.get("erp_qty")
+    if erp_qty in (None, ""):
+        return False
+    return abs(_num(erp_qty)) <= QTY_TOLERANCE and (row.get("status") or ITEM_NOT_COUNTED) in UNCOUNTED_STATUSES
+
+
 def progress(rows) -> dict:
-    """Totals of a session from its rows (dicts with status, qty_difference, value_difference)."""
-    rows = list(rows)
+    """Totals of a session from its rows (dicts with status, qty_difference, value_difference,
+    erp_qty). Uncounted zero-stock rows are optional and left out (`is_optional_zero`)."""
+    rows = [row for row in rows if not is_optional_zero(row)]
     statuses = [row.get("status") or ITEM_NOT_COUNTED for row in rows]
     counted = [row for row in rows if (row.get("status") or ITEM_NOT_COUNTED) in COUNTED_STATUSES]
     variance = [row for row in counted if abs(_num(row.get("qty_difference"))) > QTY_TOLERANCE]
@@ -324,6 +336,8 @@ def reconciliation_rows(rows, tolerance=0.0) -> list:
     """Rows whose final quantity differs from ERPNext: what the Stock Reconciliation must carry."""
     out = []
     for row in rows:
+        if is_optional_zero(row):
+            continue
         status = row.get("status") or ITEM_NOT_COUNTED
         if status not in (ITEM_COUNTED, ITEM_APPROVED):
             if status in (ITEM_MANAGER_REVIEW, ITEM_RECOUNTED):

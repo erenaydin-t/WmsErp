@@ -196,6 +196,34 @@ class AggregationTests(unittest.TestCase):
             rules.reconciliation_rows([self.rows[4]])
 
 
+class ZeroStockTests(unittest.TestCase):
+    """Include Zero Stock: zero rows are optional until someone counts them."""
+
+    rows = [
+        {"item_code": "A", "status": "Counted", "erp_qty": 10, "final_qty": 10, "qty_difference": 0},
+        {"item_code": "Z1", "status": "Not Counted", "erp_qty": 0},
+        {"item_code": "Z2", "status": "Assigned", "erp_qty": 0.0},
+        # Found 10 units of an item ERPNext holds 0 of: counted, so it is real work and a difference.
+        {"item_code": "Z3", "status": "Counted", "erp_qty": 0, "final_qty": 10, "qty_difference": 10},
+    ]
+
+    def test_optional_zero_rows(self):
+        self.assertTrue(rules.is_optional_zero(self.rows[1]))
+        self.assertTrue(rules.is_optional_zero(self.rows[2]))
+        self.assertFalse(rules.is_optional_zero(self.rows[3]))
+        self.assertFalse(rules.is_optional_zero({"status": "Not Counted", "erp_qty": 3}))
+        self.assertFalse(rules.is_optional_zero({"status": "Recount Required", "erp_qty": 0}))
+        # Without an ERP quantity a row is never optional (callers that do not read erp_qty).
+        self.assertFalse(rules.is_optional_zero({"status": "Not Counted"}))
+
+    def test_uncounted_zero_rows_do_not_block_closing_or_reconciliation(self):
+        totals = rules.progress(self.rows)
+        self.assertEqual(2, totals["total_items"])
+        self.assertEqual(0, totals["uncounted_items"])
+        self.assertEqual(rules.SESSION_FINAL_APPROVAL, rules.complete_counting_status(totals))
+        self.assertEqual(["Z3"], [r["item_code"] for r in rules.reconciliation_rows(self.rows)])
+
+
 class ScanTests(unittest.TestCase):
     def test_json_labels_and_plain_barcodes(self):
         qr = rules.resolve_scan('{"item_code": "PCT-500", "batch_no": "PCT-250901"}')

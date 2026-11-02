@@ -90,6 +90,118 @@ def next_row_status(picked_qty, required_qty, current_status=None, hold=False) -
     return ROW_NOT_PICKED
 
 
+def target_qty(picked_qty, stock_qty, qty=None, conversion_factor=None) -> float:
+    """What the picker must pick on a row, in the stock UOM: the row's *Picked Qty (in Stock UOM)*,
+    which the Senior Warehouse User sets on the Pick List (ERPNext fills it with the required stock
+    quantity on submit when it is left empty). Rows without it fall back to the stock quantity."""
+    picked = _num(picked_qty)
+    if picked > QTY_TOLERANCE:
+        return picked
+    stock = _num(stock_qty)
+    if stock > QTY_TOLERANCE:
+        return stock
+    return _num(qty) * (_num(conversion_factor) or 1.0)
+
+
+# ---- batches ------------------------------------------------------------------------------
+
+
+def accepts_several_batches(has_batch_no, batch_no, batch_from_wms=False, foreign_bundle=False) -> bool:
+    """A batch tracked row the Pick List left without a batch (ERPNext did not allocate one, or
+    the batch on it was only remembered from an earlier scan) is picked from any number of
+    batches. A row with an allocated batch, or with a batch bundle someone else filled in, keeps
+    that allocation."""
+    if not has_batch_no or foreign_bundle:
+        return False
+    return not (batch_no or "").strip() or bool(batch_from_wms)
+
+
+def parse_batches(value) -> list[dict]:
+    """`[{"batch_no": ..., "qty": ...}]` (a list or its JSON) -> the same list cleaned up: batch
+    numbers trimmed, the same batch (case ignored) merged into one entry, empty quantities
+    dropped. Negative or non-numeric quantities and entries without a batch raise PickingRuleError."""
+    if value in (None, ""):
+        return []
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise PickingRuleError("batches must be a JSON list") from exc
+    if not isinstance(value, (list, tuple)):
+        raise PickingRuleError("batches must be a list")
+    merged: dict[str, dict] = {}
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise PickingRuleError("every batch must be an object with batch_no and qty")
+        batch_no = str(entry.get("batch_no") or "").strip()
+        qty = _num(entry.get("qty"))
+        if qty < 0:
+            raise PickingRuleError(f"{batch_no}: picked quantity cannot be negative")
+        if qty <= QTY_TOLERANCE:
+            continue
+        if not batch_no:
+            raise PickingRuleError("every picked quantity needs its batch")
+        key = batch_no.lower()
+        if key in merged:
+            merged[key]["qty"] += qty
+        else:
+            merged[key] = {"batch_no": batch_no, "qty": qty}
+    return list(merged.values())
+
+
+def batches_total(batches) -> float:
+    return sum(_num(entry.get("qty")) for entry in batches or [])
+
+
+def single_batch_update(existing, batch_no, picked_qty) -> list[dict]:
+    """The batch list after a call that names at most one batch (`batch_no` + the row total), as
+    app versions before multi-batch picking send it. A scan replaces the list while it holds no
+    other batch; a quantity change without a batch applies to the only batch on the row."""
+    existing = parse_batches(existing)
+    picked = _num(picked_qty)
+    batch_no = (batch_no or "").strip()
+    if picked <= QTY_TOLERANCE:
+        return []
+    if batch_no:
+        others = [entry for entry in existing if entry["batch_no"].lower() != batch_no.lower()]
+        if others and batches_total(others) > QTY_TOLERANCE:
+            raise PickingRuleError(
+                f"this row was picked from several batches ({', '.join(e['batch_no'] for e in existing)}); update the WMS app to change it"
+            )
+        same = next((entry for entry in existing if entry["batch_no"].lower() == batch_no.lower()), None)
+        return [{"batch_no": same["batch_no"] if same else batch_no, "qty": picked}]
+    if len(existing) == 1:
+        return [{"batch_no": existing[0]["batch_no"], "qty": picked}]
+    if not existing:
+        raise PickingRuleError("scan the batch you are picking from")
+    raise PickingRuleError("this row was picked from several batches; update the WMS app to change it")
+
+
+def allocate_batches(available, qty) -> list[dict]:
+    """Splits `qty` over `available` batches in the order given (ERPNext's FEFO / FIFO order):
+    `available` is `[{"batch_no", "qty"}]`, the result `[{"batch_no", "qty"}]` totals `qty`. Raises
+    PickingRuleError when the batches do not hold enough."""
+    wanted = _num(qty)
+    if wanted <= QTY_TOLERANCE:
+        raise PickingRuleError("the quantity must be greater than zero")
+    out, left = [], wanted
+    for entry in available or []:
+        take = min(_num(entry.get("qty")), left)
+        if take <= QTY_TOLERANCE or not entry.get("batch_no"):
+            continue
+        same = next((o for o in out if o["batch_no"] == entry["batch_no"]), None)
+        if same:
+            same["qty"] += take
+        else:
+            out.append({"batch_no": entry["batch_no"], "qty": take})
+        left -= take
+        if left <= QTY_TOLERANCE:
+            return out
+    raise PickingRuleError(f"only {wanted - left:g} of {wanted:g} is available in batches")
+
+
 def stock_shortfalls(rows) -> list[dict]:
     """Rows whose picked quantity exceeds what the warehouse holds. `rows` are dicts with
     `picked` and `available` (None = not checked); the others keys are passed through."""

@@ -8,8 +8,20 @@ ledger and GL entries are always produced by ERPNext itself when those drafts ar
 Model
 -----
 * Assignment is per row: `Pick List Item.custom_picker`. Several pickers share one card.
+* Target: a row's required quantity is its *Picked Qty (in Stock UOM)* (`picked_qty`), which the
+  Senior Warehouse User sets on the Pick List (ERPNext fills it with the stock quantity on submit
+  when left empty). The app never writes `picked_qty`; what was picked lives in
+  `custom_wms_picked_qty`.
 * Row lifecycle: Not Picked --start_row--> Picking --save_row_progress*--> --complete_row--> Picked
   (a row completes when picked qty == required qty; timestamps and duration are stamped).
+* Several batches: a batch tracked row the Pick List left without a batch is picked from any
+  number of batches (`batches=[{batch_no, qty}]`, kept in `custom_wms_picked_batches`). Its final
+  confirmation records them in the row's Serial and Batch Bundle, which ERPNext's stock reservation
+  reads, and the Delivery Note / Stock Entry gets one row per batch.
+* Stock reservation: when the last row of a *Delivery* card is confirmed and *Stock Settings >
+  Enable Stock Reservation* is on, the picked quantities are reserved for the Sales Orders through
+  ERPNext's own Pick List reservation (per batch where the row has a bundle). A reset cancels the
+  row's reservation.
   `save_row_progress(hold=1)` keeps a row *Picking* even at the required quantity, so the app's
   draft -> picking in progress -> final confirmation flow leaves quantities and batches editable
   until `complete_row`; `reset_row` clears a row (and a batch the app assigned) before a document
@@ -25,6 +37,8 @@ Model
 """
 
 import datetime as dt
+import json
+from contextlib import contextmanager
 
 import frappe
 from frappe import _
@@ -85,6 +99,9 @@ ROW_FIELDS = [
     "custom_picker",
     "custom_row_status",
     "custom_wms_picked_qty",
+    "custom_wms_picked_batches",
+    "serial_and_batch_bundle",
+    "stock_reserved_qty",
     "custom_row_started_at",
     "custom_row_completed_at",
     "custom_picking_duration_seconds",
@@ -119,6 +136,10 @@ def get_settings():
             "followup_receipts",
             "warehouse_stamps",
             "material_request_pick_lists",
+            "picked_qty_target",
+            "multi_batch_picking",
+            "pick_list_stock_reservation",
+            "stock_transfer_api",
         ],
     }
 
@@ -231,11 +252,14 @@ def start_row(name, row):
 
 
 @frappe.whitelist()
-def save_row_progress(name, row, picked_qty, item_code=None, batch_no=None, elapsed_seconds=None, hold=0):
+def save_row_progress(name, row, picked_qty=None, item_code=None, batch_no=None, elapsed_seconds=None, hold=0, batches=None):
     """Stores a partial (or full) picked quantity for one row. Completes the row when it reaches
     the required quantity, then runs the card completion check - unless `hold` is set, in which
-    case the row stays *Picking* (editable) until `complete_row`."""
-    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=False, hold=bool(cint(hold)))
+    case the row stays *Picking* (editable) until `complete_row`.
+
+    `batches` (`[{"batch_no": ..., "qty": ...}]`, the row's complete list) is how a row without an
+    allocated batch is picked from several batches; the picked quantity is their sum."""
+    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=False, hold=bool(cint(hold)), batches=batches)
 
 
 @frappe.whitelist()
@@ -247,16 +271,22 @@ def reset_row(name, row):
     existing = find_generated_document(doc)
     if existing:
         frappe.throw(_("Row {0} ({1}) can no longer be changed: {2} {3} was already created from Pick List {4}.").format(child.idx, child.item_code, _(existing["doctype"]), existing["name"], doc.name))
+    # `picked_qty` is the Senior Warehouse User's target and stays untouched.
     updates = {
         "custom_wms_picked_qty": 0,
         "custom_row_status": rules.ROW_NOT_PICKED,
         "custom_row_completed_at": None,
         "custom_picking_duration_seconds": 0,
-        "picked_qty": 0,
     }
+    cancel_row_reservation(doc, child)
     if cint(child.get("custom_batch_from_wms")):
-        updates.update({"batch_no": None, "custom_batch_from_wms": 0})
+        updates.update({"batch_no": None, "custom_batch_from_wms": 0, "custom_wms_picked_batches": None})
+        if child.get("serial_and_batch_bundle"):
+            updates["serial_and_batch_bundle"] = None
+    bundle = child.get("serial_and_batch_bundle") if cint(child.get("custom_batch_from_wms")) else None
     child.db_set(updates, update_modified=False)
+    if bundle:
+        discard_row_bundle(bundle)
     if current_status(doc) == rules.STATUS_PICKED:
         doc.db_set({"custom_picking_status": rules.STATUS_PICKING, "custom_card_completed_at": None}, notify=True)
     else:
@@ -266,10 +296,12 @@ def reset_row(name, row):
 
 
 @frappe.whitelist()
-def complete_row(name, row, picked_qty=None, item_code=None, batch_no=None, elapsed_seconds=None):
+def complete_row(name, row, picked_qty=None, item_code=None, batch_no=None, elapsed_seconds=None, batches=None):
     """Marks one row as Picked (picked qty must equal the required qty) and runs the card
-    completion check; the response says whether this call completed the whole card."""
-    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=True)
+    completion check; the response says whether this call completed the whole card. A row picked
+    from several batches gets its Serial and Batch Bundle here; the call that completes a
+    *Delivery* card also reserves the stock (`reservation` in the response)."""
+    return update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete=True, batches=batches)
 
 
 @frappe.whitelist()
@@ -355,31 +387,52 @@ def generate_document(name, values=None):
 # --------------------------------------------------------------------------------------------
 
 
-def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete, hold=False):
+def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, require_complete, hold=False, batches=None):
     doc, child = load_row(name, row)
     required = required_qty(child)
-    picked = flt(picked_qty) if picked_qty not in (None, "") else flt(child.get("custom_wms_picked_qty"))
+
+    if item_code and item_code.strip().lower() != (child.item_code or "").lower():
+        frappe.throw(_("Wrong item. Expected: {0}, scanned: {1}").format(child.item_code, item_code))
+
+    picked_batches = None
+    if takes_several_batches(child):
+        picked_batches = requested_batches(child, picked_qty, batch_no, batches)
+        picked = rules.batches_total(picked_batches)
+    else:
+        picked = flt(picked_qty) if picked_qty not in (None, "") else flt(child.get("custom_wms_picked_qty"))
     try:
         picked = rules.validate_picked_qty(picked, required, child.item_code)
     except rules.PickingRuleError as exc:
         frappe.throw(str(exc))
 
-    if item_code and item_code.strip().lower() != (child.item_code or "").lower():
-        frappe.throw(_("Wrong item. Expected: {0}, scanned: {1}").format(child.item_code, item_code))
-
     updates = {"custom_wms_picked_qty": picked}
-    effective_batch = child.get("batch_no")
-    if batch_no:
-        batch_updates = validate_scanned_batch(child, batch_no.strip())
-        updates.update(batch_updates)
-        effective_batch = batch_updates.get("batch_no") or effective_batch
-    check_stock(child, effective_batch, picked)
+    if picked_batches is not None:
+        for entry in picked_batches:
+            check_stock(child, entry["batch_no"], entry["qty"])
+        updates.update(
+            {
+                "custom_wms_picked_batches": json.dumps(picked_batches) if picked_batches else None,
+                "custom_batch_from_wms": 1 if picked_batches else 0,
+                # The batches live in the list; a single batch remembered by an earlier version goes.
+                "batch_no": None,
+            }
+        )
+    else:
+        effective_batch = child.get("batch_no")
+        if batch_no:
+            batch_updates = validate_scanned_batch(child, batch_no.strip())
+            updates.update(batch_updates)
+            effective_batch = batch_updates.get("batch_no") or effective_batch
+        check_stock(child, effective_batch, picked)
 
     complete = rules.is_row_complete(picked, required)
     if require_complete and not complete:
         frappe.throw(_("Row {0} ({1}) is not complete: {2} of {3} picked.").format(child.idx, child.item_code, flt(picked), flt(required)))
-    if child.get("custom_row_status") == rules.ROW_PICKED and not complete:
-        frappe.throw(_("Row {0} ({1}) is already picked and cannot be reduced. Reset the row first.").format(child.idx, child.item_code))
+    if child.get("custom_row_status") == rules.ROW_PICKED:
+        if not complete:
+            frappe.throw(_("Row {0} ({1}) is already picked and cannot be reduced. Reset the row first.").format(child.idx, child.item_code))
+        if picked_batches is not None and not same_batches(picked_batches, row_batches(child)):
+            frappe.throw(_("Row {0} ({1}) is already picked; reset the row to pick other batches.").format(child.idx, child.item_code))
 
     now = now_datetime()
     started = child.get("custom_row_started_at")
@@ -396,10 +449,12 @@ def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, requ
                 "custom_row_status": rules.ROW_PICKED,
                 "custom_row_completed_at": now,
                 "custom_picking_duration_seconds": rules.duration_seconds(started, now, elapsed_seconds),
-                # Keep the standard field in step so ERPNext's own "Create ..." buttons agree with the app.
-                "picked_qty": picked,
             }
         )
+        if picked_batches:
+            # The batches go into the row's Serial and Batch Bundle: ERPNext's stock reservation
+            # (and its own Create > Delivery Note) read them from there.
+            updates["serial_and_batch_bundle"] = make_row_bundle(doc, child, picked_batches)
         row_completed = True
     elif child.get("custom_row_status") != rules.ROW_PICKED:
         updates["custom_row_status"] = rules.next_row_status(picked, required, child.get("custom_row_status"), hold=hold)
@@ -408,13 +463,15 @@ def update_row(name, row, picked_qty, item_code, batch_no, elapsed_seconds, requ
     stamp_card_started(doc, started)
 
     card_completed = False
+    reservation = None
     if row_completed:
         card_completed = run_card_completion_check(doc.name)
         if card_completed:
             doc.add_comment("Info", _("All rows picked. Last row completed by {0}.").format(frappe.utils.get_fullname(frappe.session.user)))
+            reservation = reserve_stock(doc.name)
     else:
         frappe.db.set_value(PICK_LIST, doc.name, "modified", now, update_modified=False)
-    return row_result(doc.name, child.name, row_completed=row_completed, card_completed=card_completed)
+    return row_result(doc.name, child.name, row_completed=row_completed, card_completed=card_completed, reservation=reservation)
 
 
 def stamp_card_started(doc, when):
@@ -450,9 +507,9 @@ def started_from_elapsed(now, elapsed_seconds):
 
 
 def validate_scanned_batch(child, batch_no) -> dict:
-    """The scanned batch must be the one ERPNext allocated to the row; rows without an allocated
-    batch accept any valid, unexpired batch of the same item and remember it (flagged
-    `custom_batch_from_wms`, so it can be replaced while nothing is picked on the row)."""
+    """The scanned batch must be the one ERPNext allocated to the row. Batch tracked rows without
+    an allocated batch never get here (they take several batches, see `requested_batches`); a row
+    of an item without batches accepts any valid, unexpired batch of the item and remembers it."""
     expected = (child.get("batch_no") or "").strip()
     if expected and batch_no.lower() == expected.lower():
         return {}
@@ -469,6 +526,193 @@ def validate_scanned_batch(child, batch_no) -> dict:
     if batch.expiry_date and getdate(batch.expiry_date) < getdate(nowdate()):
         frappe.throw(_("Batch {0} expired on {1}.").format(batch_no, frappe.format(batch.expiry_date, "Date")))
     return {"batch_no": batch_no, "custom_batch_from_wms": 1}
+
+
+# --------------------------------------------------------------------------------------------
+# Several batches per row
+# --------------------------------------------------------------------------------------------
+
+
+def item_has_batch(item_code) -> bool:
+    return bool(item_code) and bool(cint(frappe.get_cached_value("Item", item_code, "has_batch_no")))
+
+
+def has_foreign_bundle(row) -> bool:
+    """A Serial and Batch Bundle on the row that the app did not make (filled in on the desk)."""
+    return bool(row.get("serial_and_batch_bundle")) and not cint(row.get("custom_batch_from_wms"))
+
+
+def takes_several_batches(row, has_batch_no=None) -> bool:
+    if has_batch_no is None:
+        has_batch_no = item_has_batch(row.item_code)
+    return rules.accepts_several_batches(has_batch_no, row.get("batch_no"), row.get("custom_batch_from_wms"), has_foreign_bundle(row))
+
+
+def row_batches(row) -> list[dict]:
+    """The batches picked so far on a row without an allocated batch. A row picked by a version
+    before multi-batch picking kept its one scanned batch in `batch_no`."""
+    try:
+        batches = rules.parse_batches(row.get("custom_wms_picked_batches"))
+    except rules.PickingRuleError:
+        batches = []
+    picked = flt(row.get("custom_wms_picked_qty"))
+    if not batches and cint(row.get("custom_batch_from_wms")) and row.get("batch_no") and picked > rules.QTY_TOLERANCE:
+        batches = [{"batch_no": row.batch_no, "qty": picked}]
+    return batches
+
+
+def same_batches(left, right) -> bool:
+    def key(batches):
+        return sorted((entry["batch_no"].lower(), round(flt(entry["qty"]), 6)) for entry in batches)
+
+    return key(left) == key(right)
+
+
+def requested_batches(child, picked_qty, batch_no, batches) -> list[dict]:
+    """The row's batch list after this call, every batch checked (item, disabled, expiry) and
+    named as ERPNext names it. `batches` is the full list; without it the call names at most one
+    batch, as the app did before multi-batch picking."""
+    try:
+        if batches not in (None, ""):
+            wanted = rules.parse_batches(batches)
+        elif picked_qty in (None, "") and not batch_no:
+            wanted = row_batches(child)
+        else:
+            wanted = rules.single_batch_update(row_batches(child), batch_no, picked_qty)
+    except rules.PickingRuleError as exc:
+        frappe.throw(_("Row {0} ({1}): {2}").format(child.idx, child.item_code, str(exc)))
+    checked = {}
+    for entry in wanted:
+        name = check_batch(child, entry["batch_no"])
+        if name.lower() in checked:
+            checked[name.lower()]["qty"] += flt(entry["qty"])
+        else:
+            checked[name.lower()] = {"batch_no": name, "qty": flt(entry["qty"])}
+    return list(checked.values())
+
+
+def check_batch(child, batch_no) -> str:
+    """A batch picked on a row without an allocated batch: it must exist, belong to the row's
+    item, be enabled and not expired. Returns the Batch name."""
+    batch = frappe.db.get_value("Batch", batch_no, ["name", "item", "expiry_date", "disabled"], as_dict=True)
+    if not batch:
+        frappe.throw(_("Batch {0} does not exist.").format(batch_no))
+    if batch.item != child.item_code:
+        frappe.throw(_("Batch {0} belongs to item {1}, not {2}.").format(batch_no, batch.item, child.item_code))
+    if cint(batch.disabled):
+        frappe.throw(_("Batch {0} is disabled.").format(batch_no))
+    if batch.expiry_date and getdate(batch.expiry_date) < getdate(nowdate()):
+        frappe.throw(_("Batch {0} expired on {1}.").format(batch_no, frappe.format(batch.expiry_date, "Date")))
+    return batch.name
+
+
+@contextmanager
+def as_administrator():
+    """Runs ERPNext's own stock steps (Serial and Batch Bundle, Stock Reservation Entries) on behalf
+    of the picking process: the warehouse role may lack their permissions.
+
+    `frappe.set_user` rewrites the request's session in place (sid, session data) and clears
+    `form_dict`; Frappe saves that session at the end of the request, so both are put back exactly
+    as they were, not just the user."""
+    user = frappe.session.user
+    if user == "Administrator":
+        yield
+        return
+    session = frappe.local.session
+    saved_session = dict(session)
+    saved_form_dict = frappe.local.form_dict
+    frappe.set_user("Administrator")
+    try:
+        yield
+    finally:
+        frappe.set_user(user)
+        session.update(saved_session)
+        frappe.local.session = session
+        frappe.local.form_dict = saved_form_dict
+
+
+def make_row_bundle(doc, child, batches) -> str:
+    """An outward Serial and Batch Bundle for the Pick List row holding the picked batches, as
+    ERPNext makes one on submit for a row with a batch (`make_bundle_using_old_serial_batch_fields`)."""
+    from erpnext.stock.serial_batch_bundle import SerialBatchCreation
+
+    previous = child.get("serial_and_batch_bundle") if cint(child.get("custom_batch_from_wms")) else None
+    with as_administrator():
+        bundle = SerialBatchCreation(
+            {
+                "item_code": child.item_code,
+                "warehouse": child.get("warehouse"),
+                "voucher_type": PICK_LIST,
+                "voucher_no": doc.name,
+                "voucher_detail_no": child.name,
+                "qty": rules.batches_total(batches),
+                "type_of_transaction": "Outward",
+                "company": doc.company,
+                "batches": frappe._dict({entry["batch_no"]: flt(entry["qty"]) for entry in batches}),
+            }
+        ).make_serial_and_batch_bundle()
+    if previous:
+        discard_row_bundle(previous)
+    return bundle.name
+
+
+def discard_row_bundle(name):
+    """Cancels a bundle the app made for a row (the way ERPNext does when a Pick List is cancelled)."""
+    with as_administrator():
+        if frappe.db.get_value("Serial and Batch Bundle", name, "docstatus") == 1:
+            frappe.db.set_value("Serial and Batch Bundle", name, {"is_cancelled": 1, "voucher_no": ""})
+            frappe.get_doc("Serial and Batch Bundle", name).cancel()
+
+
+# --------------------------------------------------------------------------------------------
+# Stock reservation
+# --------------------------------------------------------------------------------------------
+
+
+def reservation_enabled() -> bool:
+    return bool(cint(frappe.db.get_single_value("Stock Settings", "enable_stock_reservation")))
+
+
+def reserved_entries(name) -> int:
+    return frappe.db.count("Stock Reservation Entry", {"from_voucher_type": PICK_LIST, "from_voucher_no": name, "docstatus": 1})
+
+
+def reserve_stock(name):
+    """Reserves the picked quantities of a *Delivery* card for its Sales Orders through ERPNext's
+    Pick List reservation (each row's Picked Qty, per batch where the row has a bundle). Sales Order
+    rows without *Reserve Stock* are skipped by ERPNext. A failure never undoes the picking: it is
+    logged, noted on the Pick List and returned, and the desk's *Reserve* button can retry."""
+    if not reservation_enabled():
+        return None
+    doc = frappe.get_doc(PICK_LIST, name)
+    if doc.get("purpose") != rules.PURPOSE_DELIVERY or not doc.has_unreserved_stock():
+        return None
+    before = reserved_entries(name)
+    frappe.db.savepoint("wms_reserve_stock")
+    try:
+        with as_administrator():
+            doc.create_stock_reservation_entries(notify=False)
+    except Exception as exc:
+        frappe.db.rollback(save_point="wms_reserve_stock")
+        frappe.clear_messages()
+        frappe.log_error(title=f"WMS picking: stock reservation failed for {name}", message=frappe.get_traceback())
+        message = frappe.utils.strip_html(str(exc)) or exc.__class__.__name__
+        doc.add_comment("Info", _("Stock could not be reserved after WMS picking: {0}").format(message))
+        return {"reserved": False, "entries": 0, "error": message}
+    created = reserved_entries(name) - before
+    if created > 0:
+        doc.add_comment("Info", _("Stock reserved for the picked quantities from the WMS app ({0} reservation entries).").format(created))
+    return {"reserved": created > 0, "entries": created, "error": None}
+
+
+def cancel_row_reservation(doc, child):
+    """A reset row gives its reservation back; the card's next completion reserves again."""
+    if flt(child.get("stock_reserved_qty")) <= rules.QTY_TOLERANCE:
+        return
+    from erpnext.stock.doctype.stock_reservation_entry.stock_reservation_entry import cancel_stock_reservation_entries
+
+    with as_administrator():
+        cancel_stock_reservation_entries(from_voucher_type=PICK_LIST, from_voucher_no=doc.name, from_voucher_detail_no=child.name, notify=False)
 
 
 def available_qty(item_code, warehouse, batch_no=None):
@@ -506,19 +750,19 @@ def ensure_stock_for(doc):
     warehouse's stock, so the draft can be submitted later."""
     rows = []
     for row in doc.get("locations") or []:
-        picked = flt(row.get("custom_wms_picked_qty"))
-        if picked <= rules.QTY_TOLERANCE or row.get("product_bundle_item"):
+        if flt(row.get("custom_wms_picked_qty")) <= rules.QTY_TOLERANCE or row.get("product_bundle_item"):
             continue
-        rows.append(
-            {
-                "idx": row.idx,
-                "item_code": row.item_code,
-                "batch_no": row.get("batch_no"),
-                "warehouse": row.get("warehouse"),
-                "picked": picked,
-                "available": available_qty(row.item_code, row.get("warehouse"), row.get("batch_no")),
-            }
-        )
+        for batch_no, picked in picked_parts(row):
+            rows.append(
+                {
+                    "idx": row.idx,
+                    "item_code": row.item_code,
+                    "batch_no": batch_no,
+                    "warehouse": row.get("warehouse"),
+                    "picked": picked,
+                    "available": available_qty(row.item_code, row.get("warehouse"), batch_no),
+                }
+            )
     short = rules.stock_shortfalls(rows)
     if not short:
         return
@@ -577,7 +821,8 @@ def reload(doc):
 
 
 def required_qty(row):
-    return flt(row.get("stock_qty")) or flt(row.get("qty")) * (flt(row.get("conversion_factor")) or 1)
+    """The row's target: Picked Qty (in Stock UOM) as the Senior Warehouse User set it."""
+    return rules.target_qty(row.get("picked_qty"), row.get("stock_qty"), row.get("qty"), row.get("conversion_factor"))
 
 
 # --------------------------------------------------------------------------------------------
@@ -639,14 +884,25 @@ def pickable_rows(doc):
     return rows
 
 
-def set_serial_batch(item, row):
+def picked_parts(row) -> list[tuple]:
+    """(batch_no, qty in stock UOM) per document row: one per batch for a row picked from several
+    batches, else the row's own batch (or none) with the whole picked quantity."""
+    picked = flt(row.get("custom_wms_picked_qty"))
+    if takes_several_batches(row):
+        batches = row_batches(row)
+        if batches:
+            return [(entry["batch_no"], flt(entry["qty"])) for entry in batches]
+    return [(row.get("batch_no") or None, picked)]
+
+
+def set_serial_batch(item, row, batch_no=None):
     """The picked batch / serial numbers go into the row fields; ERPNext builds the Serial and
     Batch Bundle from them on submit (`use_serial_batch_fields`)."""
-    if row.get("batch_no"):
-        item.batch_no = row.batch_no
+    if batch_no:
+        item.batch_no = batch_no
     if row.get("serial_no"):
         item.serial_no = row.serial_no
-    if row.get("batch_no") or row.get("serial_no"):
+    if batch_no or row.get("serial_no"):
         item.use_serial_batch_fields = 1
 
 
@@ -683,12 +939,14 @@ def make_delivery_notes(pick_list, values=None):
         for row in rows:
             if row.get("sales_order") not in sales_orders:
                 continue
-            if row.get("sales_order_item"):
-                so_item = frappe.get_doc("Sales Order Item", row.sales_order_item)
-                dn_item = map_child_doc(so_item, delivery_note, item_mapper)
-            else:
-                dn_item = delivery_note.append("items", {"item_code": row.item_code, "against_sales_order": row.sales_order})
-            fill_delivery_note_item(dn_item, row)
+            so_item = frappe.get_doc("Sales Order Item", row.sales_order_item) if row.get("sales_order_item") else None
+            # One Delivery Note row per picked batch, all against the same Sales Order row.
+            for batch_no, qty in picked_parts(row):
+                if so_item is not None:
+                    dn_item = map_child_doc(so_item, delivery_note, item_mapper)
+                else:
+                    dn_item = delivery_note.append("items", {"item_code": row.item_code, "against_sales_order": row.sales_order})
+                fill_delivery_note_item(dn_item, row, batch_no, qty)
         prepare_delivery_note(delivery_note, pick_list)
         # Header fields only: the Sales Orders are a source of required-field values, not re-read documents.
         prepared.append((delivery_note, [documents.source_values("Sales Order", so) for so in sales_orders]))
@@ -700,7 +958,8 @@ def make_delivery_notes(pick_list, values=None):
         delivery_note = frappe.new_doc("Delivery Note")
         delivery_note.customer = pick_list.customer
         for row in unlinked:
-            fill_delivery_note_item(delivery_note.append("items", {"item_code": row.item_code}), row)
+            for batch_no, qty in picked_parts(row):
+                fill_delivery_note_item(delivery_note.append("items", {"item_code": row.item_code}), row, batch_no, qty)
         prepare_delivery_note(delivery_note, pick_list)
         prepared.append((delivery_note, []))
 
@@ -713,10 +972,11 @@ def make_delivery_notes(pick_list, values=None):
     return created
 
 
-def require_fields(doctype, docs_with_sources, values):
+def require_fields(doctype, docs_with_sources, values, extra_missing=None):
     """Fills the required fields of every prepared document; raises MissingRequiredFields with the
-    union of what is still empty, before anything is inserted."""
-    missing, seen = [], set()
+    union of what is still empty (plus `extra_missing`, fields the user must choose every time),
+    before anything is inserted."""
+    missing, seen = list(extra_missing or []), {(f["doctype"], f["fieldname"]) for f in extra_missing or []}
     for document, sources in docs_with_sources:
         for field in documents.fill_required(document, values, sources=sources, company=document.get("company")):
             key = (field["doctype"], field["fieldname"])
@@ -727,9 +987,9 @@ def require_fields(doctype, docs_with_sources, values):
         raise documents.MissingRequiredFields(doctype, missing)
 
 
-def fill_delivery_note_item(dn_item, row):
+def fill_delivery_note_item(dn_item, row, batch_no, picked):
     conversion_factor = flt(row.get("conversion_factor")) or 1
-    picked = flt(row.get("custom_wms_picked_qty"))
+    picked = flt(picked)
     dn_item.item_code = row.item_code
     if not dn_item.get("item_name"):
         dn_item.item_name = row.get("item_name")
@@ -741,7 +1001,7 @@ def fill_delivery_note_item(dn_item, row):
     dn_item.stock_uom = row.get("stock_uom") or dn_item.get("stock_uom")
     dn_item.conversion_factor = conversion_factor
     dn_item.stock_qty = picked
-    set_serial_batch(dn_item, row)
+    set_serial_batch(dn_item, row, batch_no)
     dn_item.pick_list_item = row.name
 
 
@@ -760,6 +1020,16 @@ def stamp_warehouse_values(doc):
     employee processing it in the site's officer field (whose signature the print carries)."""
     documents.apply_department(doc)
     documents.stamp_officer(doc)
+
+
+def row_material_request(row):
+    """The Material Request of a Pick List row: ERPNext's mapper links the row only through
+    `material_request_item`, so the request is read from that line when `material_request` is empty."""
+    if row.get("material_request"):
+        return row.material_request
+    if row.get("material_request_item"):
+        return frappe.db.get_value("Material Request Item", row.material_request_item, "parent")
+    return None
 
 
 def make_stock_entry(pick_list, purpose, values=None):
@@ -783,34 +1053,44 @@ def make_stock_entry(pick_list, purpose, values=None):
                 )
             )
         conversion_factor = flt(row.get("conversion_factor")) or 1
-        picked = flt(row.get("custom_wms_picked_qty"))
-        item = stock_entry.append(
-            "items",
-            {
-                "item_code": row.item_code,
-                "item_name": row.get("item_name"),
-                "description": row.get("description") or row.get("item_name") or row.item_code,
-                "s_warehouse": row.get("warehouse"),
-                "t_warehouse": target,
-                "qty": picked / conversion_factor,
-                "uom": row.get("uom") or row.get("stock_uom"),
-                "stock_uom": row.get("stock_uom"),
-                "conversion_factor": conversion_factor,
-                "transfer_qty": picked,
-            },
-        )
-        set_serial_batch(item, row)
-        item.pick_list_item = row.name
-        if row.get("material_request"):
-            item.material_request = row.material_request
-            item.material_request_item = row.get("material_request_item")
+        # One Stock Entry row per picked batch.
+        for batch_no, picked in picked_parts(row):
+            item = stock_entry.append(
+                "items",
+                {
+                    "item_code": row.item_code,
+                    "item_name": row.get("item_name"),
+                    "description": row.get("description") or row.get("item_name") or row.item_code,
+                    "s_warehouse": row.get("warehouse"),
+                    "t_warehouse": target,
+                    "qty": picked / conversion_factor,
+                    "uom": row.get("uom") or row.get("stock_uom"),
+                    "stock_uom": row.get("stock_uom"),
+                    "conversion_factor": conversion_factor,
+                    "transfer_qty": picked,
+                },
+            )
+            set_serial_batch(item, row, batch_no)
+            item.pick_list_item = row.name
+            material_request = row_material_request(row)
+            if material_request:
+                item.material_request = material_request
+                item.material_request_item = row.get("material_request_item")
 
     stock_entry.run_method("set_missing_values")
     stamp_warehouse_values(stock_entry)
+    header_request = pick_list.get("material_request") or next((row_material_request(row) for row in rows if row_material_request(row)), None)
+    extra_missing = []
+    if purpose == rules.PURPOSE_MATERIAL_ISSUE:
+        # The requesting department and employee, not the warehouse's (department replaced).
+        documents.apply_material_request_values(stock_entry, header_request)
+    else:
+        # A transfer names who receives it: chosen by the user in the app for every document.
+        extra_missing = documents.ask_received_by(stock_entry, values)
     sources = [pick_list]
-    if pick_list.get("material_request"):
-        sources.insert(0, documents.source_values("Material Request", pick_list.material_request))
-    require_fields(rules.STOCK_ENTRY, [(stock_entry, sources)], values)
+    if header_request:
+        sources.insert(0, documents.source_values("Material Request", header_request))
+    require_fields(rules.STOCK_ENTRY, [(stock_entry, sources)], values, extra_missing)
     stock_entry.insert()
     return stock_entry
 
@@ -957,10 +1237,13 @@ def row_target_warehouses(doc):
     return targets
 
 
-def serialize_row(row, user, info=None, expiry_date=None, target_warehouse=None):
+def serialize_row(row, user, info=None, expiry_date=None, target_warehouse=None, expiries=None):
     info = info or {}
     required = required_qty(row)
     picked = flt(row.get("custom_wms_picked_qty"))
+    several = takes_several_batches(row, has_batch_no=cint(info.get("has_batch_no")))
+    batches = row_batches(row) if several else []
+    expiries = expiries or {}
     return {
         "name": row.name,
         "idx": row.idx,
@@ -969,12 +1252,20 @@ def serialize_row(row, user, info=None, expiry_date=None, target_warehouse=None)
         "description": row.get("description"),
         "warehouse": row.get("warehouse"),
         "target_warehouse": target_warehouse,
-        "batch_no": row.get("batch_no"),
+        # A row picked from several batches has no single batch: `batches` lists them.
+        "batch_no": None if several else row.get("batch_no"),
         "batch_from_wms": cint(row.get("custom_batch_from_wms")),
-        "expiry_date": str_or_none(expiry_date),
+        "multi_batch": 1 if several else 0,
+        "batches": [
+            {"batch_no": entry["batch_no"], "qty": flt(entry["qty"]), "expiry_date": str_or_none(expiries.get(entry["batch_no"]))}
+            for entry in batches
+        ],
+        "expiry_date": None if several else str_or_none(expiry_date),
         "serial_no": row.get("serial_no"),
         "required_qty": required,
         "picked_qty": picked,
+        "stock_qty": flt(row.get("stock_qty")),
+        "reserved_qty": flt(row.get("stock_reserved_qty")),
         "uom": row.get("stock_uom") or row.get("uom"),
         "order_qty": flt(row.get("qty")),
         "order_uom": row.get("uom"),
@@ -994,7 +1285,10 @@ def serialize_row(row, user, info=None, expiry_date=None, target_warehouse=None)
 def serialize_pick_list(doc, user):
     rows = doc.get("locations") or []
     item_codes = list({row.item_code for row in rows if row.item_code})
-    batch_nos = list({row.batch_no for row in rows if row.get("batch_no")})
+    batch_nos = {row.batch_no for row in rows if row.get("batch_no")}
+    for row in rows:
+        batch_nos.update(entry["batch_no"] for entry in row_batches(row))
+    batch_nos = list(batch_nos)
 
     item_info = {}
     if item_codes:
@@ -1008,12 +1302,12 @@ def serialize_pick_list(doc, user):
 
     header = serialize_header(doc, rows, user)
     header["items"] = [
-        serialize_row(row, user, item_info.get(row.item_code), expiries.get(row.get("batch_no")), targets.get(row.name)) for row in rows
+        serialize_row(row, user, item_info.get(row.item_code), expiries.get(row.get("batch_no")), targets.get(row.name), expiries) for row in rows
     ]
     return header
 
 
-def row_result(name, row_name, row_completed, card_completed):
+def row_result(name, row_name, row_completed, card_completed, reservation=None):
     doc = frappe.get_doc(PICK_LIST, name)
     serialized = serialize_pick_list(doc, frappe.session.user)
     row = next((r for r in serialized["items"] if r["name"] == row_name), None)
@@ -1024,4 +1318,6 @@ def row_result(name, row_name, row_completed, card_completed):
         "card_completed": bool(card_completed),
         # Only the request that flipped the card to Picked is the last picker.
         "is_last_picker": bool(card_completed),
+        # Stock reservation run by that request (None: not a Delivery card, or reservation is off).
+        "reservation": reservation,
     }

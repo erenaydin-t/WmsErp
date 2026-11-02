@@ -50,7 +50,7 @@ published version is also tagged **`wmserp_picking-v<version>`** (the version is
 ```bash
 cd frappe-bench
 bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking            # latest
-bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.7.0     # a fixed version
+bench get-app https://github.com/erenaydin-t/WmsErp --branch wmserp_picking-v0.8.0     # a fixed version
 bench --site <site> install-app wmserp_picking
 bench --site <site> migrate
 ```
@@ -61,17 +61,18 @@ To update an existing bench to the latest published version (or to a tag):
 cd frappe-bench/apps/wmserp_picking
 git fetch origin --tags
 git checkout wmserp_picking && git pull origin wmserp_picking     # latest
-# git checkout wmserp_picking-v0.7.0                              # or pin a version
+# git checkout wmserp_picking-v0.8.0                              # or pin a version
 cd ../..
 bench --site <site> migrate      # re-applies the custom fields / print format, creates the stocktaking DocTypes
 bench restart                    # no `bench build` needed: the form / list / report scripts are served from the app folder
-bench version                    # should list wmserp_picking 0.7.0
+bench version                    # should list wmserp_picking 0.8.0
 ```
 
 ### Versions
 
 | Version | Tag | Notes |
 | --- | --- | --- |
+| 0.8.0 | `wmserp_picking-v0.8.0` | **Picked Qty as the target, several batches per row, stock reservation.** A row's required quantity is now its *Picked Qty (in Stock UOM)* as the Senior Warehouse User set it on the Pick List (ERPNext fills it with the stock quantity on submit when left empty); the app no longer writes `picked_qty` (0.7.0 copied the picked quantity into it on completion and zeroed it on a reset). A batch tracked row the Pick List left without a batch is picked from any number of batches: `save_row_progress` / `complete_row` take `batches=[{batch_no, qty}]` (the row's full list, kept in the new `Pick List Item.custom_wms_picked_batches`; the picked quantity is their sum; every batch is checked for item, expiry and stock), the final confirmation records them in the row's *Serial and Batch Bundle* and `generate_document` writes one Delivery Note / Stock Entry row per batch. The call that completes a *Delivery* card reserves the picked stock through ERPNext's Pick List reservation when *Stock Settings > Enable Stock Reservation* is on (per batch from the bundle; a failure is logged and noted on the Pick List and never undoes the picking; response `reservation`); `reset_row` cancels the row's reservation and bundle. Rows read `multi_batch`, `batches`, `stock_qty`, `reserved_qty`. `get_settings` features: `picked_qty_target`, `multi_batch_picking`, `pick_list_stock_reservation`. Older apps keep working on single-batch rows. **Material Issue Stock Entries** take the department of their Material Request (request line, else request; header and rows, replacing *Warehouse Department*) and fill the field labelled *Received By (Employee)* with the employee who raised the request (an Employee link on the Material Request, else the Employee of its creator); rows linked only through `material_request_item` now carry their `material_request` too. **Stocktaking:** *Blind Count* now hides ERP quantities from everyone in the app, Stock / System Managers included (they review in the desk). *Include Zero Stock* rows are optional: a zero-stock row nobody counted is left out of the totals, does not block closing or approval and is not reconciled; rows carry `zero_stock`, the app hides uncounted ones behind a *Show zero-stock items* filter, and the *Stocktaking Uncounted Items* report behind *Show optional zero-stock rows*. A zero-stock item that is found and counted (ERP 0, counted 10) goes into the Stock Reconciliation like any other difference. **Mandatory fields, one approach:** the scan-menu transfer no longer inserts and submits a Stock Entry from the app: new `wmserp_picking.api.stock_transfer` (`get_transfer_form`, `create_transfer`) creates a **draft** Material Transfer with the department and *Received By (Employee)* the user picks in the app, the scanned batch or batches taken automatically (ERPNext's FEFO / FIFO order, reserved, expired and disabled batches left out, split over rows), the officer, and the site's other required fields filled or reported as `missing_fields`. Pick List *Material Transfer* / *Transfer for Manufacture* documents ask *Received By* on every document (`missing_fields` entry with `remember: 0`, never stored by the app). *Create Stock Reconciliation* in the desk opens a dialog for the department, difference account and cost center (prefilled with *Warehouse Department* and the company's stock adjustment account / cost center; `get_reconciliation_defaults`), fills the other required fields and names what is still missing. Follow-up receipts stay without an officer for the next person. `get_settings` features: `stock_transfer_api`. |
 | 0.7.0 | `wmserp_picking-v0.7.0` | **Picking corrections and stock checks.** `save_row_progress(hold=1)` keeps a row *Picking* at its required quantity (the app's draft → picking in progress → final confirmation flow: only `complete_row` marks rows *Picked*), new `reset_row` clears a row's quantity, timers and a batch the app assigned (`Pick List Item.custom_batch_from_wms`, replaceable while nothing is picked; refused once the document exists; a *Picked* card returns to *Picking*). A scanned batch must now hold the picked quantity in the row's warehouse (`InsufficientStockError`, batch balance through ERPNext's `get_batch_qty`, Bin quantity for items without batches) and `generate_document` re-checks every picked row before creating anything, so a Delivery Note that cannot be submitted is never created. Stocktaking: `submit_count` wrote `NULL` into `final_qty` when a second count was due, which Frappe 16's NOT NULL numeric columns refuse, so every offline sync failed with HTTP 500; `sync_counts` now also survives any error on one entry (`outcome: error`, `reason: server`, logged) and keeps replaying the rest. |
 | 0.6.2 | `wmserp_picking-v0.6.2` | Fix: a new *Stocktaking Session* could not be saved in the desk on Frappe 16.52 (`Unknown column 'company'`): the Company field carried the default `:Company`, which Frappe resolves by reading a `company` column from the Company record. The default is gone; the field is filled from the user's or the site's default company as on every other document. |
 | 0.6.1 | `wmserp_picking-v0.6.1` | The follow-up receipt is mapped from the Purchase Order as Administrator (ERPNext's mapper checks the caller's *create* permission on Purchase Receipt, which the warehouse role lacks on sites where purchasing creates receipts); it is still inserted as the warehouse user. The *Material Status Label QC-LAB-02* Purchase Receipt print format (the site's pre-printed QC label, one per item row, with the officer's name and signature and the batch QR) ships with the app and is re-applied on every migrate (`labels.rules.MANAGED_TEMPLATES`, `templates/print_formats/material_status_label_qc_lab_02.html`). |
@@ -149,7 +150,9 @@ confirmed and the row split).
 | --- | --- | --- |
 | `custom_picker` | Link → User | Picker of this row. Mirrored into the Pick List's standard *Assign To*. |
 | `custom_row_status` | Select: Not Picked / Picking / Picked | |
-| `custom_wms_picked_qty` | Float (stock UOM) | Physically picked quantity. Copied into `picked_qty` when the row completes (ERPNext pre-fills `picked_qty` on submit, so it cannot serve as a progress counter). |
+| `custom_wms_picked_qty` | Float (stock UOM) | Physically picked quantity. The target is the standard *Picked Qty (in Stock UOM)* (`picked_qty`), set by the Senior Warehouse User; the app never overwrites it. |
+| `custom_wms_picked_batches` | Small Text (JSON) | Batches picked on a batch tracked row the Pick List left without a batch, e.g. `[{"batch_no": "B-1", "qty": 5}, {"batch_no": "B-2", "qty": 5}]`. The final confirmation records them in the row's `serial_and_batch_bundle`. |
+| `custom_batch_from_wms` | Check | The row's batches (and its bundle) come from the app; a reset clears them. |
 | `custom_row_started_at` / `custom_row_completed_at` | Datetime | Stamped by `start_row` / row completion. |
 | `custom_picking_duration_seconds` | Float | Completed minus started. |
 
@@ -184,20 +187,27 @@ with *Stock Manager* or *System Manager* may act on any row. The stocktaking met
 
 | Method | Parameters | Effect |
 | --- | --- | --- |
-| `get_settings` | – | `{"qr_item_key", "qr_batch_key", "app_version", "features"}`; the app caches the keys. `features` lists `stocktaking`, `purchase_receipt_receiving`, `label_sheets`, `required_field_values`. |
+| `get_settings` | – | `{"qr_item_key", "qr_batch_key", "app_version", "features"}`; the app caches the keys. `features` lists `stocktaking`, `purchase_receipt_receiving`, `label_sheets`, `required_field_values`, …, `picked_qty_target`, `multi_batch_picking`, `pick_list_stock_reservation`. |
 | `get_my_pick_lists` | `limit?=50` | Pick Lists with `docstatus == 1`, `status == "Open"` and at least one row whose `custom_picker` is `frappe.session.user`. Drafts are never returned. Each entry carries card totals plus `my_row_count`, `my_picked_rows`, `my_open_rows`, `all_rows_picked`. |
-| `get_pick_list` | `name` | Full card with all rows (`is_mine` marks the caller's rows; batch, expiry, required/picked qty, row status and timestamps). |
+| `get_pick_list` | `name` | Full card with all rows (`is_mine` marks the caller's rows; batch, expiry, required/picked qty, row status and timestamps). `required_qty` is the row's *Picked Qty (in Stock UOM)*; `multi_batch: 1` marks a row picked from several batches, listed in `batches: [{batch_no, qty, expiry_date}]` (its `batch_no` is then empty); `reserved_qty` is ERPNext's `stock_reserved_qty`. |
 | `start_row` | `name`, `row` | Row → *Picking*, stamps `custom_row_started_at`; stamps `custom_card_started_at` and card → *Picking* when empty. Idempotent. |
-| `save_row_progress` | `name`, `row`, `picked_qty`, `item_code?`, `batch_no?`, `elapsed_seconds?`, `hold?=0` | Partial save (`0 ≤ picked ≤ required`). `item_code` / `batch_no` (from the scanned label) must match the row: *Wrong item* / *Wrong batch. Expected: X, scanned: Y*. A row ERPNext left without a batch takes the scanned one (`custom_batch_from_wms = 1`; it can be replaced by another scan while nothing is picked). The batch (or, without batches, the item) must hold the picked quantity in the row's warehouse, else `InsufficientStockError` (HTTP 417, `exc_type`). When `picked == required` the row completes (see below) unless `hold=1`, which keeps it *Picking* so the app can still correct it before the final confirmation. |
-| `complete_row` | `name`, `row`, `picked_qty?`, `item_code?`, `batch_no?`, `elapsed_seconds?` | Same as above but requires the row to reach its required quantity; the final confirmation in the app. |
-| `reset_row` | `name`, `row` | Clears the row: `custom_wms_picked_qty` and `picked_qty` = 0, *Not Picked*, completion stamp and duration cleared, and the batch removed when the app assigned it. A *Picked* card goes back to *Picking*. Refused once a live Delivery Note / Stock Entry exists for the card. Returns the same shape as `start_row`. |
+| `save_row_progress` | `name`, `row`, `picked_qty`, `item_code?`, `batch_no?`, `elapsed_seconds?`, `hold?=0`, `batches?` | Partial save (`0 ≤ picked ≤ required`, required = *Picked Qty (in Stock UOM)*). `item_code` / `batch_no` (from the scanned label) must match the row: *Wrong item* / *Wrong batch. Expected: X, scanned: Y*. A batch tracked row the Pick List left without a batch (`multi_batch`) takes `batches=[{batch_no, qty}]`, the row's complete list (picked = their sum; each batch must belong to the item, be enabled, unexpired and in stock); a call with only `batch_no` + `picked_qty` (apps before 0.8.0) sets a single batch. The batch (or, without batches, the item) must hold the picked quantity in the row's warehouse, else `InsufficientStockError` (HTTP 417, `exc_type`). When `picked == required` the row completes (see below) unless `hold=1`, which keeps it *Picking* so the app can still correct it before the final confirmation. |
+| `complete_row` | `name`, `row`, `picked_qty?`, `item_code?`, `batch_no?`, `elapsed_seconds?`, `batches?` | Same as above but requires the row to reach its required quantity; the final confirmation in the app. A `multi_batch` row gets an outward *Serial and Batch Bundle* (voucher: the Pick List row) holding its batches. The call that completes a *Delivery* card reserves the stock (see below). |
+| `reset_row` | `name`, `row` | Clears the row: `custom_wms_picked_qty` = 0 (`picked_qty`, the target, stays), *Not Picked*, completion stamp and duration cleared, the batches and their bundle removed when the app assigned them, and the row's Stock Reservation Entries cancelled. A *Picked* card goes back to *Picking*. Refused once a live Delivery Note / Stock Entry exists for the card. Returns the same shape as `start_row`. |
 | `generate_document` | `name`, `values?` | Creates **one** draft document by purpose: Delivery → *Delivery Note* (one per customer, linked to the Sales Orders), Material Transfer → *Stock Entry (Material Transfer)*, Material Issue → *Stock Entry (Material Issue)*, Material Transfer for Manufacture → *Stock Entry* with the Work Order. Requires the card to be *Picked*. Returns `{"doctype", "name", "docstatus", "already_generated", "documents", "created": true}`; a second call returns the existing document with `already_generated: true`. Before anything is created every picked row is checked against the warehouse's stock (batch balance or Bin); a shortfall raises `InsufficientStockError` listing the rows and creates nothing. Mandatory fields the site added are filled from `values` (`{"Delivery Note.department": "..."}`), the user's defaults and the company's default accounting dimensions; what is still missing is answered with HTTP 200 `{"doctype", "missing_fields": [{doctype, fieldname, label, fieldtype, options}], "created": false}` and nothing is inserted (see [Required fields](#required-fields)). |
 | `get_picker_kpis` | `date?`, `user?` (supervisors) | `{"date", "user", "rows_picked", "qty_picked", "pick_lists_touched", "pick_lists_completed", "open_rows", "open_pick_lists", "total_seconds", "avg_seconds_per_row", "fastest_seconds", "slowest_seconds", "rows_per_hour"}` for the day. |
 | `assign_rows` | `name`, `user`, `rows?` | Supervisor action: assigns the given rows (all unpicked rows when omitted) to a picker and updates the standard assignment. |
 
+**Scan-menu transfers** (`wmserp_picking.api.stock_transfer`):
+
+| Method | Parameters | Effect |
+| --- | --- | --- |
+| `get_transfer_form` | `item_code` | `{"department": {fieldname, label, options} \| null, "received_by": {fieldname, label, options, fieldtype} \| null, "has_batch_no"}`: what the app's transfer sheet asks. The department field is Stock Entry's (header or rows); *Received By* is the field labelled *Received By (Employee)* / *Received By*. |
+| `create_transfer` | `item_code`, `qty`, `s_warehouse`, `t_warehouse`, `batch_no?`, `department?`, `received_by?`, `values?` | One **draft** *Material Transfer* Stock Entry (company of the source warehouse). The department (header and rows) and *Received By* are required when the site has the fields and are never taken from defaults. A `batch_no` is checked (item, enabled, unexpired, stock in the source warehouse); without it a batch tracked item gets the batches ERPNext would pick (*Stock Settings > Pick Serial / Batch Based On*), one row per batch; a shortfall raises `InsufficientStockError`. Other mandatory fields are filled from `values`, defaults and dimensions, else answered with `{"missing_fields": [...], "created": false}`. Returns `{"doctype", "name", "docstatus": 0, "created": true, "items": [{item_code, batch_no, qty}]}`. |
+
 **Row completion and the last-picker rule.** When a row reaches its required quantity the backend sets
-`custom_row_status = Picked`, `custom_row_completed_at`, `custom_picking_duration_seconds` and the
-standard `picked_qty`, then runs the *card completion check* under a row lock on the Pick List: if every
+`custom_row_status = Picked`, `custom_row_completed_at`, `custom_picking_duration_seconds` (and, for a
+row picked from several batches, its Serial and Batch Bundle), then runs the *card completion check* under a row lock on the Pick List: if every
 row is now *Picked* and the card is not yet *Picked*, it sets `custom_picking_status = Picked` and
 `custom_card_completed_at`. Exactly one request observes that transition; its response carries
 `card_completed: true` and `is_last_picker: true`, and the app shows the document CTA to that picker.
@@ -212,9 +222,25 @@ and `complete_row` all return:
            "duration_seconds": 220.0, "is_mine": true },
   "row_completed": true,
   "card_completed": false,
-  "is_last_picker": false
+  "is_last_picker": false,
+  "reservation": null
 }
 ```
+
+**Several batches per row.** When a Pick List is submitted without a batch on a batch tracked row (ERPNext's
+*Pick Manually*, or no batch allocated), the picker may take the quantity from several batches: 5 from
+batch 1 and 5 from batch 2 for a target of 10. The app sends the row's batch list; the final confirmation
+writes an outward *Serial and Batch Bundle* for the Pick List row with one entry per batch, and the Delivery
+Note / Stock Entry gets one row per batch (same Sales Order / Material Request row, `use_serial_batch_fields`).
+A row with an allocated batch still accepts only that batch.
+
+**Stock reservation.** With *Stock Settings > Enable Stock Reservation* on, the request that completes a
+*Delivery* card calls ERPNext's Pick List reservation (`create_stock_reservation_entries`, as Administrator
+because the warehouse role may lack the permission): each row's *Picked Qty* is reserved for its Sales Order
+row (which needs *Reserve Stock*), batch by batch from the row's bundle, so the reserved total equals the
+Picked Qty. The response's `reservation` is `{"reserved", "entries", "error"}` (`null` when nothing was due);
+a failure is logged, noted on the Pick List and leaves the picking in place, and ERPNext's *Reserve* button on
+the Pick List can retry it.
 
 Errors are raised with `frappe.throw` (HTTP 417 / 403 with `_server_messages`), which the Android
 app shows verbatim.
