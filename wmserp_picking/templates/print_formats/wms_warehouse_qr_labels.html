@@ -1,0 +1,65 @@
+{#-
+  WMS Warehouse QR Labels - one label per page, for label printers (thermal / roll).
+
+  Printed from the *WMS QR Labels* page (search "WMS QR Labels", or Warehouse > Print QR Labels):
+  every item / batch in stock in a warehouse, one item or one batch. The page renders this template
+  once with `labels` and makes the PDF page exactly `label_width` x `label_height` mm (chosen on the
+  page, 50 x 30 mm by default), so the printer feeds one label per page.
+
+  Each label in `labels`: item_code, item_name, batch_no, expiry_date, qty, uom, warehouse and
+  payload - the JSON the WMS app scans ({"item_code": ...} or {"item_code": ..., "batch_no": ...},
+  keys from WMS Settings). Fonts and what is shown are configured HERE (Setup > Print Format >
+  WMS Warehouse QR Labels); `bench execute wmserp_picking.setup.custom_fields.reset_label_print_formats`
+  restores the shipped version.
+-#}
+{%- set show_name = true -%}       {#- item name under the code -#}
+{%- set show_expiry = true -%}     {#- expiry date of a batch -#}
+{%- set show_payload = false -%}   {#- the JSON content in small print (helps when a scanner fails) -#}
+{%- set pad = 1.5 -%}              {#- mm inside the label edge -#}
+<!-- wms-label-roll -->
+<style>
+  /* No page margins: the PDF page is the label. Frappe's PDF renderer reads this rule. */
+  .print-format { margin-top: 0mm; margin-bottom: 0mm; margin-left: 0mm; margin-right: 0mm; }
+  html, body { margin: 0; padding: 0; }
+  .wms-roll { font-family: Helvetica, Arial, sans-serif; color: #000; }
+  .wms-roll table.wms-label {
+    width: {{ label_width }}mm; height: {{ label_height - 0.6 }}mm; border-collapse: collapse; table-layout: fixed;
+    page-break-inside: avoid; overflow: hidden;
+  }
+  .wms-roll table.wms-label.wms-break { page-break-after: always; }
+  .wms-roll td.wms-qr { width: {{ qr_size + pad }}mm; padding: {{ pad }}mm 0 {{ pad }}mm {{ pad }}mm; vertical-align: middle; }
+  .wms-roll td.wms-qr svg { width: {{ qr_size }}mm; height: {{ qr_size }}mm; display: block; }
+  .wms-roll td.wms-text { padding: {{ pad }}mm; vertical-align: middle; overflow: hidden; }
+  /* Long codes wrap only where they must (break-word), short ones stay on one line. */
+  .wms-roll .wms-code { font-size: 9pt; font-weight: 700; word-wrap: break-word; line-height: 1.1; }
+  .wms-roll .wms-name { font-size: 6.5pt; line-height: 1.1; max-height: 7.5mm; overflow: hidden; word-break: break-word; margin-top: 0.5mm; }
+  .wms-roll .wms-caption { font-size: 5.5pt; color: #333; margin-top: 0.8mm; text-transform: uppercase; }
+  .wms-roll .wms-batch { font-size: 8pt; font-weight: 700; word-wrap: break-word; line-height: 1.1; }
+  .wms-roll .wms-expiry { font-size: 6.5pt; margin-top: 0.3mm; }
+  .wms-roll .wms-payload { font-size: 4.5pt; color: #333; word-break: break-all; margin-top: 0.5mm; }
+</style>
+<div class="wms-roll">
+{%- for label in labels %}
+  <table class="wms-label{% if not loop.last %} wms-break{% endif %}">
+    <tr>
+      <td class="wms-qr">{{ wms_qr_svg(label.payload, 1, true) }}</td>
+      <td class="wms-text">
+        <div class="wms-code">{{ label.item_code }}</div>
+        {%- if show_name and label.item_name and label.item_name != label.item_code %}
+        <div class="wms-name">{{ label.item_name }}</div>
+        {%- endif %}
+        {%- if label.batch_no %}
+        <div class="wms-caption">{{ _("Batch") }}</div>
+        <div class="wms-batch">{{ label.batch_no }}</div>
+        {%- if show_expiry and label.expiry_date %}
+        <div class="wms-expiry">{{ _("Exp.") }} {{ frappe.format_date(label.expiry_date) }}</div>
+        {%- endif %}
+        {%- endif %}
+        {%- if show_payload %}
+        <div class="wms-payload">{{ label.payload }}</div>
+        {%- endif %}
+      </td>
+    </tr>
+  </table>
+{%- endfor %}
+</div>
